@@ -2,7 +2,7 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.controllers.form_submission_controller import FormSubmissionController
 from app.controllers.form_controller import FormController  # Added for form validation
-from app.models.answer_submitted import AnswerSubmitted
+from app.models.answers_submitted import AnswerSubmitted
 from app.models.form_answer import FormAnswer
 from app.models.form_question import FormQuestion
 from app.models.form_submission import FormSubmission

@@ -1,104 +1,98 @@
-🛠️ Maintenance Executions API
-Functional Requirements & API Documentation
-📋 Table of Contents
+# 🛠️ Maintenance Executions API
+## Functional Requirements & API Documentation
 
-User Management
-Form Management
-Question Management
-Submission Management
-API Endpoints Reference
-Frontend Implementation Guidelines
+## 📋 Table of Contents
+1. [User Management](#user-management)
+2. [Form Management](#form-management)
+3. [Question Management](#question-management)
+4. [Submission Management](#submission-management)
+5. [API Endpoints Reference](#api-endpoints)
+6. [Frontend Implementation Guidelines](#frontend-guidelines)
 
-👥 User Management <a name="user-management"></a>
-Authentication & Authorization
+## 👥 User Management <a name="user-management"></a>
 
-Users must log in using username/password
-JWT token is provided upon successful authentication
-Token must be included in all subsequent requests
-Role-based access control (Admin, Site Manager, Supervisor, Technician)
+### Authentication & Authorization
+- Users must log in using username/password
+- JWT token is provided upon successful authentication
+- Token must be included in all subsequent requests
+- Role-based access control (Admin, Site Manager, Supervisor, Technician)
 
-User Roles & Permissions
-👑 Admin
+### User Roles & Permissions
+#### 👑 Admin
+- Full system access
+- User management
+- Role management
+- Environment management
 
-Full system access
-User management
-Role management
-Environment management
+#### 🏢 Site Manager
+- Environment-specific access
+- User management within environment
+- Form management within environment
 
-🏢 Site Manager
+#### 👨‍💼 Supervisor
+- Form creation and management
+- Review submissions
+- Generate reports
 
-Environment-specific access
-User management within environment
-Form management within environment
+#### 👨‍🔧 Technician
+- View assigned forms
+- Submit form responses
+- Upload attachments
 
-👨‍💼 Supervisor
+## 📝 Form Management <a name="form-management"></a>
 
-Form creation and management
-Review submissions
-Generate reports
+### Form Creation
+- Title and description required
+- Public/private visibility setting
+- Multiple question types supported
+- Question ordering capability
+- Optional remarks for questions
 
-👨‍🔧 Technician
+### Question Types
+- Single Text (`single_text`)
+- Multiple Choice (`multiple_choice`)
+- Single Choice (`single_choice`)
+- Date (`date`)
 
-View assigned forms
-Submit form responses
-Upload attachments
+### Form Submissions
+- Answer validation based on question type
+- File attachment support
+- Signature capture support
+- Remarks for specific answers
 
-📝 Form Management <a name="form-management"></a>
-Form Creation
+## ❓ Question Management <a name="question-management"></a>
 
-Title and description required
-Public/private visibility setting
-Multiple question types supported
-Question ordering capability
-Optional remarks for questions
+### Question Configuration
+- Question text
+- Question type
+- Order number
+- Remarks flag
 
-Question Types
+### Answer Management
+- Answer values
+- Optional remarks
+- Multiple answers for choice questions
 
-Single Text (single_text)
-Multiple Choice (multiple_choice)
-Single Choice (single_choice)
-Date (date)
+## 📨 Submission Management <a name="submission-management"></a>
 
-Form Submissions
+### Submission Process
+- Form data validation
+- File upload support
+- Signature capture
+- Submission timestamp
+- User tracking
 
-Answer validation based on question type
-File attachment support
-Signature capture support
-Remarks for specific answers
+### File Attachments
+- Multiple file support
+- Type validation
+- Size limits
+- Storage management
 
-❓ Question Management <a name="question-management"></a>
-Question Configuration
+## 🔌 API Endpoints Reference <a name="api-endpoints"></a>
 
-Question text
-Question type
-Order number
-Remarks flag
-
-Answer Management
-
-Answer values
-Optional remarks
-Multiple answers for choice questions
-
-📨 Submission Management <a name="submission-management"></a>
-Submission Process
-
-Form data validation
-File upload support
-Signature capture
-Submission timestamp
-User tracking
-
-File Attachments
-
-Multiple file support
-Type validation
-Size limits
-Storage management
-
-🔌 API Endpoints Reference <a name="api-endpoints"></a>
-Authentication
-httpCopyPOST /api/users/login
+### Authentication
+```http
+POST /api/users/login
 {
     "username": string,
     "password": string
@@ -107,8 +101,11 @@ httpCopyPOST /api/users/login
 Response: {
     "access_token": string
 }
-User Management
-httpCopy# User Registration (Admin only)
+```
+
+### User Management
+```http
+# User Registration (Admin only)
 POST /api/users/register
 {
     "first_name": string,
@@ -132,8 +129,11 @@ PUT /api/users/{user_id}
 
 # Delete User
 DELETE /api/users/{user_id}
-Form Management
-httpCopy# Create Form
+```
+
+### Form Management
+```http
+# Create Form
 POST /api/forms
 {
     "title": string,
@@ -156,8 +156,11 @@ DELETE /api/forms/{form_id}
 # Form Questions
 POST /api/forms/{form_id}/questions
 PUT /api/forms/{form_id}/questions/reorder
-Question Management
-httpCopy# Create Question
+```
+
+### Question Management
+```http
+# Create Question
 POST /api/questions
 {
     "text": string,
@@ -176,8 +179,11 @@ PUT /api/questions/{question_id}
 
 # Delete Question
 DELETE /api/questions/{question_id}
-Form Submissions
-httpCopy# Submit Form
+```
+
+### Form Submissions
+```http
+# Submit Form
 POST /api/form_submissions
 {
     "form_id": integer,
@@ -196,8 +202,11 @@ GET /api/form_submissions/filled/{submission_id}
 
 # Delete Submission
 DELETE /api/form_submissions/{submission_id}
-Attachments
-httpCopy# Upload Attachment
+```
+
+### Attachments
+```http
+# Upload Attachment
 POST /api/attachments
 {
     "form_submission_id": integer,
@@ -214,79 +223,77 @@ GET /api/attachments/submission/{form_submission_id}
 
 # Delete Attachment
 DELETE /api/attachments/{attachment_id}
-Data Export
-httpCopyGET /api/export/{form_id}?format=csv
+```
+
+### Data Export
+```http
+GET /api/export/{form_id}?format=csv
 Supported formats: csv, excel, pdf
-🎨 Frontend Implementation Guidelines <a name="frontend-guidelines"></a>
-Required Templates
+```
 
-Authentication
+## 🎨 Frontend Implementation Guidelines <a name="frontend-guidelines"></a>
 
-login.html
-register.html (admin only)
+### Required Templates
+1. **Authentication**
+   - `login.html`
+   - `register.html` (admin only)
 
+2. **Dashboard**
+   - `dashboard/index.html`
+   - `dashboard/stats.html`
 
-Dashboard
+3. **User Management**
+   - `users/index.html`
+   - `users/create.html`
+   - `users/edit.html`
 
-dashboard/index.html
-dashboard/stats.html
+4. **Forms**
+   - `forms/index.html`
+   - `forms/create.html`
+   - `forms/edit.html`
+   - `forms/view.html`
 
+5. **Submissions**
+   - `submissions/index.html`
+   - `submissions/view.html`
+   - `submissions/my_submissions.html`
 
-User Management
+### Implementation Notes
 
-users/index.html
-users/create.html
-users/edit.html
+#### Authentication
+- Store JWT token in localStorage
+- Include token in Authorization header
+- Implement token refresh mechanism
+- Handle expired tokens
 
+#### Form Building
+- Implement dynamic form builder
+- Support all question types
+- Handle question ordering
+- Implement file upload preview
 
-Forms
+#### Form Submission
+- Client-side validation
+- File upload progress
+- Signature pad integration
+- Autosave functionality
 
-forms/index.html
-forms/create.html
-forms/edit.html
-forms/view.html
+#### Data Display
+- Implement pagination
+- Sorting capabilities
+- Filtering options
+- Export functionality
 
+### Security Considerations
+- CSRF protection
+- XSS prevention
+- Input sanitization
+- File upload validation
 
-Submissions
+Would you like me to:
+1. Provide detailed template structures for any specific page?
+2. Create example implementations for specific features?
+3. Add more detailed technical requirements?
+4. Create workflow diagrams for specific user journeys?
 
-submissions/index.html
-submissions/view.html
-submissions/my_submissions.html
-
-
-
-Implementation Notes
-Authentication
-
-Store JWT token in localStorage
-Include token in Authorization header
-Implement token refresh mechanism
-Handle expired tokens
-
-Form Building
-
-Implement dynamic form builder
-Support all question types
-Handle question ordering
-Implement file upload preview
-
-Form Submission
-
-Client-side validation
-File upload progress
-Signature pad integration
-Autosave functionality
-
-Data Display
-
-Implement pagination
-Sorting capabilities
-Filtering options
-Export functionality
-
-Security Considerations
-
-CSRF protection
-XSS prevention
-Input sanitization
-File upload validation
+Let me know what additional information would be most helpful for the frontend implementation.

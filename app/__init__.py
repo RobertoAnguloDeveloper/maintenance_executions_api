@@ -6,6 +6,7 @@ from config import Config
 import logging
 import sys
 from sqlalchemy import inspect
+from flask_cors import CORS
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -62,6 +63,7 @@ def check_db_initialized(db_instance):
 def create_app(config_class=None):
     """Create and configure the Flask application."""
     app = Flask(__name__)
+    CORS(app, supports_credentials=True)
     
     try:
         # Initialize configuration

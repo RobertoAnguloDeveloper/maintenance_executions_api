@@ -9,8 +9,8 @@ class Answer(TimestampMixin, db.Model):
     remarks = db.Column(db.Text)
 
     # Relationships
-    forms = db.relationship('Form', back_populates='answer')
-    
+    form_answers = db.relationship('FormAnswer', back_populates='answer', cascade='all, delete-orphan')
+
     def __repr__(self):
         return f'<Answer {self.id}>'
     

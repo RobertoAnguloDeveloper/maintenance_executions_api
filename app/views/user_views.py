@@ -120,7 +120,7 @@ def get_users_by_environment(environment_id):
     return jsonify([{
         "id": user.id,
         "username": user.username,
-        "role_id": user.role_id,
+        "role": user.role.name,
         "environment_id": user.environment_id
     } for user in users]), 200
     

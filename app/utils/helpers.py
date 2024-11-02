@@ -2,9 +2,7 @@ import re
 import uuid
 
 def validate_email(email):
-    """
-    Validate an email address.
-    """
+    """Validate an email address."""
     pattern = r'^[\w\.-]+@[\w\.-]+\.\w+$'
     return re.match(pattern, email) is not None
 

@@ -8,9 +8,9 @@ from .answer_views import answer_bp
 from .form_views import form_bp
 from .form_submission_views import form_submission_bp
 from .attachment_views import attachment_bp
+from .role_permission_views import role_permission_bp
 
 def register_blueprints(app):
-    """Register all blueprints with the app"""
     blueprints = [
         (user_bp, '/api/users'),
         (role_bp, '/api/roles'),
@@ -22,6 +22,7 @@ def register_blueprints(app):
         (form_bp, '/api/forms'),
         (form_submission_bp, '/api/form_submissions'),
         (attachment_bp, '/api/attachments'),
+        (role_permission_bp, '/api/role_permissions'),  # Add this line
     ]
 
     for blueprint, url_prefix in blueprints:

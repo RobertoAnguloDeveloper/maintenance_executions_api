@@ -7,7 +7,10 @@ from .question_type import QuestionType
 from .question import Question
 from .answer import Answer
 from .form import Form
+from .form_question import FormQuestion
+from .form_answer import FormAnswer
 from .form_submission import FormSubmission
+from .answer_submitted import AnswerSubmitted
 from .attachment import Attachment
 
 __all__ = [
@@ -20,6 +23,9 @@ __all__ = [
     'Question',
     'Answer',
     'Form',
+    'FormQuestion',
+    'FormAnswer',
     'FormSubmission',
+    'AnswerSubmitted',
     'Attachment'
 ]

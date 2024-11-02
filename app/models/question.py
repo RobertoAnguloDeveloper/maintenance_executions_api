@@ -12,8 +12,8 @@ class Question(TimestampMixin, db.Model):
 
     # Relationships
     question_type = db.relationship('QuestionType', back_populates='questions')
-    forms = db.relationship('Form', back_populates='question')
-    
+    form_questions = db.relationship('FormQuestion', back_populates='question', cascade='all, delete-orphan')
+
     def __repr__(self):
         return f'<Question {self.text[:20]}...>'
     
@@ -21,6 +21,7 @@ class Question(TimestampMixin, db.Model):
         return {
             'id': self.id,
             'text': self.text,
+            'question_type_id': self.question_type_id,
             'question_type': self.question_type.to_dict() if self.question_type else None,
             'order_number': self.order_number,
             'has_remarks': self.has_remarks,

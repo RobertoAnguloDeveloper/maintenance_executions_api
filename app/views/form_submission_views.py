@@ -70,9 +70,30 @@ def get_all_submissions():
         filters['end_date'] = datetime.strptime(end_date, '%Y-%m-%d')
 
     submissions = FormSubmissionController.get_all_submissions(**filters)
+    
     return jsonify({
         "total": len(submissions),
-        "submissions": [submission.to_dict() for submission in submissions]
+        "submissions": [{
+            'id': submission.id,
+            'form': {
+                'id': submission.form.id,
+                'title': submission.form.title
+            } if submission.form else None,
+            'submitted_by': submission.submitted_by,
+            'submitted_at': submission.submitted_at.isoformat() if submission.submitted_at else None,
+            'answers': [{
+                'question': answer.form_answer.form_question.question.text,
+                'answer': answer.form_answer.answer.value,
+                'remarks': answer.form_answer.remarks
+            } for answer in submission.answers_submitted],
+            'attachments': [{
+                'id': attachment.id,
+                'file_type': attachment.file_type,
+                'file_path': attachment.file_path,
+                'is_signature': attachment.is_signature
+            } for attachment in submission.attachments],
+            'created_at': submission.created_at.isoformat() if submission.created_at else None
+        } for submission in submissions]
     }), 200
 
 @form_submission_bp.route('/user/<string:username>', methods=['GET'])

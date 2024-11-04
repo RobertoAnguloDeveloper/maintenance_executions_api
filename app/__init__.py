@@ -63,7 +63,14 @@ def check_db_initialized(db_instance):
 def create_app(config_class=None):
     """Create and configure the Flask application."""
     app = Flask(__name__)
-    CORS(app, supports_credentials=True) # This enables CORS for all routes
+    CORS(app, resources={
+        r"/*": {
+            "origins": ["http://localhost:3000"],
+            "methods": ["OPTIONS", "GET", "POST", "PUT", "DELETE"],
+            "allow_headers": ["Content-Type", "Authorization"],
+            "supports_credentials": True
+        }
+    })
     
     try:
         # Initialize configuration

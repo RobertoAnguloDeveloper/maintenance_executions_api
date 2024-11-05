@@ -1,113 +1,202 @@
 from flask import Blueprint, request, jsonify
-from flask_jwt_extended import jwt_required
+from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.controllers.role_permission_controller import RolePermissionController
 from app.models.role import Role
 from app.models.role_permission import RolePermission
+import logging
+
+from app.services.auth_service import AuthService
+from app.utils.permission_manager import EntityType, PermissionManager, RoleType
+
+logger = logging.getLogger(__name__)
 
 role_permission_bp = Blueprint('role_permissions', __name__)
 
 @role_permission_bp.route('', methods=['GET'])
 @jwt_required()
+@PermissionManager.require_role(RoleType.ADMIN)
 def get_all_role_permissions():
-    role_permissions = RolePermissionController.get_all_role_permissions()
-    return jsonify([{
-        "id": rp.id,
-        "role": {
-            "id": rp.role.id,
-            "name": rp.role.name,
-            "description": rp.role.description
-        },
-        "permission": {
-            "id": rp.permission.id,
-            "name": rp.permission.name,
-            "description": rp.permission.description
-        },
-        "created_at": rp.created_at.isoformat(),
-        "updated_at": rp.updated_at.isoformat()
-    } for rp in role_permissions]), 200
+    """Get all role-permission mappings - Admin only"""
+    try:
+        role_permissions = RolePermissionController.get_all_role_permissions()
+        
+        return jsonify([rp.to_dict(include_relations=True) for rp in role_permissions]), 200
+    except Exception as e:
+        logger.error(f"Error getting role permissions: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
     
 @role_permission_bp.route('/roles_with_permissions', methods=['GET'])
 @jwt_required()
+@PermissionManager.require_permission(action="view", entity_type=EntityType.ROLES)
 def get_roles_with_permissions():
-    roles = Role.query.all()
-    result = []
-    for role in roles:
-        role_data = role.to_dict()
-        role_data['permissions'] = [p.to_dict() for p in role.permissions]
-        result.append(role_data)
-    return jsonify(result), 200
+    """Get all roles with their permissions"""
+    try:
+        current_user = get_jwt_identity()
+        current_user_obj = AuthService.get_current_user(current_user)
+        
+        roles = Role.query.all()
+        result = []
+        
+        for role in roles:
+            # Skip super user roles for non-admin users
+            if role.is_super_user and not current_user_obj.role.is_super_user:
+                continue
+                
+            role_data = role.to_dict(include_permissions=True)
+            result.append(role_data)
+            
+        return jsonify(result), 200
+    except Exception as e:
+        logger.error(f"Error getting roles with permissions: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
 
 @role_permission_bp.route('', methods=['POST'])
 @jwt_required()
+@PermissionManager.require_role(RoleType.ADMIN)
 def assign_permission_to_role():
-    data = request.get_json()
-    role_id = data.get('role_id')
-    permission_id = data.get('permission_id')
+    """Assign permission to role - Admin only"""
+    try:
+        data = request.get_json()
+        role_id = data.get('role_id')
+        permission_id = data.get('permission_id')
 
-    if not role_id or not permission_id:
-        return jsonify({"error": "Missing required fields"}), 400
+        if not role_id or not permission_id:
+            return jsonify({"error": "Missing required fields"}), 400
 
-    role_permission, error = RolePermissionController.assign_permission_to_role(role_id, permission_id)
-    if error:
-        return jsonify({"error": error}), 400
+        # Check if trying to modify admin role
+        role = Role.query.get(role_id)
+        if role and role.is_super_user and role_id == 1:
+            return jsonify({"error": "Cannot modify the main administrator role"}), 403
 
-    return jsonify({
-        "message": "Permission assigned to role successfully", 
-        "role_permission": {
-            "id": role_permission.id,
-            "role_id": role_permission.role_id,
-            "permission_id": role_permission.permission_id
-        }
-    }), 201
+        role_permission, error = RolePermissionController.assign_permission_to_role(role_id, permission_id)
+        if error:
+            return jsonify({"error": error}), 400
+
+        logger.info(f"Permission {permission_id} assigned to role {role_id}")
+        return jsonify({
+            "message": "Permission assigned to role successfully", 
+            "role_permission": role_permission.to_dict()
+        }), 201
+    except Exception as e:
+        logger.error(f"Error assigning permission to role: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
+    
+@role_permission_bp.route('/bulk_assign', methods=['POST'])
+@jwt_required()
+@PermissionManager.require_role(RoleType.ADMIN)
+def bulk_assign_permissions():
+    """Bulk assign permissions to role - Admin only"""
+    try:
+        data = request.get_json()
+        role_id = data.get('role_id')
+        permission_ids = data.get('permission_ids', [])
+
+        if not role_id or not permission_ids:
+            return jsonify({"error": "Missing required fields"}), 400
+
+        # Check if trying to modify admin role
+        role = Role.query.get(role_id)
+        if role and role.is_super_user and role_id == 1:
+            return jsonify({"error": "Cannot modify the main administrator role"}), 403
+
+        success, error = RolePermissionController.bulk_assign_permissions(role_id, permission_ids)
+        if not success:
+            return jsonify({"error": error}), 400
+
+        logger.info(f"Bulk permissions assigned to role {role_id}")
+        return jsonify({"message": "Permissions assigned successfully"}), 200
+    except Exception as e:
+        logger.error(f"Error in bulk permission assignment: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
     
 @role_permission_bp.route('/<int:role_permission_id>', methods=['PUT'])
 @jwt_required()
+@PermissionManager.require_role(RoleType.ADMIN)
 def update_role_permission(role_permission_id):
-    data = request.get_json()
-    new_role_id = data.get('role_id')
-    new_permission_id = data.get('permission_id')
+    """Update role-permission mapping - Admin only"""
+    try:
+        data = request.get_json()
+        new_role_id = data.get('role_id')
+        new_permission_id = data.get('permission_id')
 
-    if not new_role_id or not new_permission_id:
-        return jsonify({"error": "Missing required fields"}), 400
+        if not new_role_id or not new_permission_id:
+            return jsonify({"error": "Missing required fields"}), 400
 
-    updated_role_permission, error = RolePermissionController.update_role_permission(role_permission_id, new_role_id, new_permission_id)
-    if error:
-        return jsonify({"error": error}), 400
+        # Check if trying to modify admin role
+        if new_role_id == 1:  # Admin role ID
+            return jsonify({"error": "Cannot modify the main administrator role"}), 403
 
-    return jsonify({
-        "message": "Role permission updated successfully",
-        "role_permission": {
-            "id": updated_role_permission.id,
-            "role_id": updated_role_permission.role_id,
-            "permission_id": updated_role_permission.permission_id,
-            "updated_at": updated_role_permission.updated_at.isoformat()
-        }
-    }), 200
+        updated_role_permission, error = RolePermissionController.update_role_permission(
+            role_permission_id, new_role_id, new_permission_id
+        )
+        if error:
+            return jsonify({"error": error}), 400
+
+        logger.info(f"Role permission {role_permission_id} updated successfully")
+        return jsonify({
+            "message": "Role permission updated successfully",
+            "role_permission": updated_role_permission.to_dict()
+        }), 200
+    except Exception as e:
+        logger.error(f"Error updating role permission: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
 
 @role_permission_bp.route('/<int:role_permission_id>', methods=['DELETE'])
 @jwt_required()
+@PermissionManager.require_role(RoleType.ADMIN)
 def remove_permission_from_role(role_permission_id):
-    success, error = RolePermissionController.remove_permission_from_role(role_permission_id)
-    if success:
-        return jsonify({"message": "Permission removed from role successfully"}), 200
-    return jsonify({"error": error}), 404
+    """Remove permission from role - Admin only"""
+    try:
+        # Check if trying to modify admin role permission
+        role_permission = RolePermissionController.get_role_permission(role_permission_id)
+        if role_permission and role_permission.role_id == 1:
+            return jsonify({"error": "Cannot modify the main administrator role"}), 403
+
+        success, error = RolePermissionController.remove_permission_from_role(role_permission_id)
+        if success:
+            logger.info(f"Permission removed from role successfully: {role_permission_id}")
+            return jsonify({"message": "Permission removed from role successfully"}), 200
+        return jsonify({"error": error}), 404
+    except Exception as e:
+        logger.error(f"Error removing permission from role: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
 
 @role_permission_bp.route('/role/<int:role_id>/permissions', methods=['GET'])
 @jwt_required()
+@PermissionManager.require_permission(action="view", entity_type=EntityType.ROLES)
 def get_permissions_by_role(role_id):
-    permissions = RolePermissionController.get_permissions_by_role(role_id)
-    return jsonify([{
-        "id": p.id, 
-        "name": p.name, 
-        "description": p.description
-    } for p in permissions]), 200
+    """Get all permissions for a specific role"""
+    try:
+        current_user = get_jwt_identity()
+        current_user_obj = AuthService.get_current_user(current_user)
+
+        # Check access to super user roles
+        role = Role.query.get(role_id)
+        if role and role.is_super_user and not current_user_obj.role.is_super_user:
+            return jsonify({"error": "Unauthorized access"}), 403
+
+        permissions = RolePermissionController.get_permissions_by_role(role_id)
+        return jsonify([permission.to_dict() for permission in permissions]), 200
+    except Exception as e:
+        logger.error(f"Error getting permissions for role {role_id}: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
 
 @role_permission_bp.route('/permission/<int:permission_id>/roles', methods=['GET'])
 @jwt_required()
+@PermissionManager.require_permission(action="view", entity_type=EntityType.ROLES)
 def get_roles_by_permission(permission_id):
-    roles = RolePermissionController.get_roles_by_permission(permission_id)
-    return jsonify([{
-        "id": r.id, 
-        "name": r.name, 
-        "description": r.description
-    } for r in roles]), 200
+    """Get all roles that have a specific permission"""
+    try:
+        current_user = get_jwt_identity()
+        current_user_obj = AuthService.get_current_user(current_user)
+
+        roles = RolePermissionController.get_roles_by_permission(permission_id)
+        
+        # Filter out super user roles for non-admin users
+        if not current_user_obj.role.is_super_user:
+            roles = [role for role in roles if not role.is_super_user]
+            
+        return jsonify([role.to_dict() for role in roles]), 200
+    except Exception as e:
+        logger.error(f"Error getting roles for permission {permission_id}: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500

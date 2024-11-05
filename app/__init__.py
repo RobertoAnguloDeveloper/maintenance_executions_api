@@ -7,6 +7,7 @@ import logging
 import sys
 from sqlalchemy import inspect
 from flask_cors import CORS
+import logging
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -16,6 +17,15 @@ logger = logging.getLogger(__name__)
 db = SQLAlchemy()
 migrate = Migrate()
 jwt = JWTManager()
+
+
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 def check_db_initialized(db_instance):
     """

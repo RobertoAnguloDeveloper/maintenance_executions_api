@@ -5,127 +5,145 @@ from app.models.role import Role
 from app.services.auth_service import AuthService
 from sqlalchemy.exc import IntegrityError
 from app.models.environment import Environment
+import logging
+
+from app.utils.permission_manager import EntityType, PermissionManager
+
+logger = logging.getLogger(__name__)
 
 user_bp = Blueprint('users', __name__)
 
 @user_bp.route('/register', methods=['POST'])
 @jwt_required()
+@PermissionManager.require_permission(action="create", entity_type=EntityType.USERS)
 def register_user():
-    current_user = get_jwt_identity()
-    current_user_obj = AuthService.get_current_user(current_user)
-    
-    if not current_user_obj or not current_user_obj.role.is_super_user:
-        return jsonify({"error": "Unauthorized. Only super users can register new users."}), 403
+    """Create a new user - Admin and Site Manager only"""
+    try:
+        current_user = get_jwt_identity()
+        current_user_obj = AuthService.get_current_user(current_user)
 
-    data = request.get_json()
-    required_fields = ['first_name', 'last_name', 'email', 'username', 'password', 'role_id', 'environment_id']
-    if not all(field in data for field in required_fields):
-        return jsonify({"error": "Missing required fields"}), 400
+        data = request.get_json()
+        required_fields = ['first_name', 'last_name', 'email', 'username', 'password', 'role_id', 'environment_id']
+        if not all(field in data for field in required_fields):
+            return jsonify({"error": "Missing required fields"}), 400
 
-    if len(data['password']) < 8:
-        return jsonify({"error": "Password must be at least 8 characters long"}), 400
+        # Validate password
+        if len(data['password']) < 8:
+            return jsonify({"error": "Password must be at least 8 characters long"}), 400
 
-    role = Role.query.get(data['role_id'])
-    if not role:
-        return jsonify({"error": f"Role with id {data['role_id']} does not exist"}), 400
+        # Role-based validation
+        if not current_user_obj.role.is_super_user:
+            # Site Managers can only create users in their environment
+            if data['environment_id'] != current_user_obj.environment_id:
+                return jsonify({"error": "Cannot create users for other environments"}), 403
+            
+            # Site Managers cannot create admin users
+            new_role = Role.query.get(data['role_id'])
+            if new_role and new_role.is_super_user:
+                return jsonify({"error": "Cannot create admin users"}), 403
 
-    environment = Environment.query.get(data['environment_id'])
-    if not environment:
-        return jsonify({"error": f"Environment with id {data['environment_id']} does not exist"}), 400
+        new_user, error = UserController.create_user(**data)
+        if error:
+            return jsonify({"error": error}), 400
 
-    new_user, error = UserController.create_user(**data)
-    if error:
-        return jsonify({"error": error}), 400
+        logger.info(f"User {data['username']} created successfully by {current_user}")
+        return jsonify({
+            "message": "User created successfully", 
+            "user": new_user.to_dict()
+        }), 201
 
-    return jsonify({
-        "message": "User created successfully", 
-        "user": {
-            "id": new_user.id,
-            "first_name": new_user.first_name,
-            "last_name": new_user.last_name,
-            "email": new_user.email,
-            "username": new_user.username,
-            "role_id": new_user.role_id,
-            "environment_id": new_user.environment_id
-        }
-    }), 201
+    except Exception as e:
+        logger.error(f"Error creating user: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
 
 @user_bp.route('/login', methods=['POST'])
 def login():
-    data = request.get_json()
-    username = data.get('username')
-    password = data.get('password')
+    """User login endpoint"""
+    try:
+        data = request.get_json()
+        username = data.get('username')
+        password = data.get('password')
 
-    if not username or not password:
-        return jsonify({"error": "Missing username or password"}), 400
+        if not username or not password:
+            return jsonify({"error": "Missing username or password"}), 400
 
-    access_token = AuthService.authenticate_user(username, password)
-    if access_token:
-        return jsonify({"access_token": access_token}), 200
-    return jsonify({"error": "Invalid credentials"}), 401
+        access_token = AuthService.authenticate_user(username, password)
+        if access_token:
+            logger.info(f"User {username} logged in successfully")
+            return jsonify({"access_token": access_token}), 200
+            
+        return jsonify({"error": "Invalid credentials"}), 401
+
+    except Exception as e:
+        logger.error(f"Error during login: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
 
 @user_bp.route('', methods=['GET'])
 @jwt_required()
+@PermissionManager.require_permission(action="view", entity_type=EntityType.USERS)
 def get_all_users():
-    current_user = get_jwt_identity()
-    if not AuthService.get_current_user(current_user).role.is_super_user:
-        return jsonify({"error": "Unauthorized"}), 403
+    """Get all users with role-based filtering"""
+    try:
+        current_user = get_jwt_identity()
+        current_user_obj = AuthService.get_current_user(current_user)
 
-    users = UserController.get_all_users()
-    return jsonify([{
-        "id": user.id,
-        "username": user.username,
-        "first_name": user.first_name,
-        "last_name": user.last_name,
-        "email": user.email,
-        "role": {
-            "id": user.role.id,
-            "name": user.role.name,
-            "description": user.role.description,
-            "is_super_user": user.role.is_super_user
-        } if user.role else None,
-        "environment": {
-            "id": user.environment.id,
-            "name": user.environment.name,
-            "description": user.environment.description
-        } if user.environment else None
-    } for user in users]), 200
+        if current_user_obj.role.is_super_user:
+            users = UserController.get_all_users()
+        else:
+            # Non-admin users can only see users in their environment
+            users = UserController.get_users_by_environment(current_user_obj.environment_id)
+
+        return jsonify([user.to_dict(include_details=True) for user in users]), 200
+
+    except Exception as e:
+        logger.error(f"Error getting users: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
     
 @user_bp.route('/byRole/<int:role_id>', methods=['GET'])
 @jwt_required()
+@PermissionManager.require_permission(action="view", entity_type=EntityType.USERS)
 def get_users_by_role(role_id):
-    current_user = get_jwt_identity()
-    if not AuthService.get_current_user(current_user).role.is_super_user:
-        return jsonify({"error": "Unauthorized"}), 403
+    """Get users by role with environment restrictions"""
+    try:
+        current_user = get_jwt_identity()
+        current_user_obj = AuthService.get_current_user(current_user)
 
-    users = UserController.get_users_by_role(role_id)
-    return jsonify([{
-        "id": user.id,
-        "username": user.username,
-        "role_id": user.role_id,
-        "environment_id": user.environment_id
-    } for user in users]), 200
+        if current_user_obj.role.is_super_user:
+            users = UserController.get_users_by_role(role_id)
+        else:
+            # Filter by both role and environment
+            users = UserController.get_users_by_role_and_environment(role_id, current_user_obj.environment_id)
+
+        return jsonify([user.to_dict() for user in users]), 200
+
+    except Exception as e:
+        logger.error(f"Error getting users by role: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
     
     
 @user_bp.route('/byEnvironment/<int:environment_id>', methods=['GET'])
 @jwt_required()
+@PermissionManager.require_permission(action="view", entity_type=EntityType.USERS)
 def get_users_by_environment(environment_id):
-    current_user = get_jwt_identity()
-    current_user_obj = AuthService.get_current_user(current_user)
-    
-    if not current_user_obj.role.is_super_user and current_user_obj.environment_id != environment_id:
-        return jsonify({"error": "Unauthorized"}), 403
+    """Get users by environment with access control"""
+    try:
+        current_user = get_jwt_identity()
+        current_user_obj = AuthService.get_current_user(current_user)
 
-    users = UserController.get_users_by_environment(environment_id)
-    return jsonify([{
-        "id": user.id,
-        "username": user.username,
-        "role": user.role.name,
-        "environment_id": user.environment_id
-    } for user in users]), 200
+        # Check environment access
+        if not current_user_obj.role.is_super_user and current_user_obj.environment_id != environment_id:
+            return jsonify({"error": "Unauthorized access to environment"}), 403
+
+        users = UserController.get_users_by_environment(environment_id)
+        return jsonify([user.to_dict() for user in users]), 200
+
+    except Exception as e:
+        logger.error(f"Error getting users by environment: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
     
 @user_bp.route('/search', methods=['GET'])
 @jwt_required()
+@PermissionManager.require_permission(action="view", entity_type=EntityType.USERS)
 def search_users():
     current_user = get_jwt_identity()
     if not AuthService.get_current_user(current_user).role.is_super_user:
@@ -165,58 +183,102 @@ def get_user(user_id):
 
 @user_bp.route('/<int:user_id>', methods=['PUT'])
 @jwt_required()
+@PermissionManager.require_permission(action="update", entity_type=EntityType.USERS)
 def update_user(user_id):
-    data = request.get_json()
-    
-    update_fields = {}
-    for field in ['first_name', 'last_name', 'email', 'username', 'password', 'role_id', 'environment_id']:
-        if field in data:
-            update_fields[field] = data[field]
-    
-    updated_user, error = UserController.update_user(user_id, **update_fields)
-    
-    if error:
-        return jsonify({"error": error}), 400
-    
-    if updated_user:
+    """Update user with role-based restrictions"""
+    try:
+        current_user = get_jwt_identity()
+        current_user_obj = AuthService.get_current_user(current_user)
+        
+        # Get the user to be updated
+        user_to_update = UserController.get_user(user_id)
+        if not user_to_update:
+            return jsonify({"error": "User not found"}), 404
+
+        # Role-based access control
+        if not current_user_obj.role.is_super_user:
+            # Can only update users in same environment
+            if user_to_update.environment_id != current_user_obj.environment_id:
+                return jsonify({"error": "Cannot update users from other environments"}), 403
+                
+            # Cannot update admin users
+            if user_to_update.role.is_super_user:
+                return jsonify({"error": "Cannot update admin users"}), 403
+
+        data = request.get_json()
+        allowed_fields = ['first_name', 'last_name', 'email', 'password']
+        
+        # Only admins can update these fields
+        if current_user_obj.role.is_super_user:
+            allowed_fields.extend(['username', 'role_id', 'environment_id'])
+            
+        update_fields = {k: v for k, v in data.items() if k in allowed_fields}
+        
+        updated_user, error = UserController.update_user(user_id, **update_fields)
+        if error:
+            return jsonify({"error": error}), 400
+
+        logger.info(f"User {user_id} updated successfully by {current_user}")
         return jsonify({
             "message": "User updated successfully",
-            "user": {
-                "id": updated_user.id,
-                "first_name": updated_user.first_name,
-                "last_name": updated_user.last_name,
-                "email": updated_user.email,
-                "username": updated_user.username,
-                "role_id": updated_user.role_id,
-                "environment_id": updated_user.environment_id
-            }
+            "user": updated_user.to_dict()
         }), 200
-    return jsonify({"error": "User not found"}), 404
+
+    except Exception as e:
+        logger.error(f"Error updating user {user_id}: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
 
 @user_bp.route('/<int:user_id>', methods=['DELETE'])
 @jwt_required()
+@PermissionManager.require_permission(action="delete", entity_type=EntityType.USERS)
 def delete_user(user_id):
-    current_user = get_jwt_identity()
-    if not AuthService.get_current_user(current_user).role.is_super_user:
-        return jsonify({"error": "Unauthorized"}), 403
+    """Delete user with role-based restrictions"""
+    try:
+        current_user = get_jwt_identity()
+        current_user_obj = AuthService.get_current_user(current_user)
 
-    if UserController.delete_user(user_id):
-        return jsonify({"message": "User deleted"}), 200
-    return jsonify({"error": "User not found"}), 404
+        # Get the user to be deleted
+        user_to_delete = UserController.get_user(user_id)
+        if not user_to_delete:
+            return jsonify({"error": "User not found"}), 404
+
+        # Role-based access control
+        if not current_user_obj.role.is_super_user:
+            # Can only delete users in same environment
+            if user_to_delete.environment_id != current_user_obj.environment_id:
+                return jsonify({"error": "Cannot delete users from other environments"}), 403
+                
+            # Cannot delete admin users
+            if user_to_delete.role.is_super_user:
+                return jsonify({"error": "Cannot delete admin users"}), 403
+            
+            # Cannot delete themselves
+            if user_to_delete.id == current_user_obj.id:
+                return jsonify({"error": "Cannot delete own account"}), 403
+
+        success = UserController.delete_user(user_id)
+        if success:
+            logger.info(f"User {user_id} deleted successfully by {current_user}")
+            return jsonify({"message": "User deleted successfully"}), 200
+            
+        return jsonify({"error": "Failed to delete user"}), 400
+
+    except Exception as e:
+        logger.error(f"Error deleting user {user_id}: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
 
 @user_bp.route('/current', methods=['GET'])
 @jwt_required()
 def get_current_user():
-    current_user = get_jwt_identity()
-    user = AuthService.get_current_user(current_user)
-    if user:
-        return jsonify({
-            "id": user.id,
-            "first_name": user.first_name,
-            "last_name": user.last_name,
-            "email": user.email,
-            "username": user.username,
-            "role_id": user.role_id,
-            "environment_id": user.environment_id
-        }), 200
-    return jsonify({"error": "User not found"}), 404
+    """Get current user details"""
+    try:
+        current_user = get_jwt_identity()
+        user = AuthService.get_current_user(current_user)
+        if user:
+            return jsonify(user.to_dict(include_details=True)), 200
+            
+        return jsonify({"error": "User not found"}), 404
+
+    except Exception as e:
+        logger.error(f"Error getting current user: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500

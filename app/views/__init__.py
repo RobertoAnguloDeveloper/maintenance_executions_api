@@ -1,3 +1,5 @@
+# app/views/__init__.py
+
 from .user_views import user_bp
 from .role_views import role_bp
 from .permission_views import permission_bp
@@ -9,6 +11,7 @@ from .form_views import form_bp
 from .form_submission_views import form_submission_bp
 from .attachment_views import attachment_bp
 from .role_permission_views import role_permission_bp
+from .form_question_views import form_question_bp
 from .frontend_views import frontend_bp
 
 def register_blueprints(app):
@@ -17,13 +20,14 @@ def register_blueprints(app):
         (role_bp, '/api/roles'),
         (permission_bp, '/api/permissions'),
         (environment_bp, '/api/environments'),
-        (question_type_bp, '/api/question_types'),
+        (question_type_bp, '/api/question-types'),
         (question_bp, '/api/questions'),
         (answer_bp, '/api/answers'),
         (form_bp, '/api/forms'),
-        (form_submission_bp, '/api/form_submissions'),
+        (form_submission_bp, '/api/form-submissions'),
         (attachment_bp, '/api/attachments'),
-        (role_permission_bp, '/api/role_permissions'),
+        (role_permission_bp, '/api/role-permissions'),
+        (form_question_bp, '/api/form-questions'),
         (frontend_bp, ''),
     ]
 

@@ -1,10 +1,9 @@
 from app import db
 from app.models.timestamp_mixin import TimestampMixin
-from app.models.soft_delete_mixin import SoftDeleteMixin
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
 
-class User(TimestampMixin, SoftDeleteMixin, db.Model):
+class User(TimestampMixin, db.Model):
     __tablename__ = 'users'
     
     id = db.Column(db.Integer, primary_key=True)

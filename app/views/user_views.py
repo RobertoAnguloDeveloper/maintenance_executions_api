@@ -87,13 +87,21 @@ def get_all_users():
         current_user = get_jwt_identity()
         current_user_obj = AuthService.get_current_user(current_user)
 
+        # Include deleted records only for admin users
+        include_deleted = current_user_obj.role.is_super_user and request.args.get('include_deleted', '').lower() == 'true'
+
         if current_user_obj.role.is_super_user:
-            users = UserController.get_all_users()
+            users = UserController.get_all_users(include_deleted=include_deleted)
         else:
-            # Non-admin users can only see users in their environment
+            # Non-admin users can only see active users in their environment
             users = UserController.get_users_by_environment(current_user_obj.environment_id)
 
-        return jsonify([user.to_dict(include_details=True) for user in users]), 200
+        return jsonify([
+            user.to_dict(
+                include_details=True,
+                include_deleted=current_user_obj.role.is_super_user
+            ) for user in users
+        ]), 200
 
     except Exception as e:
         logger.error(f"Error getting users: {str(e)}")

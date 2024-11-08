@@ -16,6 +16,11 @@ class FormAnswerController:
     def bulk_create_form_answers(form_answers_data):
         """Bulk create form answers"""
         return FormAnswerService.bulk_create_form_answers(form_answers_data)
+    
+    @staticmethod
+    def get_all_form_answers():
+        """Get a specific form answer"""
+        return FormAnswerService.get_all_form_answers()
 
     @staticmethod
     def get_form_answer(form_answer_id):

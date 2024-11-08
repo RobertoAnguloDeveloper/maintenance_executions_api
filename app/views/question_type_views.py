@@ -1,5 +1,6 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
+from app.controllers.question_type_controller import QuestionTypeController
 from app.services.auth_service import AuthService
 from app.services.question_type_service import QuestionTypeService
 from app.utils.permission_manager import PermissionManager, EntityType, RoleType
@@ -56,7 +57,7 @@ def create_question_type():
 def get_all_question_types():
     """Get all question types - Available to all authenticated users"""
     try:
-        question_types = QuestionTypeService.get_all_question_types()
+        question_types = QuestionTypeController.get_all_question_types()
         return jsonify([qt.to_dict() for qt in question_types]), 200
 
     except Exception as e:

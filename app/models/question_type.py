@@ -3,12 +3,20 @@ from app.models.timestamp_mixin import TimestampMixin
 
 class QuestionType(TimestampMixin, db.Model):
     __tablename__ = 'question_types'
+    TYPE_DATETIME = 'datetime'
     
     id = db.Column(db.Integer, primary_key=True)
     type = db.Column(db.String(255), nullable=False)
     
     # Relationships
     questions = db.relationship('Question', back_populates='question_type', lazy='dynamic')
+    
+    @classmethod
+    def initialize_types(cls):
+        default_types = [
+            'single_text', 'multiple_choice', 
+            'single_choice', 'date', 'datetime'
+        ]
     
     def __repr__(self):
         return f'<QuestionType {self.type}>'

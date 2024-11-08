@@ -163,47 +163,55 @@ def get_public_forms():
 @jwt_required()
 @PermissionManager.require_permission(action="create", entity_type=EntityType.FORMS)
 def create_form():
-    """Create a new form with questions - restricted to Admin, Site Manager, and Supervisor roles"""
     try:
-        current_user = get_jwt_identity()
-        user = AuthService.get_current_user(current_user)
-        
-        # Validate request data
         data = request.get_json()
-        required_fields = ['title', 'questions']
+        current_user = get_jwt_identity()
+        logger.debug(f"Current user creating form: {current_user}")
+        
+        if not data.get('user_id'):
+            user = AuthService.get_current_user(current_user)
+            if not user:
+                logger.error(f"User not found: {current_user}")
+                return jsonify({"error": "User not found"}), 404
+        else:
+            user = UserController.get_user(data.get('user_id'))
+
+        
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+
+        required_fields = ['title']
         if not all(field in data for field in required_fields):
             return jsonify({"error": "Missing required fields"}), 400
 
-        # Additional validation for public forms
-        if data.get('is_public', False):
-            if user.role.name == Role.SUPERVISOR.value:
-                return jsonify({
-                    "error": "Unauthorized",
-                    "message": "Supervisors cannot create public forms"
-                }), 403
+        logger.debug(f"Creating form with data: {data}")
 
-        # Create form with environment context
-        new_form, error = FormController.create_form(
-            title=data['title'],
-            description=data.get('description'),
-            user_id=user.id,
-            questions=data['questions'],
-            is_public=data.get('is_public', False),
-            environment_id=user.environment_id  # Ensure form is associated with user's environment
-        )
+        try:
+            new_form, error = FormController.create_form(
+                title=data['title'],
+                description=data.get('description'),
+                user_id=user.id,
+                is_public=data.get('is_public', False)
+            )
 
-        if error:
-            return jsonify({"error": error}), 400
+            if error:
+                logger.error(f"Error creating form: {error}")
+                return jsonify({"error": error}), 400
 
-        logger.info(f"Form created successfully by user {user.username} in environment {user.environment_id}")
-        return jsonify({
-            "message": "Form created successfully",
-            "form": new_form.to_dict()
-        }), 201
+            logger.info(f"Form created successfully by user {AuthService.get_current_user(current_user).username}")
+            return jsonify({
+                "message": "Form created successfully",
+                "form": new_form.to_dict(),
+                "form_creator": AuthService.get_current_user(current_user).username
+            }), 201
+
+        except Exception as e:
+            logger.error(f"Database error while creating form: {str(e)}")
+            return jsonify({"error": "Database error", "details": str(e)}), 500
 
     except Exception as e:
-        logger.error(f"Error creating form: {str(e)}")
-        return jsonify({"error": "Internal server error"}), 500
+        logger.error(f"Error in create_form: {str(e)}", exc_info=True)
+        return jsonify({"error": "Internal server error", "details": str(e)}), 500
 
 
 @form_bp.route('/<int:form_id>/questions', methods=['POST'])

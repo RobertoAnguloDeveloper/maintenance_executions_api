@@ -60,7 +60,7 @@ def get_all_roles():
             # Non-admin users can't see super user roles
             roles = [role for role in roles if not role.is_super_user]
 
-        return jsonify([role.to_dict(include_permissions=True) for role in roles]), 200
+        return jsonify([role.to_dict() for role in roles]), 200
 
     except Exception as e:
         logger.error(f"Error getting roles: {str(e)}")

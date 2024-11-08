@@ -85,6 +85,32 @@ def bulk_create_form_answers():
     except Exception as e:
         logger.error(f"Error creating bulk form answers: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
+    
+@form_answer_bp.route('', methods=['GET'])
+@jwt_required()
+@PermissionManager.require_permission(action="view", entity_type=EntityType.FORMS)
+def get_all_form_answers():
+    """Get all form answers with role-based filtering"""
+    try:
+        current_user = get_jwt_identity()
+        user = AuthService.get_current_user(current_user)
+                
+        # Use RoleType constants instead of Role enum
+        if user.role.name == RoleType.TECHNICIAN:
+            # Technicians can only see public forms
+            return None
+        elif user.role.name in [RoleType.SUPERVISOR, RoleType.SITE_MANAGER]:
+            # Supervisors and Site Managers see forms in their environment
+            return None
+        else:
+            # Admins see all forms
+            form_answers = FormAnswerController.get_all_form_answers()
+        
+        return jsonify([form_answers.to_dict() for form_answers in form_answers]), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting forms: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
 
 @form_answer_bp.route('/question/<int:form_question_id>', methods=['GET'])
 @jwt_required()

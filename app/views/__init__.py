@@ -12,6 +12,7 @@ from .form_submission_views import form_submission_bp
 from .attachment_views import attachment_bp
 from .role_permission_views import role_permission_bp
 from .form_question_views import form_question_bp
+from .form_answer_views import form_answer_bp
 from .frontend_views import frontend_bp
 
 def register_blueprints(app):
@@ -28,6 +29,7 @@ def register_blueprints(app):
         (attachment_bp, '/api/attachments'),
         (role_permission_bp, '/api/role-permissions'),
         (form_question_bp, '/api/form-questions'),
+        (form_answer_bp, '/api/form-answers'),
         (frontend_bp, ''),
     ]
 

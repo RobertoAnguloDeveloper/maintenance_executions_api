@@ -48,7 +48,7 @@ class QuestionTypeService:
     @staticmethod
     def get_all_question_types():
         """Get all question types."""
-        return db.session.scalars(select(QuestionType).order_by(QuestionType.type)).all()
+        return QuestionType.query.all()
 
     @staticmethod
     def get_question_type(type_id):

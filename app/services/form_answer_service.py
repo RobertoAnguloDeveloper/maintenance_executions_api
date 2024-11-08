@@ -49,6 +49,11 @@ class FormAnswerService:
         except Exception as e:
             db.session.rollback()
             return None, str(e)
+        
+    @staticmethod
+    def get_all_form_answers():
+        """Get a specific form answer"""
+        return FormAnswer.query.order_by(FormAnswer.id).all()
 
     @staticmethod
     def get_form_answer(form_answer_id):

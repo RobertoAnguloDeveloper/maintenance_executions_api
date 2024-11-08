@@ -37,7 +37,6 @@ class FormService(BaseService):
             joinedload(Form.form_questions)
                 .joinedload(FormQuestion.question)
                 .joinedload(Question.question_type),
-            joinedload(Form.submissions)
         )
         
         if is_public is not None:
@@ -151,7 +150,7 @@ class FormService(BaseService):
                 .order_by(Form.created_at.desc())
                 .all())
 
-    def create_form_with_questions(self, title, description, user_id, questions, is_public=False):
+    def create_form(title, description, user_id, is_public=False):
         """Create a new form with questions"""
         try:
             form = Form(
@@ -161,15 +160,6 @@ class FormService(BaseService):
                 is_public=is_public
             )
             db.session.add(form)
-            
-            # Add questions with order
-            for question in questions:
-                form_question = FormQuestion(
-                    form=form,
-                    question_id=question['question_id'],
-                    order_number=question.get('order_number')
-                )
-                db.session.add(form_question)
             
             db.session.commit()
             return form, None

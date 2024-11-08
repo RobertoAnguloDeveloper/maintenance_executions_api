@@ -1,16 +1,16 @@
 # app/controllers/form_controller.py
 
+from app.models.form import Form
 from app.services.form_service import FormService
 
 class FormController:
     @staticmethod
-    def create_form(title, description, user_id, questions, is_public=False):
+    def create_form(title, description, user_id, is_public=False):
         """Create a new form with questions"""
-        return FormService.create_form_with_questions(
+        return FormService.create_form(
             title=title,
             description=description,
             user_id=user_id,
-            questions=questions,
             is_public=is_public
         )
 

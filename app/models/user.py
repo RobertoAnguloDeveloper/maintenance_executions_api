@@ -14,6 +14,8 @@ class User(TimestampMixin, db.Model):
     password_hash = db.Column(db.String(255), nullable=False)
     role_id = db.Column(db.Integer, db.ForeignKey('roles.id'))
     environment_id = db.Column(db.Integer, db.ForeignKey('environments.id'))
+    is_deleted = db.Column(db.Boolean, default=False)
+    deleted_at = db.Column(db.DateTime, nullable=True)
 
     # Relationships
     role = db.relationship('Role', back_populates='users')
@@ -26,6 +28,14 @@ class User(TimestampMixin, db.Model):
 
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
+    
+    def soft_delete(self):
+        self.is_deleted = True
+        self.deleted_at = datetime.utcnow()
+
+    def restore(self):
+        self.is_deleted = False
+        self.deleted_at = None
 
     def to_dict(self, include_details=False, include_deleted=False):
         """Convert User object to dictionary representation"""

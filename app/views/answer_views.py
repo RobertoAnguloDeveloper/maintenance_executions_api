@@ -34,8 +34,7 @@ def create_answer():
 
         new_answer, error = AnswerController.create_answer(
             value=value,
-            remarks=remarks,
-            environment_id=user.environment_id  # Associate with user's environment
+            remarks=remarks
         )
 
         if error:

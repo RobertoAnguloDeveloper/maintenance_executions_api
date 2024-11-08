@@ -4,6 +4,9 @@ from sqlalchemy.orm import joinedload
 from sqlalchemy.exc import IntegrityError
 from datetime import datetime
 from app.services.base_service import BaseService
+import logging
+
+logger = logging.getLogger(__name__)
 
 class UserService(BaseService):
     def __init__(self):
@@ -49,11 +52,19 @@ class UserService(BaseService):
         return User.query.order_by(User.id).all()
     
     @staticmethod
-    def get_all_users_with_relations():
-        return User.query.options(
-            joinedload(User.role), 
-            joinedload(User.environment)
-        ).order_by(User.id).all()
+    def get_all_users_with_relations(include_deleted=False):
+        try:
+            query = User.query.options(
+                joinedload(User.role),
+                joinedload(User.environment)
+            )
+            if not include_deleted:
+                query = query.filter(User.is_deleted == False)
+            users = query.order_by(User.id).all()
+            return users
+        except Exception as e:
+            logger.error(f"Database error getting users: {str(e)}", exc_info=True)
+            raise
     
     @staticmethod
     def search_users(username=None, role_id=None, environment_id=None):
@@ -94,8 +105,13 @@ class UserService(BaseService):
         return User.query.filter_by(role_id=role_id).all()
 
     @staticmethod
-    def get_users_by_environment(environment_id):
-        return User.query.filter_by(environment_id=environment_id).all()
+    def get_users_by_environment(environment_id: int):
+        """Get users by environment ID"""
+        try:
+            return User.query.filter_by(environment_id=environment_id).all()
+        except Exception as e:
+            logger.error(f"Error getting users by environment: {str(e)}", exc_info=True)
+            raise
 
     @staticmethod
     def delete_user(user_id):

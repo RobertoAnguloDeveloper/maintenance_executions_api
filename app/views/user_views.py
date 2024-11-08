@@ -82,30 +82,35 @@ def login():
 @jwt_required()
 @PermissionManager.require_permission(action="view", entity_type=EntityType.USERS)
 def get_all_users():
-    """Get all users with role-based filtering"""
     try:
         current_user = get_jwt_identity()
         current_user_obj = AuthService.get_current_user(current_user)
+        if not current_user_obj:
+            return jsonify({"error": "User not found"}), 404
 
-        # Include deleted records only for admin users
-        include_deleted = current_user_obj.role.is_super_user and request.args.get('include_deleted', '').lower() == 'true'
+        include_deleted = (current_user_obj.role.is_super_user and 
+                           request.args.get('include_deleted', '').lower() == 'true')
 
-        if current_user_obj.role.is_super_user:
-            users = UserController.get_all_users(include_deleted=include_deleted)
-        else:
-            # Non-admin users can only see active users in their environment
-            users = UserController.get_users_by_environment(current_user_obj.environment_id)
+        try:
+            if current_user_obj.role.is_super_user:
+                users = UserController.get_all_users(include_deleted=include_deleted)
+            else:
+                users = UserController.get_users_by_environment(current_user_obj.environment_id)
 
-        return jsonify([
-            user.to_dict(
+            user_list = [user.to_dict(
                 include_details=True,
                 include_deleted=current_user_obj.role.is_super_user
-            ) for user in users
-        ]), 200
+            ) for user in users]
+
+            return jsonify(user_list), 200
+
+        except Exception as e:
+            logger.error(f"Database error while fetching users: {str(e)}")
+            return jsonify({"error": f"Database error: {str(e)}"}), 500
 
     except Exception as e:
-        logger.error(f"Error getting users: {str(e)}")
-        return jsonify({"error": "Internal server error"}), 500
+        logger.error(f"Error in get_all_users: {str(e)}", exc_info=True)
+        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
     
 @user_bp.route('/byRole/<int:role_id>', methods=['GET'])
 @jwt_required()

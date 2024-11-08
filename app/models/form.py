@@ -1,6 +1,8 @@
 from app import db
-from app.models.form_answer import FormAnswer
 from app.models.timestamp_mixin import TimestampMixin
+from sqlalchemy.orm import joinedload
+from sqlalchemy import select, func
+from typing import List, Dict, Any
 
 class Form(TimestampMixin, db.Model):
     __tablename__ = 'forms'
@@ -16,40 +18,86 @@ class Form(TimestampMixin, db.Model):
     form_questions = db.relationship('FormQuestion', back_populates='form', 
                                    cascade='all, delete-orphan',
                                    order_by='FormQuestion.order_number')
-    submissions = db.relationship('FormSubmission', back_populates='form', 
-                                cascade='all, delete-orphan')
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f'<Form {self.title}>'
-    
-    def to_dict(self):
+
+    def _get_creator_dict(self) -> Dict[str, Any]:
+        """Get creator information as a dictionary."""
+        if not self.creator:
+            return None
+            
+        return {
+            'id': self.creator.id,
+            'username': self.creator.username,
+            'first_name': self.creator.first_name,
+            'last_name': self.creator.last_name,
+            'environment_id': self.creator.environment_id
+        }
+
+    def _get_submissions_count(self) -> int:
+        """Get count of submissions for this form."""
+        from app.models.form_submission import FormSubmission
+        return FormSubmission.query.filter_by(form_submitted=str(self.id)).count()
+
+    def _get_question_answers(self, form_question) -> List[Dict[str, Any]]:
+        """Get possible answers for a specific form question through form_answers."""
+        if form_question.question.question_type.type not in ['single_choice', 'multiple_choice', 'single-choice']:
+            return []
+
+        from app.models.form_answer import FormAnswer
+        form_answers = FormAnswer.query.filter_by(form_question_id=form_question.id).all()
+        
+        return [{
+            'id': form_answer.answer.id,
+            'value': form_answer.answer.value,
+            'remarks': form_answer.remarks
+        } for form_answer in form_answers if form_answer.answer]
+
+    def _format_question(self, form_question) -> Dict[str, Any]:
+        """Format a single question with its details."""
+        question = form_question.question
+        return {
+            'id': question.id,
+            'text': question.text,
+            'type': question.question_type.type,
+            'order_number': form_question.order_number,
+            'has_remarks': question.has_remarks,
+            'possible_answers': self._get_question_answers(form_question)
+        }
+
+    def _get_questions_list(self) -> List[Dict[str, Any]]:
+        """Get formatted list of questions."""
+        sorted_questions = sorted(self.form_questions, key=lambda x: x.order_number)
+        return [self._format_question(fq) for fq in sorted_questions]
+
+    def _format_timestamp(self, timestamp) -> str:
+        """Format timestamp to ISO format."""
+        return timestamp.isoformat() if timestamp else None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert form to dictionary representation."""
         return {
             'id': self.id,
             'title': self.title,
             'description': self.description,
             'is_public': self.is_public,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
-            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
-            'creator': {
-                'id': self.creator.id,
-                'username': self.creator.username,
-                'first_name': self.creator.first_name,
-                'last_name': self.creator.last_name,
-                'environment_id': self.creator.environment_id
-            } if self.creator else None,
-            'questions': [{
-                'id': fq.question.id,
-                'text': fq.question.text,
-                'type': fq.question.question_type.type,
-                'order_number': fq.order_number,
-                'has_remarks': fq.question.has_remarks,
-                'possible_answers': [
-                    {
-                        'id': fa.answer.id,
-                        'value': fa.answer.value,
-                        'remarks': fa.answer.remarks
-                    } for fa in FormAnswer.query.filter_by(form_question_id=fq.id).all()
-                ] if fq.question.question_type.type in ['single_choice', 'multiple_choice'] else []
-            } for fq in sorted(self.form_questions, key=lambda x: x.order_number)],
-            'submissions_count': len(self.submissions)
+            'created_at': self._format_timestamp(self.created_at),
+            'updated_at': self._format_timestamp(self.updated_at),
+            'assigned_to': self._get_creator_dict(),
+            'questions': self._get_questions_list(),
+            'submissions_count': self._get_submissions_count()
         }
+
+    @classmethod
+    def get_form_with_relations(cls, form_id: int):
+        """Get form with all necessary relationships loaded."""
+        return cls.query.options(
+            joinedload(cls.creator),
+            joinedload(cls.form_questions)
+                .joinedload('question')
+                .joinedload('question_type'),
+            joinedload(cls.form_questions)
+                .joinedload('form_answers')
+                .joinedload('answer')
+        ).get(form_id)

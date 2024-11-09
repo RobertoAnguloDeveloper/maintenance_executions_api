@@ -1,6 +1,10 @@
 from app import db
+from app.controllers.form_controller import FormController
+from app.controllers.user_controller import UserController
 from app.models import Environment
 from datetime import datetime
+from app.models.form import Form
+from app.models.user import User
 from app.services.base_service import BaseService
 from sqlalchemy.exc import IntegrityError
 
@@ -70,14 +74,21 @@ class EnvironmentService(BaseService):
 
     @staticmethod
     def get_users_in_environment(environment_id):
-        environment = Environment.query.get(environment_id)
-        if environment:
-            return environment.users.all()
+        environment_users = UserController.get_users_by_environment(environment_id)
+        if environment_users:
+            return environment_users
         return []
 
     @staticmethod
     def get_forms_in_environment(environment_id):
-        environment = Environment.query.get(environment_id)
-        if environment:
-            return environment.forms.all()
+        environment_users = UserController.get_users_by_environment(environment_id)
+        environment_forms =[]
+        
+        for user in environment_users:
+            user_forms = FormController.get_forms_by_user(user.id)
+            environment_forms = [form for form in user_forms if form.environment_id == environment_id]
+        
+        print("PASSO: -",environment_forms)
+        if environment_forms:
+            return environment_forms
         return []

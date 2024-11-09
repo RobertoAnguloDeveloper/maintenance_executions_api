@@ -128,14 +128,18 @@ def update_environment(environment_id):
 def delete_environment(environment_id):
     """Delete an environment - Admin only"""
     try:
+        
         # Check if environment has associated users or forms
         users = EnvironmentController.get_users_in_environment(environment_id)
         forms = EnvironmentController.get_forms_in_environment(environment_id)
+        print("PASSO:",forms)
         
         if users or forms:
             return jsonify({
                 "error": "Cannot delete environment with associated users or forms"
             }), 400
+            
+        
 
         success, error = EnvironmentController.delete_environment(environment_id)
         if success:
@@ -160,7 +164,20 @@ def get_users_in_environment(environment_id):
             return jsonify({"error": "Unauthorized access"}), 403
 
         users = EnvironmentController.get_users_in_environment(environment_id)
+        
+        if not users:
+            if not EnvironmentController.get_environment(environment_id):
+                return jsonify({"error": "Environment not found"}), 404
+        
+        if len(users) == 0:
+            
+            return jsonify({
+                "environment_name": EnvironmentController.get_environment(environment_id).name,
+                "users_count": len(users)
+                }),200
+        
         return jsonify([user.to_dict() for user in users]), 200
+    
     except Exception as e:
         logger.error(f"Error getting users in environment {environment_id}: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500

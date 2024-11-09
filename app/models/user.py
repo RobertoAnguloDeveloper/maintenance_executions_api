@@ -45,8 +45,16 @@ class User(TimestampMixin, db.Model):
             'first_name': self.first_name,
             'last_name': self.last_name,
             'email': self.email,
-            'role_id': self.role_id,
-            'environment_id': self.environment_id,
+            'role': {
+                        "role_id": self.role_id,
+                        "role_name": self.role.name if self.role else None,
+                        "role_description": self.role.description if self.role else None
+                     },
+            'environment':{
+                            "environment_id": self.environment_id,
+                            "environment_name": self.environment.name if self.environment else None,
+                            "environment_description": self.environment.description if self.environment else None
+                            },
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }

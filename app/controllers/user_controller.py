@@ -37,5 +37,9 @@ class UserController:
         return UserService.get_users_by_role(role_id)
     
     @staticmethod
+    def get_users_by_role_and_environment(role_id, enviornment_id):
+        return UserService.get_users_by_role_and_environment(role_id, enviornment_id)
+    
+    @staticmethod
     def get_users_by_environment(environment_id):
         return UserService.get_users_by_environment(environment_id)

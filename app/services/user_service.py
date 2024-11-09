@@ -103,6 +103,11 @@ class UserService(BaseService):
     @staticmethod
     def get_users_by_role(role_id):
         return User.query.filter_by(role_id=role_id).all()
+    
+    @staticmethod
+    def get_users_by_role_and_environment(role_id, environment_id):
+        environment_users = User.query.filter_by(environment_id=environment_id).all()
+        return [user for user in environment_users if user.role_id == role_id]
 
     @staticmethod
     def get_users_by_environment(environment_id: int):

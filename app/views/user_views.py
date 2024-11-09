@@ -1,5 +1,7 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
+from app.controllers.environment_controller import EnvironmentController
+from app.controllers.role_controller import RoleController
 from app.controllers.user_controller import UserController
 from app.models.role import Role
 from app.services.auth_service import AuthService
@@ -7,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from app.models.environment import Environment
 import logging
 
-from app.utils.permission_manager import EntityType, PermissionManager
+from app.utils.permission_manager import EntityType, PermissionManager, RoleType
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +18,7 @@ user_bp = Blueprint('users', __name__)
 @user_bp.route('/register', methods=['POST'])
 @jwt_required()
 @PermissionManager.require_permission(action="create", entity_type=EntityType.USERS)
+@PermissionManager.require_role(RoleType.ADMIN)
 def register_user():
     """Create a new user - Admin and Site Manager only"""
     try:
@@ -126,6 +129,7 @@ def get_users_by_role(role_id):
         else:
             # Filter by both role and environment
             users = UserController.get_users_by_role_and_environment(role_id, current_user_obj.environment_id)
+            #return users
 
         return jsonify([user.to_dict() for user in users]), 200
 
@@ -177,8 +181,10 @@ def search_users():
     return jsonify([{
         "id": user.id,
         "username": user.username,
-        "role_id": user.role_id,
-        "environment_id": user.environment_id
+        "role": {"role_id":RoleController.get_role(user.role_id).id,
+                 "role_name":RoleController.get_role(user.role_id).name},
+        "environment": {"environment_id":EnvironmentController.get_environment(user.environment_id).id,
+                        "environment_name":EnvironmentController.get_environment(user.environment_id).name}
     } for user in users]), 200
 
 @user_bp.route('/<int:user_id>', methods=['GET'])
@@ -244,6 +250,7 @@ def update_user(user_id):
 @user_bp.route('/<int:user_id>', methods=['DELETE'])
 @jwt_required()
 @PermissionManager.require_permission(action="delete", entity_type=EntityType.USERS)
+@PermissionManager.require_role(RoleType.ADMIN)
 def delete_user(user_id):
     """Delete user with role-based restrictions"""
     try:

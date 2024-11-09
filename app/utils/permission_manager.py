@@ -57,7 +57,7 @@ class PermissionManager:
     },
     Role.SITE_MANAGER: {
         "permissions": [
-            "view_users", "create_users", "update_users", "delete_users",
+            "view_users", "update_users", "delete_users",
             "view_forms", "create_forms", "update_forms", "delete_forms",
             "view_environments",  # Added environment permissions
             "view_questions", "create_questions", "update_questions", "delete_questions",
@@ -69,7 +69,6 @@ class PermissionManager:
         "permissions": [
             "view_forms", "create_forms", "update_forms", "delete_forms",
             "view_environments",  # Added environment view permission
-            "view_questions", "create_questions", "update_questions",
             "view_submissions", "update_submissions"
         ],
         "environment_restricted": True

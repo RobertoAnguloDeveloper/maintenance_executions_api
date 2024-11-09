@@ -178,14 +178,7 @@ def search_users():
         environment_id = request.args.get('environment_id')
 
     users = UserController.search_users(username, role_id, environment_id)
-    return jsonify([{
-        "id": user.id,
-        "username": user.username,
-        "role": {"role_id":RoleController.get_role(user.role_id).id,
-                 "role_name":RoleController.get_role(user.role_id).name},
-        "environment": {"environment_id":EnvironmentController.get_environment(user.environment_id).id,
-                        "environment_name":EnvironmentController.get_environment(user.environment_id).name}
-    } for user in users]), 200
+    return jsonify([user.to_dict() for user in users]), 200
 
 @user_bp.route('/<int:user_id>', methods=['GET'])
 @jwt_required()

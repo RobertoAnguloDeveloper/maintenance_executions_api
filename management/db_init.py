@@ -8,12 +8,30 @@ from app.models.user import User
 from app.models.role import Role
 from app.models.environment import Environment
 from datetime import datetime
+from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 
 class DatabaseInitializer:
+    def ensure_database_exists(self):
+        """Ensure database and required extensions exist."""
+        try:
+            with self.app.app_context():
+                db.engine.connect()
+                
+                # Create extensions if they don't exist using SQLAlchemy text()
+                db.session.execute(text('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"'))
+                db.session.commit()
+                
+                return True, None
+        except Exception as e:
+            logger.error(f"Database connection error: {str(e)}")
+            return False, str(e)
+    
     def __init__(self, app):
         self.app = app
+        
+    
 
     def prompt_admin_credentials(self):
         """Prompt for admin user details with validation."""
@@ -72,26 +90,29 @@ class DatabaseInitializer:
         }
 
     def init_permissions(self):
-        """Initialize or update all permissions."""
+        """Initialize or update all permissions with clear categorization."""
         permissions_config = {
             # User Management
-            'view_users': 'Can view users',
-            'create_users': 'Can create users',
-            'update_users': 'Can update users',
-            'delete_users': 'Can delete users',
+            'view_users': 'Can view users within their environment',
+            'view_all_users': 'Can view all users across environments',
+            'create_users': 'Can create users within their environment',
+            'update_users': 'Can update users within their environment',
+            'delete_users': 'Can delete users within their environment',
+            'manage_all_users': 'Can manage all users across environments',
             
             # Form Management
-            'view_forms': 'Can view forms',
-            'create_forms': 'Can create forms',
-            'update_forms': 'Can update forms',
-            'delete_forms': 'Can delete forms',
+            'view_forms': 'Can view forms within their environment',
+            'create_forms': 'Can create forms within their environment',
+            'update_forms': 'Can update forms within their environment',
+            'delete_forms': 'Can delete forms within their environment',
             'view_public_forms': 'Can view public forms only',
+            'manage_all_forms': 'Can manage all forms across environments',
             
             # Question Management
             'view_questions': 'Can view questions',
-            'create_questions': 'Can create questions',
-            'update_questions': 'Can update questions',
-            'delete_questions': 'Can delete questions',
+            'create_questions': 'Can create questions within their environment',
+            'update_questions': 'Can update questions within their environment',
+            'delete_questions': 'Can delete questions within their environment',
             
             # Question Type Management
             'view_question_types': 'Can view question types',
@@ -100,28 +121,32 @@ class DatabaseInitializer:
             'delete_question_types': 'Can delete question types',
             
             # Answer Management
-            'view_answers': 'Can view answers',
-            'create_answers': 'Can create answers',
-            'update_answers': 'Can update answers',
-            'delete_answers': 'Can delete answers',
+            'view_answers': 'Can view answers within their environment',
+            'create_answers': 'Can create answers within their environment',
+            'update_answers': 'Can update answers within their environment',
+            'delete_answers': 'Can delete answers within their environment',
             
             # Form Submission Management
-            'view_submissions': 'Can view form submissions',
+            'view_submissions': 'Can view form submissions within their environment',
             'create_submissions': 'Can create form submissions',
-            'update_submissions': 'Can update form submissions',
-            'delete_submissions': 'Can delete form submissions',
-            'view_own_submissions': 'Can view own form submissions',
-            'update_own_submissions': 'Can update own form submissions',
-            'delete_own_submissions': 'Can delete own form submissions',
+            'update_submissions': 'Can update submissions within their environment',
+            'delete_submissions': 'Can delete submissions within their environment',
+            'view_own_submissions': 'Can view own form submissions only',
+            'update_own_submissions': 'Can update own submissions only',
+            'delete_own_submissions': 'Can delete own submissions only',
             
             # Attachment Management
-            'view_attachments': 'Can view attachments',
+            'view_attachments': 'Can view attachments within their environment',
             'create_attachments': 'Can create attachments',
-            'update_attachments': 'Can update attachments',
-            'delete_attachments': 'Can delete attachments',
-            'view_own_attachments': 'Can view own attachments',
-            'update_own_attachments': 'Can update own attachments',
-            'delete_own_attachments': 'Can delete own attachments',
+            'update_attachments': 'Can update attachments within their environment',
+            'delete_attachments': 'Can delete attachments within their environment',
+            'view_own_attachments': 'Can view own attachments only',
+            'update_own_attachments': 'Can update own attachments only',
+            'delete_own_attachments': 'Can delete own attachments only',
+
+            # Environment Management
+            'view_environments': 'Can view environments',
+            'manage_environments': 'Can manage all environments',
         }
 
         created_permissions = []
@@ -150,13 +175,13 @@ class DatabaseInitializer:
             raise
 
     def init_roles(self):
-        """Initialize or update all roles with their specific permissions."""
+        """Initialize or update all roles with carefully defined permission sets."""
         # Get all permissions first
         permissions = {p.name: p for p in self.init_permissions()}
         
         roles_config = {
             'Admin': {
-                'description': 'Full system administrator',
+                'description': 'Full system administrator with unrestricted access',
                 'is_super_user': True,
                 'permissions': list(permissions.values())  # Admin gets all permissions
             },
@@ -164,56 +189,111 @@ class DatabaseInitializer:
                 'description': 'Manager with full access within their environment',
                 'is_super_user': False,
                 'permissions': [
-                    permissions['view_users'],permissions['create_users'],
-                    permissions['update_users'],permissions['update_users'],permissions['delete_users'],
-                    permissions['view_forms'], permissions['create_forms'],
-                    permissions['update_forms'], permissions['delete_forms'],
-                    permissions['view_questions'], permissions['create_questions'],
-                    permissions['update_questions'], permissions['delete_questions'],
-                    permissions['view_question_types'], permissions['create_question_types'],
-                    permissions['update_question_types'], permissions['delete_question_types'],
-                    permissions['view_answers'], permissions['create_answers'],
-                    permissions['update_answers'], permissions['delete_answers'],
-                    permissions['view_submissions'], permissions['create_submissions'],
-                    permissions['update_submissions'], permissions['delete_submissions'],
-                    permissions['view_attachments'], permissions['create_attachments'],
-                    permissions['update_attachments'], permissions['delete_attachments']
+                    # User Management - Limited to viewing within environment
+                    permissions['view_users'],
+                    
+                    # Form Management - Full access within environment
+                    permissions['view_forms'],
+                    permissions['create_forms'],
+                    permissions['update_forms'],
+                    permissions['delete_forms'],
+                    
+                    # Question Management
+                    permissions['view_questions'],
+                    permissions['create_questions'],
+                    permissions['update_questions'],
+                    permissions['delete_questions'],
+                    
+                    # Question Type Management
+                    permissions['view_question_types'],
+                    
+                    # Answer Management
+                    permissions['view_answers'],
+                    permissions['create_answers'],
+                    permissions['update_answers'],
+                    permissions['delete_answers'],
+                    
+                    # Submission Management
+                    permissions['view_submissions'],
+                    permissions['create_submissions'],
+                    permissions['update_submissions'],
+                    permissions['delete_submissions'],
+                    
+                    # Attachment Management
+                    permissions['view_attachments'],
+                    permissions['create_attachments'],
+                    permissions['update_attachments'],
+                    permissions['delete_attachments'],
+                    
+                    # Environment Access
+                    permissions['view_environments']
                 ]
             },
             'Supervisor': {
                 'description': 'Supervisor with form management capabilities',
                 'is_super_user': False,
                 'permissions': [
-                    permissions['view_forms'], permissions['create_forms'],
-                    permissions['update_forms'], permissions['delete_forms'],
-                    permissions['view_questions'], permissions['create_questions'],
-                    permissions['update_questions'], permissions['delete_questions'],
-                    permissions['view_question_types'], permissions['create_question_types'],
-                    permissions['update_question_types'], permissions['delete_question_types'],
-                    permissions['view_answers'], permissions['create_answers'],
-                    permissions['update_answers'], permissions['delete_answers'],
-                    permissions['view_submissions'], permissions['create_submissions'],
-                    permissions['update_submissions'], permissions['delete_submissions'],
-                    permissions['view_attachments'], permissions['create_attachments'],
-                    permissions['update_attachments'], permissions['delete_attachments']
+                    # Form Management
+                    permissions['view_forms'],
+                    permissions['create_forms'],
+                    permissions['update_forms'],
+                    permissions['delete_forms'],
+                    
+                    # Question Management
+                    permissions['view_questions'],
+                    permissions['create_questions'],
+                    permissions['update_questions'],
+                    permissions['delete_questions'],
+                    
+                    # Question Type Management
+                    permissions['view_question_types'],
+                    
+                    # Answer Management
+                    permissions['view_answers'],
+                    permissions['create_answers'],
+                    permissions['update_answers'],
+                    permissions['delete_answers'],
+                    
+                    # Submission Management
+                    permissions['view_submissions'],
+                    permissions['create_submissions'],
+                    permissions['update_submissions'],
+                    permissions['delete_submissions'],
+                    
+                    # Attachment Management
+                    permissions['view_attachments'],
+                    permissions['create_attachments'],
+                    permissions['update_attachments'],
+                    permissions['delete_attachments'],
+                    
+                    # Environment Access
+                    permissions['view_environments']
                 ]
             },
             'Technician': {
                 'description': 'Technical user with limited form access',
                 'is_super_user': False,
                 'permissions': [
+                    # Basic Access
                     permissions['view_public_forms'],
                     permissions['view_questions'],
                     permissions['view_question_types'],
                     permissions['view_answers'],
+                    
+                    # Submission Management
                     permissions['create_submissions'],
                     permissions['view_own_submissions'],
                     permissions['update_own_submissions'],
                     permissions['delete_own_submissions'],
+                    
+                    # Attachment Management
                     permissions['create_attachments'],
                     permissions['view_own_attachments'],
                     permissions['update_own_attachments'],
-                    permissions['delete_own_attachments']
+                    permissions['delete_own_attachments'],
+                    
+                    # Environment Access
+                    permissions['view_environments']
                 ]
             }
         }
@@ -297,8 +377,17 @@ class DatabaseInitializer:
         return user
 
     def init_db(self, check_empty=True):
+        """Initialize the database with proper error handling and validation."""
         try:
+            # First ensure database exists and is accessible
+            success, error = self.ensure_database_exists()
+            if not success:
+                return False, error
+
             with self.app.app_context():
+                # Create all tables
+                db.create_all()
+                
                 if check_empty:
                     admin_role = Role.query.filter_by(is_super_user=True).first()
                     if admin_role and User.query.filter_by(role_id=admin_role.id).first():
@@ -342,11 +431,13 @@ class DatabaseInitializer:
                 print("Password: *********")
                 
                 return True, None
+
         except Exception as e:
             db.session.rollback()
             error_msg = f"Error during database initialization: {str(e)}"
             logger.error(error_msg)
             return False, error_msg
+
 
 def init_database():
     """Convenience function to run database initialization."""

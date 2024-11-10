@@ -81,34 +81,6 @@ def assign_permission_to_role():
         logger.error(f"Error assigning permission to role: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
     
-@role_permission_bp.route('/bulk_assign', methods=['POST'])
-@jwt_required()
-@PermissionManager.require_role(RoleType.ADMIN)
-def bulk_assign_permissions():
-    """Bulk assign permissions to role - Admin only"""
-    try:
-        data = request.get_json()
-        role_id = data.get('role_id')
-        permission_ids = data.get('permission_ids', [])
-
-        if not role_id or not permission_ids:
-            return jsonify({"error": "Missing required fields"}), 400
-
-        # Check if trying to modify admin role
-        role = Role.query.get(role_id)
-        if role and role.is_super_user and role_id == 1:
-            return jsonify({"error": "Cannot modify the main administrator role"}), 403
-
-        success, error = RolePermissionController.bulk_assign_permissions(role_id, permission_ids)
-        if not success:
-            return jsonify({"error": error}), 400
-
-        logger.info(f"Bulk permissions assigned to role {role_id}")
-        return jsonify({"message": "Permissions assigned successfully"}), 200
-    except Exception as e:
-        logger.error(f"Error in bulk permission assignment: {str(e)}")
-        return jsonify({"error": "Internal server error"}), 500
-    
 @role_permission_bp.route('/<int:role_permission_id>', methods=['PUT'])
 @jwt_required()
 @PermissionManager.require_role(RoleType.ADMIN)

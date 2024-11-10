@@ -22,8 +22,16 @@ class RolePermission(TimestampMixin, db.Model):
     def to_dict(self):
         return {
             'id': self.id,
-            'role_id': self.role_id,
-            'permission_id': self.permission_id,
+            'role': {
+                    "id": self.role_id,
+                    "name": self.role.name if self.role else None,
+                    "description": self.role.description if self.role else None
+                    },
+            'permissions': {
+                            "id": self.permission_id,
+                            "name": self.permission.name if self.permission else None,
+                            "description": self.permission.description if self.permission else None
+                            },
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }

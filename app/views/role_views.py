@@ -117,7 +117,7 @@ def update_role(role_id):
         logger.info(f"Role {role_id} updated successfully")
         return jsonify({
             "message": "Role updated successfully", 
-            "role": updated_role.to_dict(include_permissions=True)
+            "role": updated_role.to_dict()
         }), 200
 
     except Exception as e:
@@ -153,49 +153,6 @@ def delete_role(role_id):
 
     except Exception as e:
         logger.error(f"Error deleting role {role_id}: {str(e)}")
-        return jsonify({"error": "Internal server error"}), 500
-    
-@role_bp.route('/<int:role_id>/permissions', methods=['GET'])
-@jwt_required()
-@PermissionManager.require_permission(action="view", entity_type=EntityType.ROLES)
-def get_role_permissions(role_id):
-    """Get all permissions for a role"""
-    try:
-        role = RoleController.get_role(role_id)
-        if not role:
-            return jsonify({"error": "Role not found"}), 404
-
-        return jsonify(role.to_dict(include_permissions=True)['permissions']), 200
-
-    except Exception as e:
-        logger.error(f"Error getting role permissions: {str(e)}")
-        return jsonify({"error": "Internal server error"}), 500
-
-@role_bp.route('/<int:role_id>/permissions/<int:permission_id>', methods=['POST'])
-@jwt_required()
-@PermissionManager.require_role(RoleType.ADMIN)  # Only Admin can manage permissions
-def add_permission_to_role(role_id, permission_id):
-    """Add permission to role - Admin only"""
-    try:
-        role = RoleController.get_role(role_id)
-        if not role:
-            return jsonify({"error": "Role not found"}), 404
-
-        # Prevent modification of the main admin role
-        if role.is_super_user and role_id == 1:
-            return jsonify({"error": "Cannot modify the main administrator role"}), 403
-
-        success, message = RoleController.add_permission_to_role(role_id, permission_id)
-        if success:
-            logger.info(f"Permission {permission_id} added to role {role_id}")
-            return jsonify({
-                "message": "Permission added to role successfully"
-            }), 200
-            
-        return jsonify({"error": message}), 400
-
-    except Exception as e:
-        logger.error(f"Error adding permission to role: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
 
 @role_bp.route('/<int:role_id>/permissions/<int:permission_id>', methods=['DELETE'])

@@ -83,7 +83,7 @@ def get_role(role_id):
         if role.is_super_user and not current_user_obj.role.is_super_user:
             return jsonify({"error": "Unauthorized access"}), 403
 
-        return jsonify(role.to_dict(include_permissions=True)), 200
+        return jsonify(role.to_dict()), 200
 
     except Exception as e:
         logger.error(f"Error getting role {role_id}: {str(e)}")

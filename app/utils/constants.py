@@ -13,9 +13,6 @@ ROLE_ENDPOINTS = {
         'can_access': [
             # User management within environment
             'get_users_by_environment',
-            'create_user',
-            'update_user',
-            'delete_user',
             # Form management within environment
             'get_forms_by_environment',
             'create_form',

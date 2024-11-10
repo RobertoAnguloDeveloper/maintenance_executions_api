@@ -20,7 +20,7 @@ def get_all_role_permissions():
     try:
         role_permissions = RolePermissionController.get_all_role_permissions()
         
-        return jsonify([rp.to_dict(include_relations=True) for rp in role_permissions]), 200
+        return jsonify([rp.to_dict() for rp in role_permissions]), 200
     except Exception as e:
         logger.error(f"Error getting role permissions: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
@@ -42,7 +42,7 @@ def get_roles_with_permissions():
             if role.is_super_user and not current_user_obj.role.is_super_user:
                 continue
                 
-            role_data = role.to_dict(include_permissions=True)
+            role_data = role.to_dict()
             result.append(role_data)
             
         return jsonify(result), 200

@@ -1,6 +1,8 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.controllers.permission_controller import PermissionController
+from app.controllers.role_controller import RoleController
+from app.controllers.user_controller import UserController
 from app.services.auth_service import AuthService
 from app.utils.permission_manager import PermissionManager, EntityType, RoleType
 import logging
@@ -41,43 +43,7 @@ def create_permission():
     except Exception as e:
         logger.error(f"Error creating permission: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
-    
-@permission_bp.route('/bulk-create', methods=['POST'])
-@jwt_required()
-@PermissionManager.require_role(RoleType.ADMIN)  # Only Admin can bulk create permissions
-def bulk_create_permissions():
-    """Bulk create permissions - Admin only"""
-    try:
-        data = request.get_json()
-        permissions_data = data.get('permissions', [])
-        
-        if not permissions_data:
-            return jsonify({"error": "No permissions provided"}), 400
-            
-        # Validate all permission names
-        for perm_data in permissions_data:
-            name = perm_data.get('name')
-            if not name:
-                return jsonify({"error": "Name is required for all permissions"}), 400
-            if not name.islower() or ' ' in name:
-                return jsonify({
-                    "error": f"Invalid permission name format: {name}"
-                }), 400
-        
-        new_permissions, error = PermissionController.bulk_create_permissions(permissions_data)
-        if error:
-            return jsonify({"error": error}), 400
-        
-        logger.info(f"Bulk created {len(new_permissions)} permissions")
-        return jsonify({
-            "message": f"{len(new_permissions)} permissions created successfully",
-            "permissions": [p.to_dict() for p in new_permissions]
-        }), 201
-
-    except Exception as e:
-        logger.error(f"Error in bulk permission creation: {str(e)}")
-        return jsonify({"error": "Internal server error"}), 500
-
+ 
 @permission_bp.route('', methods=['GET'])
 @jwt_required()
 @PermissionManager.require_permission(action="view", entity_type=EntityType.ROLES)
@@ -124,52 +90,31 @@ def get_permission(permission_id):
 
 @permission_bp.route('/check/<int:user_id>/<string:permission_name>', methods=['GET'])
 @jwt_required()
-@PermissionManager.require_role(RoleType.ADMIN, RoleType.SITE_MANAGER)
+@PermissionManager.require_role(RoleType.ADMIN)
 def check_user_permission(user_id, permission_name):
     """Check if a user has a specific permission"""
     try:
         current_user = get_jwt_identity()
         current_user_obj = AuthService.get_current_user(current_user)
+        
+        user = UserController.get_user(user_id)
+        
+        role=RoleController.get_role(user.role_id)
 
         # Site Managers can only check users in their environment
-        if not current_user_obj.role.is_super_user:
-            user_to_check = AuthService.get_user_by_id(user_id)
-            if not user_to_check or user_to_check.environment_id != current_user_obj.environment_id:
+        if role.is_super_user:
+            if not user or user.environment_id != current_user_obj.environment_id:
                 return jsonify({"error": "Unauthorized"}), 403
-
+            
         has_permission = PermissionController.user_has_permission(user_id, permission_name)
-        return jsonify({"has_permission": has_permission}), 200
+        return jsonify({
+                        "username": user.username,
+                        "permission_requested": permission_name,
+                        "has_permission": has_permission
+                        }), 200
 
     except Exception as e:
         logger.error(f"Error checking permission: {str(e)}")
-        return jsonify({"error": "Internal server error"}), 500
-
-@permission_bp.route('/<int:permission_id>/with-roles', methods=['GET'])
-@jwt_required()
-@PermissionManager.require_permission(action="view", entity_type=EntityType.ROLES)
-def get_permission_with_roles(permission_id):
-    """Get permission with associated roles"""
-    try:
-        current_user = get_jwt_identity()
-        user = AuthService.get_current_user(current_user)
-
-        permission = PermissionController.get_permission_with_roles(permission_id)
-        if not permission:
-            return jsonify({"error": "Permission not found"}), 404
-
-        # Filter out sensitive information for non-admin users
-        if not user.role.is_super_user:
-            if permission['name'].startswith('admin_'):
-                return jsonify({"error": "Unauthorized access"}), 403
-            permission['roles'] = [
-                role for role in permission['roles'] 
-                if not role['is_super_user']
-            ]
-
-        return jsonify(permission), 200
-
-    except Exception as e:
-        logger.error(f"Error getting permission with roles: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
 
 @permission_bp.route('/<int:permission_id>', methods=['PUT'])
@@ -243,14 +188,6 @@ def delete_permission(permission_id):
         logger.error(f"Error deleting permission {permission_id}: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
 
-@permission_bp.route('/<int:permission_id>/roles/<int:role_id>', methods=['POST'])
-@jwt_required()
-@PermissionManager.require_role(RoleType.ADMIN)  # Only Admin can delete permissions
-def assign_permission_to_role(permission_id, role_id):
-    success, error = PermissionController.assign_permission_to_role(permission_id, role_id)
-    if success:
-        return jsonify({"message": "Permission assigned to role successfully"}), 200
-    return jsonify({"error": error}), 400
 
 @permission_bp.route('/<int:permission_id>/roles/<int:role_id>', methods=['DELETE'])
 @jwt_required()

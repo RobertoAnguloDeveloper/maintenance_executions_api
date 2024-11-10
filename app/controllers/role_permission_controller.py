@@ -20,6 +20,10 @@ class RolePermissionController:
     @staticmethod
     def get_permissions_by_role(role_id):
         return RolePermissionService.get_permissions_by_role(role_id)
+    
+    @staticmethod
+    def get_permissions_by_user(user_id):
+        return RolePermissionService.get_permissions_by_user(user_id)
 
     @staticmethod
     def get_roles_by_permission(permission_id):

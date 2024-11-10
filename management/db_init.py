@@ -164,8 +164,7 @@ class DatabaseInitializer:
                 'description': 'Manager with full access within their environment',
                 'is_super_user': False,
                 'permissions': [
-                    permissions['view_users'], permissions['create_users'],
-                    permissions['update_users'], permissions['delete_users'],
+                    permissions['view_users'],
                     permissions['view_forms'], permissions['create_forms'],
                     permissions['update_forms'], permissions['delete_forms'],
                     permissions['view_questions'], permissions['create_questions'],

@@ -4,6 +4,7 @@ from app.models.role import Role
 from app.models.permission import Permission
 from sqlalchemy.exc import IntegrityError
 from datetime import datetime
+from app.models.user import User
 from app.services.base_service import BaseService
 import logging
 
@@ -100,6 +101,14 @@ class RolePermissionService(BaseService):
     def get_permissions_by_role(role_id):
         role = Role.query.get(role_id)
         return role.permissions if role else []
+    
+    @staticmethod
+    def get_permissions_by_user(user_id):
+        user = User.query.get(user_id)
+        user_role = Role.query.get(user.role_id)
+        user_role_permissions = RolePermission.query.filter_by(role_id=user_role.id).all() if user_role else []
+        user_permissions = Permission.query.filter(Permission.id.in_([rp.permission_id for rp in user_role_permissions])).all() if user_role_permissions else []
+        return user_permissions if user_permissions else []
 
     @staticmethod
     def get_roles_by_permission(permission_id):

@@ -1,4 +1,5 @@
 from app import db
+from app.controllers.role_permission_controller import RolePermissionController
 from app.models import Permission
 from datetime import datetime
 from app.models.role import Role
@@ -72,12 +73,15 @@ class PermissionService(BaseService):
         if not user:
             return False
         
-        permission = Permission.query.filter_by(name=permission_name).first()
-        if not permission:
-            return False
+        user_permissions = RolePermissionController.get_permissions_by_user(user_id)
         
-        return any(permission in role.permissions for role in user.roles)
-    
+        for permission in user_permissions:
+            if permission.name == permission_name:
+                return True
+        
+        return False
+
+            
     @staticmethod
     def get_permission_with_roles(permission_id):
         permission = Permission.query.options(db.joinedload(Permission.role_permissions).joinedload(RolePermission.role)).get(permission_id)

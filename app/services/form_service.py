@@ -6,6 +6,7 @@ from app.models.attachment import Attachment
 from app.models.form_answer import FormAnswer
 from app.models.form_submission import FormSubmission
 from app.models.question import Question
+from app.models.user import User
 from app.services.base_service import BaseService
 from app.models.form import Form
 from app.models.form_question import FormQuestion
@@ -59,8 +60,7 @@ class FormService(BaseService):
             joinedload(Form.creator),
             joinedload(Form.form_questions)
                 .joinedload(FormQuestion.question)
-                .joinedload(Question.question_type),
-            joinedload(Form.submissions)
+                .joinedload(Question.question_type)
         ).get(form_id)
 
     def get_form_with_relations(self, form_id):
@@ -71,20 +71,48 @@ class FormService(BaseService):
         ).get(form_id)
 
     @staticmethod
-    def get_forms_by_environment(environment_id):
-        """Get forms by environment ID"""
-        return (Form.query
-                .join(Form.creator)
-                .filter_by(environment_id=environment_id)
-                .options(
-                    joinedload(Form.creator),
-                    joinedload(Form.form_questions)
-                        .joinedload(FormQuestion.question)
-                        .joinedload(Question.question_type),
-                    joinedload(Form.submissions)
-                )
-                .order_by(Form.created_at.desc())
-                .all())
+    def get_forms_by_environment(environment_id: int):
+        """
+        Get all forms for a specific environment
+        
+        Args:
+            environment_id (int): The environment ID
+            
+        Returns:
+            list: List of Form objects or None if environment not found
+        """
+        try:
+            # First verify environment exists
+            from app.models.environment import Environment
+            environment = Environment.query.get(environment_id)
+            if not environment:
+                return None
+                
+            return (Form.query
+                    .join(Form.creator)
+                    .filter_by(environment_id=environment_id)
+                    .options(
+                        joinedload(Form.creator).joinedload(User.environment),
+                        joinedload(Form.form_questions)
+                    )
+                    .order_by(Form.created_at.desc())
+                    .all())
+                    
+        except Exception as e:
+            logger.error(f"Error getting forms by environment: {str(e)}")
+            raise
+
+    @staticmethod
+    def get_form_submissions_count(form_id: int) -> int:
+        """Get number of submissions for a form"""
+        try:
+            from app.models.form_submission import FormSubmission
+            return FormSubmission.query.filter_by(
+                form_submitted=str(form_id)
+            ).count()
+        except Exception as e:
+            logger.error(f"Error getting submissions count: {str(e)}")
+            return 0
 
     def get_forms_by_user_or_public(self, user_id, is_public=None):
         """Get forms created by user or public forms"""
@@ -108,20 +136,23 @@ class FormService(BaseService):
         Returns:
             list: List of Form objects that are public
         """
-        return (Form.query
-                .filter_by(is_public=True)
-                .options(
-                    joinedload(Form.creator),
-                    joinedload(Form.form_questions)
-                        .joinedload(FormQuestion.question)
-                        .joinedload(Question.question_type),
-                    joinedload(Form.submissions)
-                )
-                .order_by(Form.created_at.desc())
-                .all())
+        try:
+            return (Form.query
+                    .filter_by(is_public=True)
+                    .options(
+                        joinedload(Form.creator).joinedload(User.environment),
+                        joinedload(Form.form_questions)
+                            .joinedload(FormQuestion.question)
+                            .joinedload(Question.question_type)
+                    )
+                    .order_by(Form.created_at.desc())
+                    .all())
+        except Exception as e:
+            logger.error(f"Error getting public forms: {str(e)}")
+            raise
     
     @staticmethod
-    def get_forms_by_creator(username):
+    def get_forms_by_creator(username: str):
         """
         Get all forms created by a specific user
         
@@ -131,24 +162,28 @@ class FormService(BaseService):
         Returns:
             list: List of Form objects or None if user not found
         """
-        from app.models.user import User  # Import here to avoid circular imports
-        
-        # First verify user exists
-        user = User.query.filter_by(username=username).first()
-        if not user:
-            return None
+        try:
+            from app.models.user import User  # Import here to avoid circular imports
             
-        return (Form.query
-                .filter_by(user_id=user.id)
-                .options(
-                    joinedload(Form.creator),
-                    joinedload(Form.form_questions)
-                        .joinedload(FormQuestion.question)
-                        .joinedload(Question.question_type),
-                    joinedload(Form.submissions)
-                )
-                .order_by(Form.created_at.desc())
-                .all())
+            # First verify user exists
+            user = User.query.filter_by(username=username).first()
+            if not user:
+                return None
+                
+            return (Form.query
+                    .filter_by(user_id=user.id)
+                    .options(
+                        joinedload(Form.creator).joinedload(User.environment),
+                        joinedload(Form.form_questions)
+                            .joinedload(FormQuestion.question)
+                            .joinedload(Question.question_type)
+                    )
+                    .order_by(Form.created_at.desc())
+                    .all())
+
+        except Exception as e:
+            logger.error(f"Error getting forms by creator: {str(e)}")
+            raise
 
     def create_form(title, description, user_id, is_public=False):
         """Create a new form with questions"""
@@ -178,7 +213,7 @@ class FormService(BaseService):
         Args:
             form_id (int): ID of the form to update
             **kwargs: Fields to update (title, description, is_public, user_id)
-            
+                
         Returns:
             tuple: (Updated Form object, error message or None)
         """
@@ -467,7 +502,7 @@ class FormService(BaseService):
             
         return search_query.order_by(Form.created_at.desc()).all()
     
-    def delete_form(self, form_id):
+    def delete_form(form_id):
         """
         Delete a form and all its related data
         
@@ -479,22 +514,15 @@ class FormService(BaseService):
         """
         try:
             form = Form.query.get(form_id)
+            form_question = FormQuestion.query.filter_by(form_id=form_id).first()
             if not form:
                 return False, "Form not found"
-                
-            # Delete related form questions
-            FormQuestion.query.filter_by(form_id=form_id).delete()
             
-            # Delete form submissions and related data
-            for submission in form.submissions:
-                # Delete answers submitted
-                AnswerSubmitted.query.filter_by(form_submission_id=submission.id).delete()
-                # Delete attachments
-                Attachment.query.filter_by(form_submission_id=submission.id).delete()
-            
-            # Delete submissions
-            FormSubmission.query.filter_by(form_id=form_id).delete()
-            
+            if FormQuestion.query.filter_by(form_id=form_id).first():
+                FormQuestion.query.filter_by(form_id=form_id).delete()
+            if form_question:
+                FormAnswer.query.filter_by(form_question_id=form_question.id).delete()
+                        
             # Delete the form itself
             db.session.delete(form)
             db.session.commit()

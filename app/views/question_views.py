@@ -3,6 +3,7 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.controllers.question_controller import QuestionController
+from app.controllers.question_type_controller import QuestionTypeController
 from app.services.auth_service import AuthService
 from app.utils.permission_manager import PermissionManager, EntityType, RoleType
 import logging
@@ -53,6 +54,51 @@ def create_question():
     except Exception as e:
         logger.error(f"Error creating question: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
+    
+@question_bp.route('/bulk', methods=['POST'])
+@jwt_required()
+@PermissionManager.require_permission(action="create", entity_type=EntityType.QUESTIONS)
+def bulk_create_questions():
+    """Create multiple questions at once"""
+    try:
+        current_user = get_jwt_identity()
+        user = AuthService.get_current_user(current_user)
+
+        data = request.get_json()
+        if not data or 'questions' not in data:
+            return jsonify({"error": "Questions data is required"}), 400
+
+        questions_data = data['questions']
+        if not isinstance(questions_data, list):
+            return jsonify({"error": "Questions must be provided as a list"}), 400
+
+        if not questions_data:
+            return jsonify({"error": "At least one question is required"}), 400
+
+        # For non-admin users, check environment access for question types
+        if not user.role.is_super_user:
+            for question in questions_data:
+                question_type = QuestionTypeController.get_question_type(
+                    question.get('question_type_id')
+                )
+                if not question_type or question_type.environment_id != user.environment_id:
+                    return jsonify({
+                        "error": "Unauthorized access to one or more question types"
+                    }), 403
+
+        new_questions, error = QuestionController.bulk_create_questions(questions_data)
+        if error:
+            return jsonify({"error": error}), 400
+
+        logger.info(f"Bulk questions created by user {user.username}")
+        return jsonify({
+            "message": f"{len(new_questions)} questions created successfully",
+            "questions": [question.to_dict() for question in new_questions]
+        }), 201
+
+    except Exception as e:
+        logger.error(f"Error creating bulk questions: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
 
 @question_bp.route('', methods=['GET'])
 @jwt_required()
@@ -86,11 +132,6 @@ def get_questions_by_type_id(type_id):
 
         if user.role.is_super_user:
             questions = QuestionController.get_questions_by_type(type_id)
-        else:
-            # Filter questions by type and environment
-            questions = QuestionController.get_questions_by_type_and_environment(
-                type_id, user.environment_id
-            )
 
         return jsonify([q.to_dict() for q in questions]), 200
 
@@ -119,6 +160,62 @@ def get_question(question_id):
 
     except Exception as e:
         logger.error(f"Error getting question {question_id}: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
+    
+@question_bp.route('/search', methods=['GET'])
+@jwt_required()
+@PermissionManager.require_permission(action="view", entity_type=EntityType.QUESTIONS)
+def search_questions():
+    """Search questions with filters"""
+    try:
+        current_user = get_jwt_identity()
+        user = AuthService.get_current_user(current_user)
+
+        # Get search parameters
+        search_query = request.args.get('q')
+        has_remarks = request.args.get('has_remarks', type=lambda v: v.lower() == 'true', default=None)
+        question_type_id = request.args.get('type_id', type=int)
+
+        # Determine environment filtering based on user role
+        environment_id = None if user.role.is_super_user else user.environment_id
+
+        # Perform search
+        if question_type_id:
+            # Validate question type access if not admin
+            if not user.role.is_super_user:
+                question_type = QuestionTypeController.get_question_type(question_type_id)
+                if not question_type or question_type.environment_id != user.environment_id:
+                    return jsonify({"error": "Unauthorized access to question type"}), 403
+
+            questions = QuestionController.search_questions_by_type(
+                question_type_id=question_type_id,
+                search_query=search_query,
+                has_remarks=has_remarks,
+                environment_id=environment_id
+            )
+        else:
+            questions = QuestionController.search_questions(
+                search_query=search_query,
+                has_remarks=has_remarks,
+                environment_id=environment_id
+            )
+
+        # Add search metadata to response
+        response_data = {
+            "total_results": len(questions),
+            "search_criteria": {
+                "query": search_query,
+                "has_remarks": has_remarks,
+                "question_type_id": question_type_id,
+                "environment_restricted": environment_id is not None
+            },
+            "results": [question.to_dict() for question in questions]
+        }
+
+        return jsonify(response_data), 200
+
+    except Exception as e:
+        logger.error(f"Error searching questions: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
 
 @question_bp.route('/<int:question_id>', methods=['PUT'])
@@ -183,12 +280,6 @@ def delete_question(question_id):
         if not user.role.is_super_user and question.environment_id != user.environment_id:
             return jsonify({"error": "Unauthorized access"}), 403
 
-        # Check if question is in use
-        if QuestionController.is_question_in_use(question_id):
-            return jsonify({
-                "error": "Cannot delete question that is in use in forms"
-            }), 400
-
         success, error = QuestionController.delete_question(question_id)
         if success:
             logger.info(f"Question {question_id} deleted by user {user.username}")
@@ -197,88 +288,4 @@ def delete_question(question_id):
 
     except Exception as e:
         logger.error(f"Error deleting question {question_id}: {str(e)}")
-        return jsonify({"error": "Internal server error"}), 500
-
-@question_bp.route('/reorder', methods=['PUT'])
-@jwt_required()
-@PermissionManager.require_permission(action="update", entity_type=EntityType.QUESTIONS)
-def reorder_questions():
-    """Reorder questions"""
-    try:
-        current_user = get_jwt_identity()
-        user = AuthService.get_current_user(current_user)
-
-        data = request.get_json()
-        questions_order = data.get('questions_order', [])
-        
-        if not questions_order:
-            return jsonify({"error": "Questions order is required"}), 400
-
-        # Validate environment access for non-admin users
-        if not user.role.is_super_user:
-            # Check if all questions belong to user's environment
-            for question_id, _ in questions_order:
-                question = QuestionController.get_question(question_id)
-                if not question or question.environment_id != user.environment_id:
-                    return jsonify({"error": "Unauthorized access to one or more questions"}), 403
-
-        success, error = QuestionController.reorder_questions(questions_order)
-        if success:
-            logger.info(f"Questions reordered by user {user.username}")
-            return jsonify({"message": "Questions reordered successfully"}), 200
-        return jsonify({"error": error}), 400
-
-    except Exception as e:
-        logger.error(f"Error reordering questions: {str(e)}")
-        return jsonify({"error": "Internal server error"}), 500
-
-@question_bp.route('/search', methods=['GET'])
-@jwt_required()
-@PermissionManager.require_permission(action="view", entity_type=EntityType.QUESTIONS)
-def search_questions():
-    """Search questions with filters"""
-    try:
-        current_user = get_jwt_identity()
-        user = AuthService.get_current_user(current_user)
-
-        # Get search parameters
-        search_term = request.args.get('q')
-        question_type_id = request.args.get('type_id', type=int)
-        has_remarks = request.args.get('has_remarks', type=bool)
-
-        if user.role.is_super_user:
-            questions = QuestionController.search_questions(
-                search_term, question_type_id, has_remarks
-            )
-        else:
-            # Filter questions by environment
-            questions = QuestionController.search_questions_by_environment(
-                user.environment_id, search_term, question_type_id, has_remarks
-            )
-
-        return jsonify([q.to_dict() for q in questions]), 200
-
-    except Exception as e:
-        logger.error(f"Error searching questions: {str(e)}")
-        return jsonify({"error": "Internal server error"}), 500
-
-@question_bp.route('/stats', methods=['GET'])
-@jwt_required()
-@PermissionManager.require_permission(action="view", entity_type=EntityType.QUESTIONS)
-def get_questions_stats():
-    """Get questions statistics"""
-    try:
-        current_user = get_jwt_identity()
-        user = AuthService.get_current_user(current_user)
-
-        if user.role.is_super_user:
-            stats = QuestionController.get_questions_stats()
-        else:
-            # Filter stats by environment
-            stats = QuestionController.get_questions_stats_by_environment(user.environment_id)
-
-        return jsonify(stats), 200
-
-    except Exception as e:
-        logger.error(f"Error getting questions stats: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500

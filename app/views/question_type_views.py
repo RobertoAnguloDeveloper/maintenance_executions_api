@@ -149,12 +149,6 @@ def delete_question_type(type_id):
         if question_type and question_type.type in ['single_text', 'multiple_choice', 'single_choice', 'date']:
             return jsonify({"error": "Cannot delete core question types"}), 403
 
-        # Check if question type is in use
-        if QuestionTypeService.is_question_type_in_use(type_id):
-            return jsonify({
-                "error": "Cannot delete question type that is in use"
-            }), 400
-
         success, error = QuestionTypeService.delete_question_type(type_id)
         if not success:
             if error == "Question type not found":
@@ -166,21 +160,4 @@ def delete_question_type(type_id):
 
     except Exception as e:
         logger.error(f"Error deleting question type {type_id}: {str(e)}")
-        return jsonify({"error": "Internal server error"}), 500
-    
-@question_type_bp.route('/usage/<int:type_id>', methods=['GET'])
-@jwt_required()
-@PermissionManager.require_permission(action="view", entity_type=EntityType.QUESTION_TYPES)
-def get_question_type_usage(type_id):
-    """Get usage statistics for a question type"""
-    try:
-        question_type = QuestionTypeService.get_question_type(type_id)
-        if not question_type:
-            return jsonify({"error": "Question type not found"}), 404
-
-        usage_stats = QuestionTypeService.get_usage_statistics(type_id)
-        return jsonify(usage_stats), 200
-
-    except Exception as e:
-        logger.error(f"Error getting question type usage stats: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500

@@ -20,7 +20,7 @@ def create_question_type():
         user = AuthService.get_current_user(current_user)
         
         # Only Admin and Site Manager can create question types
-        if user.role.name not in [RoleType.ADMIN, RoleType.SITE_MANAGER]:
+        if user.role.name not in [RoleType.ADMIN]:
             return jsonify({
                 "error": "Unauthorized",
                 "message": "Only administrators and site managers can create question types"

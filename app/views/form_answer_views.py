@@ -10,7 +10,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-form_answer_bp = Blueprint('form_answers', __name__)
+form_answer_bp = Blueprint('form-answers', __name__)
 
 @form_answer_bp.route('', methods=['POST'])
 @jwt_required()

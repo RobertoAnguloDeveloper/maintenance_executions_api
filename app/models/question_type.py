@@ -1,7 +1,8 @@
 from app import db
+from app.models.soft_delete_mixin import SoftDeleteMixin
 from app.models.timestamp_mixin import TimestampMixin
 
-class QuestionType(TimestampMixin, db.Model):
+class QuestionType(TimestampMixin, SoftDeleteMixin, db.Model):
     __tablename__ = 'question_types'
     TYPE_DATETIME = 'datetime'
     
@@ -14,8 +15,8 @@ class QuestionType(TimestampMixin, db.Model):
     @classmethod
     def initialize_types(cls):
         default_types = [
-            'single_text', 'multiple_choice', 
-            'single_choice', 'date', 'datetime'
+            'text', 'multiple_choices', 
+            'single_choice', 'date', 'datetime','user'
         ]
     
     def __repr__(self):

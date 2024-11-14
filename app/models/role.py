@@ -1,8 +1,9 @@
 from app import db
+from app.models.soft_delete_mixin import SoftDeleteMixin
 from app.models.timestamp_mixin import TimestampMixin
 from sqlalchemy.sql import func
 
-class Role(TimestampMixin, db.Model):
+class Role(TimestampMixin, SoftDeleteMixin, db.Model):
     __tablename__ = 'roles'
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(50), nullable=False, unique=True)

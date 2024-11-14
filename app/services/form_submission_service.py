@@ -94,10 +94,14 @@ class FormSubmissionService:
         ).get(submission_id)
 
     @staticmethod
-    def get_submissions_by_form(form_id):
-        """Get all submissions for a specific form"""
-        return FormSubmission.query.filter_by(form_id=form_id)\
-            .order_by(FormSubmission.submitted_at.desc()).all()
+    def get_submissions_by_form(form_id, include_deleted=False):
+        """Get all submissions for a form"""
+        query = FormSubmission.query.filter_by(form_id=form_id)
+        
+        if not include_deleted:
+            query = query.filter(FormSubmission.is_deleted == False)
+            
+        return query.order_by(FormSubmission.submitted_at.desc()).all()
 
     @staticmethod
     def get_submissions_by_user(username, form_id=None, start_date=None, end_date=None):
@@ -187,19 +191,17 @@ class FormSubmissionService:
 
     @staticmethod
     def delete_submission(submission_id):
-        """Delete a submission and all related data"""
+        """Soft delete a submission"""
         try:
             submission = FormSubmission.query.get(submission_id)
             if not submission:
                 return False, "Submission not found"
 
-            db.session.delete(submission)
+            submission.soft_delete()
             db.session.commit()
             return True, None
-
         except Exception as e:
             db.session.rollback()
-            logger.error(f"Error deleting submission {submission_id}: {str(e)}")
             return False, str(e)
 
     @staticmethod

@@ -26,7 +26,7 @@ def register_user():
         current_user_obj = AuthService.get_current_user(current_user)
 
         data = request.get_json()
-        required_fields = ['first_name', 'last_name', 'email', 'username', 'password', 'role_id', 'environment_id']
+        required_fields = ['first_name', 'last_name', 'email', 'contact_number', 'username', 'password', 'role_id', 'environment_id']
         if not all(field in data for field in required_fields):
             return jsonify({"error": "Missing required fields"}), 400
 
@@ -218,7 +218,7 @@ def update_user(user_id):
                 return jsonify({"error": "Cannot update admin users"}), 403
 
         data = request.get_json()
-        allowed_fields = ['first_name', 'last_name', 'email', 'password']
+        allowed_fields = ['first_name', 'last_name', 'email','contact_number', 'password']
         
         # Only admins can update these fields
         if current_user_obj.role.is_super_user:

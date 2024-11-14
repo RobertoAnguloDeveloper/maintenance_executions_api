@@ -1,10 +1,11 @@
 from typing import Any, Dict, List
 from app import db
+from app.models.soft_delete_mixin import SoftDeleteMixin
 from app.models.timestamp_mixin import TimestampMixin
 from datetime import datetime
 from sqlalchemy.orm import joinedload
 
-class FormSubmission(TimestampMixin, db.Model):
+class FormSubmission(TimestampMixin, SoftDeleteMixin, db.Model):
     __tablename__ = 'form_submissions'
     
     id = db.Column(db.Integer, primary_key=True)

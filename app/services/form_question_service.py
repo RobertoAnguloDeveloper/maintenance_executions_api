@@ -44,53 +44,28 @@ class FormQuestionService:
             return None, str(e)
         
     @staticmethod
-    def get_all_form_questions(environment_id=None, include_relations=True):
-        """
-        Get all form questions with optional environment filtering and relation loading
-        
-        Args:
-            environment_id (int, optional): Filter by environment ID
-            include_relations (bool): Whether to load related data
-            
-        Returns:
-            list: List of FormQuestion objects
-            
-        Raises:
-            ValueError: If parameters are invalid
-            SQLAlchemyError: If there's a database error
-        """
-        try:
-            query = FormQuestion.query
+    def get_all_form_questions(environment_id=None, include_deleted=False):
+        """Get all form questions with filters"""
+        query = FormQuestion.query
 
-            if include_relations:
-                query = query.options(
-                    joinedload(FormQuestion.form),
-                    joinedload(FormQuestion.question).joinedload(Question.question_type),
-                    joinedload(FormQuestion.form_answers).joinedload(FormAnswer.answer)
-                )
+        if not include_deleted:
+            query = query.filter(FormQuestion.is_deleted == False)
 
-            if environment_id:
-                query = query.join(
-                    Form,
-                    FormQuestion.form_id == Form.id
-                ).join(
-                    User,
-                    Form.user_id == User.id
-                ).filter(
-                    User.environment_id == environment_id
-                )
+        if environment_id:
+            query = query.join(
+                Form,
+                FormQuestion.form_id == Form.id
+            ).join(
+                User,
+                Form.user_id == User.id
+            ).filter(
+                User.environment_id == environment_id
+            )
 
-            return query.order_by(
-                FormQuestion.form_id,
-                FormQuestion.order_number.nullslast()
-            ).all()
-
-        except SQLAlchemyError as e:
-            logger.error(f"Database error getting form questions: {str(e)}")
-            raise
-        except Exception as e:
-            logger.error(f"Unexpected error getting form questions: {str(e)}")
-            raise
+        return query.order_by(
+            FormQuestion.form_id,
+            FormQuestion.order_number.nullslast()
+        ).all()
         
     @staticmethod
     def get_form_question_with_relations(form_question_id: int) -> Optional[FormQuestion]:
@@ -159,16 +134,15 @@ class FormQuestionService:
 
     @staticmethod
     def delete_form_question(form_question_id):
-        """Delete a form question mapping"""
+        """Soft delete a form question"""
         try:
             form_question = FormQuestion.query.get(form_question_id)
             if not form_question:
                 return False, "Form question not found"
 
-            db.session.delete(form_question)
+            form_question.soft_delete()
             db.session.commit()
             return True, None
-
         except Exception as e:
             db.session.rollback()
             return False, str(e)

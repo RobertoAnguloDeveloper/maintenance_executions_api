@@ -24,7 +24,6 @@ def create_question():
         data = request.get_json()
         text = data.get('text')
         question_type_id = data.get('question_type_id')
-        order_number = data.get('order_number')
         has_remarks = data.get('has_remarks', False)
 
         # Validate required fields
@@ -38,7 +37,6 @@ def create_question():
         new_question, error = QuestionController.create_question(
             text=text,
             question_type_id=question_type_id,
-            order_number=order_number,
             has_remarks=has_remarks
         )
         
@@ -237,7 +235,7 @@ def update_question(question_id):
             return jsonify({"error": "Unauthorized access"}), 403
 
         data = request.get_json()
-        allowed_fields = ['text', 'question_type_id', 'order_number', 'has_remarks']
+        allowed_fields = ['text', 'question_type_id', 'has_remarks']
         update_data = {k: v for k, v in data.items() if k in allowed_fields}
 
         # Validate text if provided

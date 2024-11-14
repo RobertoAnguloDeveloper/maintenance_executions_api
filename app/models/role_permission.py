@@ -1,8 +1,9 @@
 from app import db
 from sqlalchemy.sql import func
+from app.models.soft_delete_mixin import SoftDeleteMixin
 from app.models.timestamp_mixin import TimestampMixin
 
-class RolePermission(TimestampMixin, db.Model):
+class RolePermission(TimestampMixin, SoftDeleteMixin, db.Model):
     __tablename__ = 'role_permissions'
     id = db.Column(db.Integer, primary_key=True)
     role_id = db.Column(db.Integer, db.ForeignKey('roles.id'), nullable=False)

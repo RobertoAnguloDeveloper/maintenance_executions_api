@@ -1,7 +1,8 @@
 from app import db
+from app.models.soft_delete_mixin import SoftDeleteMixin
 from app.models.timestamp_mixin import TimestampMixin
 
-class Attachment(TimestampMixin, db.Model):
+class Attachment(TimestampMixin, SoftDeleteMixin, db.Model):
     __tablename__ = 'attachments'
     
     id = db.Column(db.Integer, primary_key=True)

@@ -39,24 +39,25 @@ class RoleService(BaseService):
 
     @staticmethod
     def get_role(role_id):
-        return Role.query.get(role_id)
+        """Get non-deleted role by ID"""
+        return Role.query.filter_by(id=role_id, is_deleted=False).first()
 
     @staticmethod
     def get_role_by_name(name):
-        return Role.query.filter_by(name=name).first()
+        """Get non-deleted role by name"""
+        return Role.query.filter_by(name=name, is_deleted=False).first()
     
     @staticmethod
     def get_role_with_permissions(role_id):
-        role = Role.query.options(joinedload(Role.role_permissions).joinedload(RolePermission.permission)).get(role_id)
-        if role:
-            role_dict = role.to_dict()
-            role_dict['permissions'] = [rp.permission.to_dict() for rp in role.role_permissions]
-            return role_dict
-        return None
+        """Get non-deleted role with its permissions"""
+        return Role.query.options(
+            joinedload(Role.role_permissions).joinedload(RolePermission.permission)
+        ).filter_by(id=role_id, is_deleted=False).first()
 
     @staticmethod
     def get_all_roles():
-        return Role.query.order_by(Role.id).all()
+        """Get all non-deleted roles"""
+        return Role.query.filter_by(is_deleted=False).order_by(Role.id).all()
 
     @staticmethod
     def update_role(role_id, **kwargs):
@@ -83,7 +84,7 @@ class RoleService(BaseService):
             if role.users:
                 return False, "Cannot delete role: it is still assigned to users"
             try:
-                db.session.delete(role)
+                role.soft_delete()
                 db.session.commit()
                 return True, None
             except Exception as e:

@@ -1,7 +1,8 @@
 from app import db
+from app.models.soft_delete_mixin import SoftDeleteMixin
 from app.models.timestamp_mixin import TimestampMixin
 
-class AnswerSubmitted(TimestampMixin, db.Model):
+class AnswerSubmitted(TimestampMixin, SoftDeleteMixin, db.Model):
     __tablename__ = 'answers_submitted'
     
     id = db.Column(db.Integer, primary_key=True)

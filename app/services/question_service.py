@@ -12,12 +12,11 @@ from app.models.user import User
 
 class QuestionService:
     @staticmethod
-    def create_question(text, question_type_id, order_number, has_remarks=False):
+    def create_question(text, question_type_id, has_remarks=False):
         try:
             new_question = Question(
                 text=text,
                 question_type_id=question_type_id,
-                order_number=order_number,
                 has_remarks=has_remarks
             )
             db.session.add(new_question)
@@ -57,7 +56,6 @@ class QuestionService:
                 question = Question(
                     text=data['text'],
                     question_type_id=data['question_type_id'],
-                    order_number=data.get('order_number'),
                     has_remarks=data.get('has_remarks', False)
                 )
                 db.session.add(question)
@@ -75,58 +73,31 @@ class QuestionService:
 
     @staticmethod
     def get_question(question_id):
-        return Question.query.get(question_id)
+        """Get non-deleted question"""
+        return Question.query.filter_by(
+            id=question_id, 
+            is_deleted=False
+        ).first()
 
     @staticmethod
     def get_questions_by_type(question_type_id):
-        return Question.query.filter_by(question_type_id=question_type_id).order_by(Question.order_number).all()
+        """Get non-deleted questions by type"""
+        return Question.query.filter_by(
+            question_type_id=question_type_id,
+            is_deleted=False
+        ).order_by(Question.id).all()
     
     @staticmethod
     def search_questions(search_query=None, has_remarks=None, environment_id=None):
-        """
-        Search questions with optional filters
-        
-        Args:
-            search_query (str, optional): Text to search in question text
-            has_remarks (bool, optional): Filter by has_remarks flag
-            environment_id (int, optional): Filter by environment
-            
-        Returns:
-            list: List of Question objects matching the criteria
-        """
-        try:
-            query = Question.query
+        """Search non-deleted questions"""
+        query = Question.query.filter_by(is_deleted=False)
 
-            # Text search
-            if search_query:
-                search_term = f"%{search_query}%"
-                query = query.filter(Question.text.ilike(search_term))
+        if search_query:
+            query = query.filter(Question.text.ilike(f"%{search_query}%"))
+        if has_remarks is not None:
+            query = query.filter_by(has_remarks=has_remarks)
 
-            # Has remarks filter
-            if has_remarks is not None:
-                query = query.filter(Question.has_remarks == has_remarks)
-
-            # Environment filter (if provided)
-            if environment_id:
-                query = query.join(
-                    FormQuestion, 
-                    Question.id == FormQuestion.question_id
-                ).join(
-                    Form, 
-                    FormQuestion.form_id == Form.id
-                ).join(
-                    User, 
-                    Form.user_id == User.id
-                ).filter(
-                    User.environment_id == environment_id
-                ).distinct()
-
-            # Order by question text for consistent results
-            return query.order_by(Question.text).all()
-
-        except Exception as e:
-            logger.error(f"Error searching questions: {str(e)}")
-            return []
+        return query.order_by(Question.text).all()
 
     @staticmethod
     def search_questions_by_type(question_type_id, search_query=None, has_remarks=None, environment_id=None):
@@ -170,15 +141,19 @@ class QuestionService:
                 ).distinct()
 
             # Order by order_number and then text
-            return query.order_by(Question.order_number, Question.text).all()
+            return query.order_by(Question.id).all()
 
         except Exception as e:
             logger.error(f"Error searching questions by type: {str(e)}")
             return []
 
     @staticmethod
-    def get_all_questions():
-        return Question.query.order_by(Question.order_number).all()
+    def get_all_questions(include_deleted=False):
+        """Get all questions"""
+        query = Question.query
+        if not include_deleted:
+            query = query.filter(Question.is_deleted == False)
+        return query.order_by(Question.id).all()
 
     @staticmethod
     def update_question(question_id, **kwargs):
@@ -200,13 +175,15 @@ class QuestionService:
 
     @staticmethod
     def delete_question(question_id):
-        question = Question.query.get(question_id)
-        if question:
-            try:
-                db.session.delete(question)
-                db.session.commit()
-                return True, None
-            except Exception as e:
-                db.session.rollback()
-                return False, str(e)
-        return False, "Question not found"
+        """Soft delete a question"""
+        try:
+            question = Question.query.get(question_id)
+            if not question:
+                return False, "Question not found"
+
+            question.soft_delete()
+            db.session.commit()
+            return True, None
+        except Exception as e:
+            db.session.rollback()
+            return False, str(e)

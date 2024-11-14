@@ -1,6 +1,7 @@
 import logging
 import getpass
 from app.models.permission import Permission
+from app.models.question_type import QuestionType
 from app.utils.helpers import validate_email
 import re
 from app import db
@@ -327,6 +328,42 @@ class DatabaseInitializer:
             db.session.rollback()
             logger.error(f"Error creating roles: {str(e)}")
             raise
+        
+    def init_question_types(self):
+        """Initialize default question types."""
+        try:
+            default_types = [
+                'text', 'multiple_choices', 
+                'single_choice', 'date', 
+                'datetime', 'user'
+            ]
+            
+            created_types = []
+            for type_name in default_types:
+                question_type = QuestionType.query.filter_by(type=type_name).first()
+                
+                if not question_type:
+                    question_type = QuestionType(type=type_name)
+                    db.session.add(question_type)
+                    logger.info(f"Created question type: {type_name}")
+                else:
+                    # Ensure the type is not marked as deleted
+                    if question_type.is_deleted:
+                        question_type.is_deleted = False
+                        question_type.deleted_at = None
+                        question_type.updated_at = datetime.utcnow()
+                        logger.info(f"Restored question type: {type_name}")
+                    
+                created_types.append(question_type)
+            
+            db.session.commit()
+            return True, None
+            
+        except Exception as e:
+            db.session.rollback()
+            error_msg = f"Error initializing question types: {str(e)}"
+            logger.error(error_msg)
+            return False, error_msg
 
     def init_admin_environment(self):
         """Initialize or update ADMIN environment."""
@@ -406,6 +443,12 @@ class DatabaseInitializer:
                 roles = self.init_roles()
                 admin_role = next(role for role in roles if role.name == 'Admin')
                 print("✅ Roles and permissions assigned successfully")
+                
+                print("\n4️⃣  Initializing question types...")
+                success, error = self.init_question_types()
+                if not success:
+                    return False, error
+                print("✅ Question types initialized successfully")
                 
                 print("\n3️⃣  Initializing admin environment...")
                 env = self.init_admin_environment()

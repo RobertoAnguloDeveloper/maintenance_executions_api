@@ -51,9 +51,14 @@ class FormAnswerService:
             return None, str(e)
         
     @staticmethod
-    def get_all_form_answers():
-        """Get a specific form answer"""
-        return FormAnswer.query.order_by(FormAnswer.id).all()
+    def get_all_form_answers(include_deleted=False):
+        """Get all form answers"""
+        query = FormAnswer.query
+        
+        if not include_deleted:
+            query = query.filter(FormAnswer.is_deleted == False)
+            
+        return query.order_by(FormAnswer.id).all()
 
     @staticmethod
     def get_form_answer(form_answer_id):
@@ -90,16 +95,15 @@ class FormAnswerService:
 
     @staticmethod
     def delete_form_answer(form_answer_id):
-        """Delete a form answer"""
+        """Soft delete a form answer"""
         try:
             form_answer = FormAnswer.query.get(form_answer_id)
             if not form_answer:
                 return False, "Form answer not found"
 
-            db.session.delete(form_answer)
+            form_answer.soft_delete()
             db.session.commit()
             return True, None
-
         except Exception as e:
             db.session.rollback()
             return False, str(e)

@@ -1,10 +1,11 @@
 # app/models/environment.py
 
 from app import db
+from app.models.soft_delete_mixin import SoftDeleteMixin
 from app.models.timestamp_mixin import TimestampMixin
 from datetime import datetime
 
-class Environment(TimestampMixin, db.Model):
+class Environment(TimestampMixin, SoftDeleteMixin, db.Model):
     __tablename__ = 'environments'
     
     id = db.Column(db.Integer, primary_key=True)

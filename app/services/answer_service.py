@@ -36,11 +36,12 @@ class AnswerService:
         return Answer.query.join(Answer.forms).filter_by(id=form_id).all()
 
     @staticmethod
-    def get_all_answers():
-        """
-        Get all answers in the system
-        """
-        return Answer.query.order_by(Answer.id).all()
+    def get_all_answers(include_deleted=False):
+        """Get all answers"""
+        query = Answer.query
+        if not include_deleted:
+            query = query.filter(Answer.is_deleted == False)
+        return query.order_by(Answer.id).all()
 
     @staticmethod
     def update_answer(answer_id, value=None, remarks=None):
@@ -63,19 +64,17 @@ class AnswerService:
 
     @staticmethod
     def delete_answer(answer_id):
-        """
-        Delete an answer and all its relationships
-        """
-        answer = Answer.query.get(answer_id)
-        if answer:
-            try:
-                db.session.delete(answer)
+        """Soft delete an answer"""
+        try:
+            answer = Answer.query.get(answer_id)
+            if answer:
+                answer.soft_delete()
                 db.session.commit()
                 return True, None
-            except Exception as e:
-                db.session.rollback()
-                return False, str(e)
-        return False, "Answer not found"
+            return False, "Answer not found"
+        except Exception as e:
+            db.session.rollback()
+            return False, str(e)
 
     @staticmethod
     def bulk_create_answers(answers_data):

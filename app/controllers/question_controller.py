@@ -2,11 +2,11 @@ from app.services.question_service import QuestionService
 
 class QuestionController:
     @staticmethod
-    def create_question(text, question_type_id, order_number, has_remarks=False):
+    def create_question(text, question_type_id, has_remarks=False):
         """
         Create a new question
         """
-        return QuestionService.create_question(text, question_type_id, order_number, has_remarks)
+        return QuestionService.create_question(text, question_type_id, has_remarks)
     
     @staticmethod
     def bulk_create_questions(questions_data):

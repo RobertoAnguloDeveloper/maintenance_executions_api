@@ -1,8 +1,9 @@
 from app import db
 from sqlalchemy.sql import func
+from app.models.soft_delete_mixin import SoftDeleteMixin
 from app.models.timestamp_mixin import TimestampMixin
 
-class Permission(TimestampMixin, db.Model):
+class Permission(TimestampMixin, SoftDeleteMixin, db.Model):
     __tablename__ = 'permissions'
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(50), nullable=False, unique=True)

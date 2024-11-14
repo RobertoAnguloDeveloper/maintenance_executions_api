@@ -1,7 +1,8 @@
 from app import db
+from app.models.soft_delete_mixin import SoftDeleteMixin
 from app.models.timestamp_mixin import TimestampMixin
 
-class FormQuestion(TimestampMixin, db.Model):
+class FormQuestion(TimestampMixin, SoftDeleteMixin, db.Model):
     __tablename__ = 'form_questions'
     
     id = db.Column(db.Integer, primary_key=True)

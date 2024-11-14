@@ -7,6 +7,10 @@ from app.models.form import Form
 from app.models.user import User
 from app.services.base_service import BaseService
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import joinedload
+import logging
+
+logger = logging.getLogger(__name__)
 
 class EnvironmentService(BaseService):
     def __init__(self):
@@ -31,15 +35,31 @@ class EnvironmentService(BaseService):
 
     @staticmethod
     def get_environment(environment_id):
-        return Environment.query.get(environment_id)
+        """Get non-deleted environment by ID"""
+        return Environment.query.filter_by(
+            id=environment_id, 
+            is_deleted=False
+        ).first()
 
     @staticmethod
     def get_environment_by_name(name):
-        return Environment.get_by_name(name)
+        """Get non-deleted environment by name"""
+        return Environment.query.filter_by(
+            name=name, 
+            is_deleted=False
+        ).first()
 
     @staticmethod
-    def get_all_environments():
-        return Environment.query.order_by(Environment.id).all()
+    def get_all_environments(include_deleted=False):
+        """Get all environments with optional inclusion of deleted records"""
+        try:
+            query = Environment.query
+            if not include_deleted:
+                query = query.filter(Environment.is_deleted == False)
+            return query.order_by(Environment.id).all()
+        except Exception as e:
+            logger.error(f"Error getting environments: {str(e)}")
+            raise
 
     @staticmethod
     def update_environment(environment_id, **kwargs):
@@ -64,7 +84,7 @@ class EnvironmentService(BaseService):
         environment = Environment.query.get(environment_id)
         if environment:
             try:
-                db.session.delete(environment)
+                environment.soft_delete()
                 db.session.commit()
                 return True, None
             except Exception as e:
@@ -73,22 +93,59 @@ class EnvironmentService(BaseService):
         return False, "Environment not found"
 
     @staticmethod
-    def get_users_in_environment(environment_id):
-        environment_users = UserController.get_users_by_environment(environment_id)
-        if environment_users:
-            return environment_users
-        return []
+    def get_users_in_environment(environment_id: int):
+        """
+        Get all non-deleted users in an environment with their relationships loaded
+        
+        Args:
+            environment_id (int): ID of the environment
+            
+        Returns:
+            list: List of User objects or empty list
+        """
+        try:
+            users = User.query.options(
+                joinedload(User.role),
+                joinedload(User.environment)
+            ).filter(
+                User.environment_id == environment_id,
+                User.is_deleted == False  # Add soft delete filter
+            ).order_by(User.username).all()
+            
+            return users or []
+            
+        except Exception as e:
+            logger.error(f"Error getting users in environment {environment_id}: {str(e)}")
+            return []
 
     @staticmethod
-    def get_forms_in_environment(environment_id):
-        environment_users = UserController.get_users_by_environment(environment_id)
-        environment_forms =[]
+    def get_forms_in_environment(environment_id: int):
+        """
+        Get all non-deleted forms in an environment using a single optimized query
         
-        for user in environment_users:
-            user_forms = FormController.get_forms_by_user(user.id)
-            environment_forms = [form for form in user_forms if form.environment_id == environment_id]
-        
-        print("PASSO: -",environment_forms)
-        if environment_forms:
-            return environment_forms
-        return []
+        Args:
+            environment_id (int): ID of the environment
+            
+        Returns:
+            list: List of Form objects or empty list
+        """
+        try:
+            # Single query to get all forms related to users in the environment
+            forms = Form.query.options(
+                joinedload(Form.creator).joinedload(User.environment),
+                joinedload(Form.form_questions)
+            ).join(
+                User, Form.user_id == User.id
+            ).filter(
+                User.environment_id == environment_id,
+                Form.is_deleted == False,    # Add soft delete filter for forms
+                User.is_deleted == False     # Add soft delete filter for users
+            ).order_by(
+                Form.created_at.desc()
+            ).all()
+            
+            return forms or []
+            
+        except Exception as e:
+            logger.error(f"Error getting forms in environment {environment_id}: {str(e)}")
+            return []

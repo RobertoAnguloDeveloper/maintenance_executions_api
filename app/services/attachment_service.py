@@ -60,10 +60,14 @@ class AttachmentService:
         return Attachment.query.get(attachment_id)
 
     @staticmethod
-    def get_attachments_by_submission(form_submission_id):
-        """Get all attachments for a form submission"""
-        return Attachment.query.filter_by(form_submission_id=form_submission_id)\
-            .order_by(Attachment.created_at).all()
+    def get_attachments_by_submission(form_submission_id, include_deleted=False):
+        """Get all attachments for a submission"""
+        query = Attachment.query.filter_by(form_submission_id=form_submission_id)
+        
+        if not include_deleted:
+            query = query.filter(Attachment.is_deleted == False)
+            
+        return query.order_by(Attachment.created_at).all()
 
     @staticmethod
     def get_signature_attachment(form_submission_id):
@@ -100,28 +104,17 @@ class AttachmentService:
 
     @staticmethod
     def delete_attachment(attachment_id):
-        """Delete an attachment and its associated file"""
+        """Soft delete an attachment"""
         try:
             attachment = Attachment.query.get(attachment_id)
             if not attachment:
                 return False, "Attachment not found"
 
-            # Delete the physical file if it exists
-            if os.path.exists(attachment.file_path):
-                try:
-                    os.remove(attachment.file_path)
-                except OSError as e:
-                    logger.error(f"Error deleting file {attachment.file_path}: {str(e)}")
-
-            db.session.delete(attachment)
+            attachment.soft_delete()
             db.session.commit()
-            
-            logger.info(f"Deleted attachment {attachment_id}")
             return True, None
-
         except Exception as e:
             db.session.rollback()
-            logger.error(f"Error deleting attachment {attachment_id}: {str(e)}")
             return False, str(e)
 
     @staticmethod

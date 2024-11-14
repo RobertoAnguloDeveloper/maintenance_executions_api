@@ -47,21 +47,13 @@ class FormService(BaseService):
     
     @staticmethod
     def get_form(form_id):
-        """
-        Get a form by ID with all its relationships loaded
-        
-        Args:
-            form_id (int): ID of the form
-            
-        Returns:
-            Form: Form object with loaded relationships or None if not found
-        """
+        """Get non-deleted form with relationships"""
         return Form.query.options(
             joinedload(Form.creator),
             joinedload(Form.form_questions)
                 .joinedload(FormQuestion.question)
                 .joinedload(Question.question_type)
-        ).get(form_id)
+        ).filter_by(id=form_id, is_deleted=False).first()
 
     def get_form_with_relations(self, form_id):
         """Get form with all related data loaded"""
@@ -71,36 +63,18 @@ class FormService(BaseService):
         ).get(form_id)
 
     @staticmethod
-    def get_forms_by_environment(environment_id: int):
-        """
-        Get all forms for a specific environment
-        
-        Args:
-            environment_id (int): The environment ID
-            
-        Returns:
-            list: List of Form objects or None if environment not found
-        """
-        try:
-            # First verify environment exists
-            from app.models.environment import Environment
-            environment = Environment.query.get(environment_id)
-            if not environment:
-                return None
-                
-            return (Form.query
-                    .join(Form.creator)
-                    .filter_by(environment_id=environment_id)
-                    .options(
-                        joinedload(Form.creator).joinedload(User.environment),
-                        joinedload(Form.form_questions)
-                    )
-                    .order_by(Form.created_at.desc())
-                    .all())
-                    
-        except Exception as e:
-            logger.error(f"Error getting forms by environment: {str(e)}")
-            raise
+    def get_forms_by_environment(environment_id):
+        """Get non-deleted forms for an environment"""
+        return (Form.query
+                .join(Form.creator)
+                .filter(Form.is_deleted == False)
+                .filter_by(environment_id=environment_id)
+                .options(
+                    joinedload(Form.creator).joinedload(User.environment),
+                    joinedload(Form.form_questions)
+                )
+                .order_by(Form.created_at.desc())
+                .all())
 
     @staticmethod
     def get_form_submissions_count(form_id: int) -> int:
@@ -130,26 +104,17 @@ class FormService(BaseService):
     
     @staticmethod
     def get_public_forms():
-        """
-        Get all public forms with related data loaded
-        
-        Returns:
-            list: List of Form objects that are public
-        """
-        try:
-            return (Form.query
-                    .filter_by(is_public=True)
-                    .options(
-                        joinedload(Form.creator).joinedload(User.environment),
-                        joinedload(Form.form_questions)
-                            .joinedload(FormQuestion.question)
-                            .joinedload(Question.question_type)
-                    )
-                    .order_by(Form.created_at.desc())
-                    .all())
-        except Exception as e:
-            logger.error(f"Error getting public forms: {str(e)}")
-            raise
+        """Get non-deleted public forms"""
+        return (Form.query
+                .filter_by(is_public=True, is_deleted=False)
+                .options(
+                    joinedload(Form.creator).joinedload(User.environment),
+                    joinedload(Form.form_questions)
+                        .joinedload(FormQuestion.question)
+                        .joinedload(Question.question_type)
+                )
+                .order_by(Form.created_at.desc())
+                .all())
     
     @staticmethod
     def get_forms_by_creator(username: str):
@@ -472,19 +437,10 @@ class FormService(BaseService):
             logger.error(f"Error getting form statistics: {str(e)}")
             return None
         
-    def search_forms(self, query=None, user_id=None, is_public=None):
-        """
-        Search forms based on criteria
-        
-        Args:
-            query (str, optional): Search query for title/description
-            user_id (int, optional): Filter by creator
-            is_public (bool, optional): Filter by public status
-            
-        Returns:
-            list: List of matching Form objects
-        """
-        search_query = Form.query
+    @staticmethod
+    def search_forms(query=None, user_id=None, is_public=None):
+        """Search non-deleted forms"""
+        search_query = Form.query.filter_by(is_deleted=False)
         
         if query:
             search_query = search_query.filter(
@@ -493,10 +449,8 @@ class FormService(BaseService):
                     Form.description.ilike(f'%{query}%')
                 )
             )
-            
         if user_id is not None:
             search_query = search_query.filter_by(user_id=user_id)
-            
         if is_public is not None:
             search_query = search_query.filter_by(is_public=is_public)
             
@@ -524,7 +478,7 @@ class FormService(BaseService):
                 FormAnswer.query.filter_by(form_question_id=form_question.id).delete()
                         
             # Delete the form itself
-            db.session.delete(form)
+            form.soft_delete()
             db.session.commit()
             
             return True, None

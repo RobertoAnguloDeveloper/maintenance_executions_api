@@ -1,21 +1,21 @@
 from app import db
+from app.models.soft_delete_mixin import SoftDeleteMixin
 from app.models.timestamp_mixin import TimestampMixin
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
 
-class User(TimestampMixin, db.Model):
+class User(TimestampMixin, SoftDeleteMixin, db.Model):
     __tablename__ = 'users'
     
     id = db.Column(db.Integer, primary_key=True)
     first_name = db.Column(db.String(255), nullable=False)
     last_name = db.Column(db.String(255), nullable=False)
     email = db.Column(db.String(255), nullable=False)
+    contact_number = db.Column(db.String(100), nullable=True)
     username = db.Column(db.String(50), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
     role_id = db.Column(db.Integer, db.ForeignKey('roles.id'))
     environment_id = db.Column(db.Integer, db.ForeignKey('environments.id'))
-    is_deleted = db.Column(db.Boolean, default=False)
-    deleted_at = db.Column(db.DateTime, nullable=True)
 
     # Relationships
     role = db.relationship('Role', back_populates='users')
@@ -45,6 +45,7 @@ class User(TimestampMixin, db.Model):
             'first_name': self.first_name,
             'last_name': self.last_name,
             'email': self.email,
+            'contact_number': self.contact_number,
             'role': {
                         "role_id": self.role_id,
                         "role_name": self.role.name if self.role else None,
@@ -83,6 +84,8 @@ class User(TimestampMixin, db.Model):
                 
                 'created_forms_count': len(self.created_forms) if self.created_forms else 0,
                 'full_name': f"{self.first_name} {self.last_name}",
+                'email': self.email,
+                'contact_number': self.contact_number,
                 'permissions': [p.name for p in self.role.permissions] if self.role else []
             })
         

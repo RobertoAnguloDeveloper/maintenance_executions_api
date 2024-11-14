@@ -40,25 +40,26 @@ class AnswerSubmittedService:
         return AnswerSubmitted.query.get(answer_submitted_id)
 
     @staticmethod
-    def get_answers_by_submission(submission_id):
-        """Get all submitted answers for a form submission"""
-        return AnswerSubmitted.query\
-            .filter_by(form_submission_id=submission_id)\
-            .order_by(AnswerSubmitted.created_at)\
-            .all()
+    def get_answers_by_submission(submission_id, include_deleted=False):
+        """Get submitted answers for a submission"""
+        query = AnswerSubmitted.query.filter_by(form_submission_id=submission_id)
+        
+        if not include_deleted:
+            query = query.filter(AnswerSubmitted.is_deleted == False)
+            
+        return query.order_by(AnswerSubmitted.created_at).all()
 
     @staticmethod
     def delete_answer_submitted(answer_submitted_id):
-        """Delete a submitted answer"""
+        """Soft delete a submitted answer"""
         try:
             answer_submitted = AnswerSubmitted.query.get(answer_submitted_id)
             if not answer_submitted:
                 return False, "Submitted answer not found"
 
-            db.session.delete(answer_submitted)
+            answer_submitted.soft_delete()
             db.session.commit()
             return True, None
-
         except Exception as e:
             db.session.rollback()
             return False, str(e)

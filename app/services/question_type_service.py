@@ -3,6 +3,9 @@ from app.models.question_type import QuestionType
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import select
 import re
+import logging
+
+logger = logging.getLogger(__name__)
 
 class QuestionTypeService:
     @staticmethod
@@ -46,9 +49,16 @@ class QuestionTypeService:
             return None, str(e)
 
     @staticmethod
-    def get_all_question_types():
-        """Get all question types."""
-        return QuestionType.query.all()
+    def get_all_question_types(include_deleted=False):
+        """Get all question types"""
+        try:
+            query = QuestionType.query
+            if not include_deleted:
+                query = query.filter(QuestionType.is_deleted == False)
+            return query.all()
+        except Exception as e:
+            logger.error(f"Error getting question types: {str(e)}")
+            raise
 
     @staticmethod
     def get_question_type(type_id):
@@ -98,17 +108,16 @@ class QuestionTypeService:
 
     @staticmethod
     def delete_question_type(type_id):
-        """Delete a question type."""
+        """Soft delete a question type"""
         try:
-            question_type = db.session.get(QuestionType, type_id)
+            question_type = QuestionType.query.get(type_id)
             if not question_type:
                 return False, "Question type not found"
 
-            # Check for existing questions using this type
             if question_type.questions.count() > 0:
                 return False, "Cannot delete question type with existing questions"
 
-            db.session.delete(question_type)
+            question_type.soft_delete()
             db.session.commit()
             return True, None
         except Exception as e:

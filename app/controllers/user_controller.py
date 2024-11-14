@@ -5,8 +5,8 @@ class UserController:
         self.user_service = UserService()
         
     @staticmethod
-    def create_user(first_name, last_name, email, username, password, role_id, environment_id):
-        return UserService.create_user(first_name, last_name, email, username, password, role_id, environment_id)
+    def create_user(first_name, last_name, email, contact_number, username, password, role_id, environment_id):
+        return UserService.create_user(first_name, last_name, email, contact_number, username, password, role_id, environment_id)
 
     @staticmethod
     def get_user(user_id):

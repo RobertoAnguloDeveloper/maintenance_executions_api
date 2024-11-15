@@ -19,8 +19,28 @@ logger = logging.getLogger(__name__)
 class FormQuestionService:
     @staticmethod
     def create_form_question(form_id, question_id, order_number=None):
-        """Create a new form question mapping"""
+        """
+        Create a new form question mapping
+        
+        Args:
+            form_id (int): ID of the form
+            question_id (int): ID of the question
+            order_number (int, optional): Order number for the question
+            
+        Returns:
+            tuple: (FormQuestion, str) - Created form question or error message
+        """
         try:
+            # Validate form exists
+            form = Form.query.get(form_id)
+            if not form:
+                return None, "Form not found"
+
+            # Validate question exists
+            question = Question.query.get(question_id)
+            if not question:
+                return None, "Question not found"
+
             # If no order number provided, get the next available one
             if order_number is None:
                 max_order = db.session.query(db.func.max(FormQuestion.order_number))\
@@ -32,8 +52,13 @@ class FormQuestionService:
                 question_id=question_id,
                 order_number=order_number
             )
+            
             db.session.add(form_question)
             db.session.commit()
+            
+            # Refresh to load relationships
+            db.session.refresh(form_question)
+            
             return form_question, None
 
         except IntegrityError:
@@ -41,10 +66,11 @@ class FormQuestionService:
             return None, "Invalid form_id or question_id"
         except Exception as e:
             db.session.rollback()
+            logger.error(f"Error creating form question: {str(e)}")
             return None, str(e)
         
     @staticmethod
-    def get_all_form_questions(environment_id=None, include_deleted=False):
+    def get_all_form_questions(environment_id=None, include_relations=True, include_deleted=False):
         """Get all form questions with filters"""
         query = FormQuestion.query
 
@@ -155,27 +181,59 @@ class FormQuestionService:
         Args:
             form_id (int): ID of the form
             questions (list): List of dicts with question_id and optional order_number
+            
+        Returns:
+            tuple: (List[FormQuestion], str) - List of created questions or error message
         """
         try:
-            form_questions = []
+            # First verify the form exists
+            form = Form.query.get(form_id)
+            if not form:
+                return None, "Form not found"
+
+            # Get current max order
             current_max_order = db.session.query(db.func.max(FormQuestion.order_number))\
                 .filter_by(form_id=form_id).scalar() or 0
 
-            for i, question in enumerate(questions, 1):
+            form_questions = []
+            
+            # Create and add each form question individually
+            for i, question_data in enumerate(questions, 1):
+                question_id = question_data.get('question_id')
+                
+                # Verify question exists
+                if not Question.query.get(question_id):
+                    return None, f"Question with ID {question_id} not found"
+
+                # Create form question
                 form_question = FormQuestion(
                     form_id=form_id,
-                    question_id=question['question_id'],
-                    order_number=question.get('order_number', current_max_order + i)
+                    question_id=question_id,
+                    order_number=question_data.get('order_number', current_max_order + i)
                 )
+                
+                # Add to session
+                db.session.add(form_question)
                 form_questions.append(form_question)
 
-            db.session.bulk_save_objects(form_questions)
+            # Commit the transaction
             db.session.commit()
-            return form_questions, None
 
-        except IntegrityError:
+            # Query to get the persisted form questions with relationships loaded
+            persisted_questions = FormQuestion.query.options(
+                joinedload(FormQuestion.form),
+                joinedload(FormQuestion.question)
+            ).filter(
+                FormQuestion.id.in_([fq.id for fq in form_questions])
+            ).all()
+
+            return persisted_questions, None
+
+        except IntegrityError as e:
             db.session.rollback()
-            return None, "Invalid form_id or question_id"
+            logger.error(f"Integrity error in bulk_create_form_questions: {str(e)}")
+            return None, "Invalid form_id or question_id provided"
         except Exception as e:
             db.session.rollback()
+            logger.error(f"Error in bulk_create_form_questions: {str(e)}")
             return None, str(e)

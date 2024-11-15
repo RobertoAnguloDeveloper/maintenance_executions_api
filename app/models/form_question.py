@@ -1,4 +1,5 @@
 from app import db
+from app.models.question import Question
 from app.models.soft_delete_mixin import SoftDeleteMixin
 from app.models.timestamp_mixin import TimestampMixin
 
@@ -20,9 +21,9 @@ class FormQuestion(TimestampMixin, SoftDeleteMixin, db.Model):
 
     def to_dict(self):
         return {
-            'id': self.id,
+            'id': id,
             'form_id': self.form_id,
             'question_id': self.question_id,
             'order_number': self.order_number,
-            'question': self.question.to_dict() if self.question else None
+            'question': Question.query.get(self.question_id).to_dict()
         }

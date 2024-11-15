@@ -12,12 +12,12 @@ from app.models.user import User
 
 class QuestionService:
     @staticmethod
-    def create_question(text, question_type_id, has_remarks=False):
+    def create_question(text, question_type_id, remarks):
         try:
             new_question = Question(
                 text=text,
                 question_type_id=question_type_id,
-                has_remarks=has_remarks
+                remarks=remarks
             )
             db.session.add(new_question)
             db.session.commit()
@@ -56,7 +56,7 @@ class QuestionService:
                 question = Question(
                     text=data['text'],
                     question_type_id=data['question_type_id'],
-                    has_remarks=data.get('has_remarks', False)
+                    remarks=data.get('remarks')
                 )
                 db.session.add(question)
                 new_questions.append(question)
@@ -88,26 +88,24 @@ class QuestionService:
         ).order_by(Question.id).all()
     
     @staticmethod
-    def search_questions(search_query=None, has_remarks=None, environment_id=None):
+    def search_questions(search_query=None, remarks=None, environment_id=None):
         """Search non-deleted questions"""
         query = Question.query.filter_by(is_deleted=False)
 
         if search_query:
             query = query.filter(Question.text.ilike(f"%{search_query}%"))
-        if has_remarks is not None:
-            query = query.filter_by(has_remarks=has_remarks)
 
         return query.order_by(Question.text).all()
 
     @staticmethod
-    def search_questions_by_type(question_type_id, search_query=None, has_remarks=None, environment_id=None):
+    def search_questions_by_type(question_type_id, search_query=None, remarks=None, environment_id=None):
         """
         Search questions of a specific type with optional filters
         
         Args:
             question_type_id (int): ID of the question type
             search_query (str, optional): Text to search in question text
-            has_remarks (bool, optional): Filter by has_remarks flag
+            remarks (str, optional): Text about the question
             environment_id (int, optional): Filter by environment
             
         Returns:
@@ -122,8 +120,8 @@ class QuestionService:
                 query = query.filter(Question.text.ilike(search_term))
 
             # Has remarks filter
-            if has_remarks is not None:
-                query = query.filter(Question.has_remarks == has_remarks)
+            if remarks is not None:
+                query = query.filter(Question.remarks == remarks)
 
             # Environment filter (if provided)
             if environment_id:

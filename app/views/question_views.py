@@ -24,7 +24,7 @@ def create_question():
         data = request.get_json()
         text = data.get('text')
         question_type_id = data.get('question_type_id')
-        has_remarks = data.get('has_remarks', False)
+        remarks = data.get('remarks')
 
         # Validate required fields
         if not all([text, question_type_id]):
@@ -37,7 +37,7 @@ def create_question():
         new_question, error = QuestionController.create_question(
             text=text,
             question_type_id=question_type_id,
-            has_remarks=has_remarks
+            remarks=remarks
         )
         
         if error:
@@ -171,7 +171,7 @@ def search_questions():
 
         # Get search parameters
         search_query = request.args.get('q')
-        has_remarks = request.args.get('has_remarks', type=lambda v: v.lower() == 'true', default=None)
+        remarks = request.args.get('remarks', default=None)
         question_type_id = request.args.get('type_id', type=int)
 
         # Determine environment filtering based on user role
@@ -188,13 +188,13 @@ def search_questions():
             questions = QuestionController.search_questions_by_type(
                 question_type_id=question_type_id,
                 search_query=search_query,
-                has_remarks=has_remarks,
+                remarks=remarks,
                 environment_id=environment_id
             )
         else:
             questions = QuestionController.search_questions(
                 search_query=search_query,
-                has_remarks=has_remarks,
+                remarks=remarks,
                 environment_id=environment_id
             )
 
@@ -203,7 +203,7 @@ def search_questions():
             "total_results": len(questions),
             "search_criteria": {
                 "query": search_query,
-                "has_remarks": has_remarks,
+                "remarks": remarks,
                 "question_type_id": question_type_id,
                 "environment_restricted": environment_id is not None
             },
@@ -235,7 +235,7 @@ def update_question(question_id):
             return jsonify({"error": "Unauthorized access"}), 403
 
         data = request.get_json()
-        allowed_fields = ['text', 'question_type_id', 'has_remarks']
+        allowed_fields = ['text', 'question_type_id', 'remarks']
         update_data = {k: v for k, v in data.items() if k in allowed_fields}
 
         # Validate text if provided

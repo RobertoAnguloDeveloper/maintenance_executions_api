@@ -219,12 +219,6 @@ def delete_answer(answer_id):
         if not user.role.is_super_user and answer.environment_id != user.environment_id:
             return jsonify({"error": "Unauthorized access"}), 403
 
-        # Check if answer is in use
-        if AnswerController.is_answer_in_use(answer_id):
-            return jsonify({
-                "error": "Cannot delete answer that is in use in form submissions"
-            }), 400
-
         success, error = AnswerController.delete_answer(answer_id)
         if success:
             logger.info(f"Answer {answer_id} deleted by user {user.username}")

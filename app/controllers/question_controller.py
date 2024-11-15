@@ -2,11 +2,11 @@ from app.services.question_service import QuestionService
 
 class QuestionController:
     @staticmethod
-    def create_question(text, question_type_id, has_remarks=False):
+    def create_question(text, question_type_id, remarks=None):
         """
         Create a new question
         """
-        return QuestionService.create_question(text, question_type_id, has_remarks)
+        return QuestionService.create_question(text, question_type_id, remarks)
     
     @staticmethod
     def bulk_create_questions(questions_data):
@@ -29,13 +29,13 @@ class QuestionController:
         return QuestionService.get_question(question_id)
     
     @staticmethod
-    def search_questions(search_query=None, has_remarks=None, environment_id=None):
+    def search_questions(search_query=None, remarks=None, environment_id=None):
         """
         Search questions with filters
         
         Args:
             search_query (str, optional): Text to search in question text
-            has_remarks (bool, optional): Filter by has_remarks flag
+            remarks (str, optional): Text about the question
             environment_id (int, optional): Filter by environment
             
         Returns:
@@ -43,19 +43,19 @@ class QuestionController:
         """
         return QuestionService.search_questions(
             search_query=search_query,
-            has_remarks=has_remarks,
+            remarks=remarks,
             environment_id=environment_id
         )
 
     @staticmethod
-    def search_questions_by_type(question_type_id, search_query=None, has_remarks=None, environment_id=None):
+    def search_questions_by_type(question_type_id, search_query=None, remarks=None, environment_id=None):
         """
         Search questions of a specific type with filters
         
         Args:
             question_type_id (int): ID of the question type
             search_query (str, optional): Text to search in question text
-            has_remarks (bool, optional): Filter by has_remarks flag
+            remarks (str, optional): Text about the question
             environment_id (int, optional): Filter by environment
             
         Returns:
@@ -64,7 +64,7 @@ class QuestionController:
         return QuestionService.search_questions_by_type(
             question_type_id=question_type_id,
             search_query=search_query,
-            has_remarks=has_remarks,
+            remarks=remarks,
             environment_id=environment_id
         )
 

@@ -4,6 +4,9 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.controllers.form_answer_controller import FormAnswerController
 from app.controllers.form_question_controller import FormQuestionController
+from app.models.answer import Answer
+from app.models.form_answer import FormAnswer
+from app.models.form_question import FormQuestion
 from app.services.auth_service import AuthService
 from app.utils.permission_manager import PermissionManager, EntityType, RoleType
 import logging
@@ -16,7 +19,7 @@ form_answer_bp = Blueprint('form-answers', __name__)
 @jwt_required()
 @PermissionManager.require_permission(action="create", entity_type=EntityType.FORMS)
 def create_form_answer():
-    """Create a new form answer"""
+    """Create a new form answer mapping for possible answers"""
     try:
         current_user = get_jwt_identity()
         user = AuthService.get_current_user(current_user)
@@ -27,25 +30,59 @@ def create_form_answer():
             return jsonify({"error": "Missing required fields"}), 400
 
         # Validate access to form question
+        form_question = FormQuestion.query.get(data['form_question_id'])
+        if not form_question:
+            return jsonify({"error": "Form question not found"}), 404
+
+        # Check authorization
         if not user.role.is_super_user:
-            form_question = FormQuestionController.get_form_question(data['form_question_id'])
-            if not form_question or form_question.form.creator.environment_id != user.environment_id:
+            if form_question.form.creator.environment_id != user.environment_id:
                 return jsonify({"error": "Unauthorized access"}), 403
+
+        # Verify answer exists
+        answer = Answer.query.get(data['answer_id'])
+        if not answer:
+            return jsonify({"error": "Answer not found"}), 404
+
+        # Check if this answer is already mapped to this question
+        existing_form_answer = FormAnswer.query.filter_by(
+            form_question_id=data['form_question_id'],
+            answer_id=data['answer_id']
+        ).first()
+        
+        if existing_form_answer:
+            return jsonify({"error": "This answer is already mapped to this question"}), 400
 
         new_form_answer, error = FormAnswerController.create_form_answer(
             form_question_id=data['form_question_id'],
-            answer_id=data['answer_id'],
-            remarks=data.get('remarks')
+            answer_id=data['answer_id']
         )
 
         if error:
             return jsonify({"error": error}), 400
 
-        logger.info(f"Form answer created by user {user.username}")
-        return jsonify({
-            "message": "Form answer created successfully",
-            "form_answer": new_form_answer.to_dict()
-        }), 201
+        # Create serializable response
+        response_data = {
+            "message": "Form answer option created successfully",
+            "form_answer": {
+                "id": new_form_answer.id,
+                "form_question": {
+                    "id": new_form_answer.form_question_id,
+                    "form": new_form_answer.form_question.form.title,
+                    "question": new_form_answer.form_question.question.text,
+                    "type": new_form_answer.form_question.question.question_type.type
+                },
+                "answer": {
+                    "id": new_form_answer.answer.id,
+                    "value": new_form_answer.answer.value
+                },
+                "created_at": new_form_answer.created_at.isoformat() if new_form_answer.created_at else None,
+                "updated_at": new_form_answer.updated_at.isoformat() if new_form_answer.updated_at else None
+            }
+        }
+
+        logger.info(f"Form answer option created by user {user.username}")
+        return jsonify(response_data), 201
 
     except Exception as e:
         logger.error(f"Error creating form answer: {str(e)}")

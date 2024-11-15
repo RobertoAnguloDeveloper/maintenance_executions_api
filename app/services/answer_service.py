@@ -26,14 +26,14 @@ class AnswerService:
         """
         Retrieve an answer by its ID
         """
-        return Answer.query.get(answer_id)
+        return Answer.query.filter_by(id=answer_id, is_deleted=False).first()
 
     @staticmethod
     def get_answers_by_form(form_id):
         """
         Get all answers associated with a specific form
         """
-        return Answer.query.join(Answer.forms).filter_by(id=form_id).all()
+        return Answer.query.join(Answer.forms).filter_by(id=form_id, is_deleted=False).all()
 
     @staticmethod
     def get_all_answers(include_deleted=False):

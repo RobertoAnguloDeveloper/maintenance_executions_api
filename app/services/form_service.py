@@ -428,7 +428,7 @@ class FormService(BaseService):
                         
                     stats['questions_stats'][question_id] = {
                         'total_answers': len(answers),
-                        'has_remarks': len([a for a in answers if a.remarks]),
+                        'remarks': len([a for a in answers if a.remarks]),
                     }
             
             return stats

@@ -1,29 +1,61 @@
 # app/services/form_answer_service.py
 
 from app import db
+from app.models.answer import Answer
 from app.models.form_answer import FormAnswer
 from sqlalchemy.exc import IntegrityError
 from datetime import datetime
+import logging
+
+logger = logging.getLogger(__name__)
+
+from app.models.form_question import FormQuestion
 
 class FormAnswerService:
     @staticmethod
-    def create_form_answer(form_question_id, answer_id, remarks=None):
-        """Create a new form answer"""
+    def create_form_answer(form_question_id: int, answer_id: int) -> tuple:
+        """
+        Create a new form answer
+        
+        Args:
+            form_question_id (int): Form question ID
+            answer_id (int): Answer ID
+            
+        Returns:
+            tuple: (FormAnswer, str) - Created form answer or error message
+        """
         try:
+            # Validate form question exists
+            form_question = FormQuestion.query.get(form_question_id)
+            if not form_question:
+                return None, "Form question not found"
+
+            # Validate answer exists
+            answer = Answer.query.get(answer_id)
+            if not answer:
+                return None, "Answer not found"
+
+            # Create form answer
             form_answer = FormAnswer(
                 form_question_id=form_question_id,
-                answer_id=answer_id,
-                remarks=remarks
+                answer_id=answer_id
             )
+            
             db.session.add(form_answer)
             db.session.commit()
+            
+            # Refresh to load relationships
+            db.session.refresh(form_answer)
+            
             return form_answer, None
 
-        except IntegrityError:
+        except IntegrityError as e:
             db.session.rollback()
+            logger.error(f"Integrity error creating form answer: {str(e)}")
             return None, "Invalid form_question_id or answer_id"
         except Exception as e:
             db.session.rollback()
+            logger.error(f"Error creating form answer: {str(e)}")
             return None, str(e)
 
     @staticmethod
@@ -34,8 +66,7 @@ class FormAnswerService:
             for data in form_answers_data:
                 form_answer = FormAnswer(
                     form_question_id=data['form_question_id'],
-                    answer_id=data['answer_id'],
-                    remarks=data.get('remarks')
+                    answer_id=data['answer_id']
                 )
                 form_answers.append(form_answer)
 

@@ -4,12 +4,20 @@ from app.services.form_answer_service import FormAnswerService
 
 class FormAnswerController:
     @staticmethod
-    def create_form_answer(form_question_id, answer_id, remarks=None):
-        """Create a new form answer"""
+    def create_form_answer(form_question_id: int, answer_id: int) -> tuple:
+        """
+        Create a new form answer
+        
+        Args:
+            form_question_id (int): ID of the form question
+            answer_id (int): ID of the answer
+            
+        Returns:
+            tuple: (FormAnswer, str) Created form answer or error message
+        """
         return FormAnswerService.create_form_answer(
             form_question_id=form_question_id,
-            answer_id=answer_id,
-            remarks=remarks
+            answer_id=answer_id
         )
 
     @staticmethod

@@ -37,12 +37,12 @@ class AnswerSubmittedService:
     @staticmethod
     def get_answer_submitted(answer_submitted_id):
         """Get a specific submitted answer"""
-        return AnswerSubmitted.query.get(answer_submitted_id)
+        return AnswerSubmitted.query.filter_by(id=answer_submitted_id, is_deleted=False).first()
 
     @staticmethod
     def get_answers_by_submission(submission_id, include_deleted=False):
         """Get submitted answers for a submission"""
-        query = AnswerSubmitted.query.filter_by(form_submission_id=submission_id)
+        query = AnswerSubmitted.query.filter_by(form_submission_id=submission_id, is_deleted=False)
         
         if not include_deleted:
             query = query.filter(AnswerSubmitted.is_deleted == False)
@@ -69,7 +69,7 @@ class AnswerSubmittedService:
         """Get all submitted answers for a specific user"""
         return (AnswerSubmitted.query
                 .join(AnswerSubmitted.form_submission)
-                .filter_by(submitted_by=username)
+                .filter_by(submitted_by=username, is_deleted=False)
                 .all())
 
     @staticmethod
@@ -77,7 +77,7 @@ class AnswerSubmittedService:
         """Get statistics for a form submission"""
         try:
             submitted_answers = AnswerSubmitted.query\
-                .filter_by(form_submission_id=submission_id)\
+                .filter_by(form_submission_id=submission_id, is_deleted=False)\
                 .all()
 
             return {

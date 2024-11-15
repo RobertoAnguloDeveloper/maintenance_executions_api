@@ -1,9 +1,14 @@
 from app import db
+from app.models.answer import Answer
+from app.models.form_answer import FormAnswer
 from app.models.soft_delete_mixin import SoftDeleteMixin
 from app.models.timestamp_mixin import TimestampMixin
 from sqlalchemy.orm import joinedload
 from sqlalchemy import select, func
 from typing import List, Dict, Any
+import logging
+
+logger = logging.getLogger(__name__)
 
 class Form(TimestampMixin, SoftDeleteMixin, db.Model):
     __tablename__ = 'forms'
@@ -41,31 +46,64 @@ class Form(TimestampMixin, SoftDeleteMixin, db.Model):
         from app.models.form_submission import FormSubmission
         return FormSubmission.query.filter_by(form_submitted=str(self.id)).count()
 
+    # app/models/form.py
+
     def _get_question_answers(self, form_question) -> List[Dict[str, Any]]:
-        """Get possible answers for a specific form question through form_answers."""
-        if form_question.question.question_type.type not in ['single_choice', 'multiple_choice', 'single-choice']:
+        """
+        Get possible answers for a specific form question through form_answers.
+        
+        Args:
+            form_question: FormQuestion object
+                
+        Returns:
+            List of dictionaries containing answer data
+        """
+        try:
+            # Get all form_answers for this form_question using eager loading
+            form_answers = FormAnswer.query.options(
+                joinedload(FormAnswer.answer)
+            ).filter_by(
+                form_question_id=form_question.id,
+                is_deleted=False  # Add soft delete filter
+            ).all()
+
+            # Create a dictionary of unique answers based on answer_id
+            unique_answers = {}
+            for form_answer in form_answers:
+                if form_answer.answer and form_answer.answer_id not in unique_answers:
+                    unique_answers[form_answer.answer_id] = {
+                        'id': form_answer.answer.id,
+                        'value': form_answer.answer.value
+                    }
+
+            return list(unique_answers.values())
+
+        except Exception as e:
+            logger.error(f"Error getting answers for question {form_question.id}: {str(e)}")
             return []
 
-        from app.models.form_answer import FormAnswer
-        form_answers = FormAnswer.query.filter_by(form_question_id=form_question.id).all()
-        
-        return [{
-            'id': form_answer.answer.id,
-            'value': form_answer.answer.value,
-            'remarks': form_answer.remarks
-        } for form_answer in form_answers if form_answer.answer]
-
     def _format_question(self, form_question) -> Dict[str, Any]:
-        """Format a single question with its details."""
+        """
+        Format a single question with its details.
+        Only include possible answers for choice-type questions.
+        """
         question = form_question.question
-        return {
+        question_type = question.question_type.type
+
+        # Base question data
+        formatted_question = {
             'id': question.id,
             'text': question.text,
-            'type': question.question_type.type,
+            'type': question_type,
             'order_number': form_question.order_number,
-            'has_remarks': question.has_remarks,
-            'possible_answers': self._get_question_answers(form_question)
+            'remarks': question.remarks
         }
+
+        # Add possible answers only for choice-type questions
+        if question_type in ['single_choice', 'multiple_choices']:
+            formatted_question['possible_answers'] = self._get_question_answers(form_question)
+
+        return formatted_question
 
     def _get_questions_list(self) -> List[Dict[str, Any]]:
         """Get formatted list of questions."""

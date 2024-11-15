@@ -8,7 +8,6 @@ class FormAnswer(TimestampMixin, SoftDeleteMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     form_question_id = db.Column(db.Integer, db.ForeignKey('form_questions.id'), nullable=False)
     answer_id = db.Column(db.Integer, db.ForeignKey('answers.id'), nullable=False)
-    remarks = db.Column(db.Text)
 
     # Relationships
     form_question = db.relationship('FormQuestion', back_populates='form_answers')
@@ -21,8 +20,10 @@ class FormAnswer(TimestampMixin, SoftDeleteMixin, db.Model):
     def to_dict(self):
         return {
             'id': self.id,
-            'form_question_id': self.form_question_id,
-            'answer_id': self.answer_id,
-            'remarks': self.remarks,
+            'form_question': {
+                                "id":self.form_question_id,
+                                "form": self.form_question.form.title,
+                                "question": self.form_question.question.text
+                                },
             'answer': self.answer.to_dict() if self.answer else None
         }

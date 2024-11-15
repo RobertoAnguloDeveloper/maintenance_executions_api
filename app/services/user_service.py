@@ -15,6 +15,13 @@ class UserService(BaseService):
     @staticmethod
     def create_user(first_name, last_name, email, contact_number, username, password, role_id, environment_id):
         try:
+            # Verificar existencia antes de crear
+            if User.query.filter_by(username=username).first():
+                db.session.rollback()
+                return None, "Username already exists"
+            if User.query.filter_by(email=email).first():
+                db.session.rollback()
+                return None, "Email already exists"
             new_user = User(
                 first_name=first_name, 
                 last_name=last_name, 
@@ -32,8 +39,10 @@ class UserService(BaseService):
         except IntegrityError as e:
             db.session.rollback()
             if "username" in str(e.orig):
+                db.session.rollback()
                 return None, "Username already exists"
             elif "email" in str(e.orig):
+                db.session.rollback()
                 return None, "Email already exists"
             else:
                 return None, str(e)

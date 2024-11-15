@@ -1,5 +1,6 @@
 # app/controllers/form_question_controller.py
 
+from app.models.form import Form
 from app.models.form_question import FormQuestion
 from app.services.form_question_service import FormQuestionService
 from sqlalchemy.exc import SQLAlchemyError
@@ -84,5 +85,30 @@ class FormQuestionController:
 
     @staticmethod
     def bulk_create_form_questions(form_id, questions):
-        """Bulk create form questions"""
-        return FormQuestionService.bulk_create_form_questions(form_id, questions)
+        """
+        Bulk create form questions
+        
+        Args:
+            form_id (int): Form ID
+            questions (list): List of question data
+                
+        Returns:
+            tuple: (List of created FormQuestion objects, error message)
+        """
+        try:
+            # Validate form exists
+            form = Form.query.get(form_id)
+            if not form:
+                return None, "Form not found"
+
+            # Create form questions
+            form_questions, error = FormQuestionService.bulk_create_form_questions(form_id, questions)
+            
+            if error:
+                return None, error
+                
+            return form_questions, None
+
+        except Exception as e:
+            logger.error(f"Error in bulk_create_form_questions controller: {str(e)}")
+            return None, str(e)

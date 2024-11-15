@@ -22,7 +22,7 @@ def create_form_question():
         user = AuthService.get_current_user(current_user)
 
         data = request.get_json()
-        required_fields = ['form_id', 'question_id', 'order_number']
+        required_fields = ['form_id', 'question_id']
         if not all(field in data for field in required_fields):
             return jsonify({"error": "Missing required fields"}), 400
 
@@ -35,17 +35,33 @@ def create_form_question():
         new_form_question, error = FormQuestionController.create_form_question(
             form_id=data['form_id'],
             question_id=data['question_id'],
-            order_number=data['order_number']
+            order_number=data.get('order_number')
         )
 
         if error:
             return jsonify({"error": error}), 400
 
-        logger.info(f"Form question created by user {user.username}")
-        return jsonify({
+        # Create serializable response
+        response_data = {
             "message": "Form question created successfully",
-            "form_question": new_form_question.to_dict()
-        }), 201
+            "form_question": {
+                "id": new_form_question.id,
+                "form_id": new_form_question.form_id,
+                "question_id": new_form_question.question_id,
+                "order_number": new_form_question.order_number,
+                "question": {
+                    "id": new_form_question.question.id,
+                    "text": new_form_question.question.text,
+                    "type": new_form_question.question.question_type.type if new_form_question.question.question_type else None,
+                    "remarks": new_form_question.question.remarks
+                },
+                "created_at": new_form_question.created_at.isoformat() if new_form_question.created_at else None,
+                "updated_at": new_form_question.updated_at.isoformat() if new_form_question.updated_at else None
+            }
+        }
+
+        logger.info(f"Form question created by user {user.username}")
+        return jsonify(response_data), 201
 
     except Exception as e:
         logger.error(f"Error creating form question: {str(e)}")
@@ -131,7 +147,7 @@ def get_all_form_questions():
                         "id": form_question.question.question_type.id,
                         "type": form_question.question.question_type.type
                     },
-                    "has_remarks": form_question.question.has_remarks
+                    "remarks": form_question.question.remarks
                 },
                 "order_number": form_question.order_number,
                 "created_at": form_question.created_at.isoformat() if form_question.created_at else None,
@@ -223,7 +239,7 @@ def get_form_question(form_question_id: int):
                     "id": form_question.question.question_type.id,
                     "type": form_question.question.question_type.type
                 },
-                "has_remarks": form_question.question.has_remarks
+                "remarks": form_question.question.remarks
             },
             "order_number": form_question.order_number,
             "answers": [{
@@ -329,8 +345,15 @@ def bulk_create_form_questions():
         user = AuthService.get_current_user(current_user)
 
         data = request.get_json()
-        if 'form_id' not in data or 'questions' not in data:
+        if not data or 'form_id' not in data or 'questions' not in data:
             return jsonify({"error": "Missing required fields"}), 400
+
+        # Validate questions data structure
+        if not isinstance(data['questions'], list):
+            return jsonify({"error": "Questions must be provided as a list"}), 400
+
+        if not data['questions']:
+            return jsonify({"error": "At least one question is required"}), 400
 
         # Check form access
         if not user.role.is_super_user:
@@ -347,10 +370,26 @@ def bulk_create_form_questions():
             return jsonify({"error": error}), 400
 
         logger.info(f"Bulk form questions created by user {user.username}")
-        return jsonify({
+        
+        # Serialize the response
+        response_data = {
             "message": "Form questions created successfully",
-            "form_questions": [fq.to_dict() for fq in form_questions]
-        }), 201
+            "form_questions": [{
+                "id": fq.id,
+                "form_id": fq.form_id,
+                "question_id": fq.question_id,
+                "order_number": fq.order_number,
+                "question": {
+                    "id": fq.question.id,
+                    "text": fq.question.text,
+                    "type": fq.question.question_type.type if fq.question.question_type else None
+                } if fq.question else None,
+                "created_at": fq.created_at.isoformat() if fq.created_at else None,
+                "updated_at": fq.updated_at.isoformat() if fq.updated_at else None
+            } for fq in form_questions]
+        }
+
+        return jsonify(response_data), 201
 
     except Exception as e:
         logger.error(f"Error bulk creating form questions: {str(e)}")

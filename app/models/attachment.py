@@ -9,10 +9,13 @@ class Attachment(TimestampMixin, SoftDeleteMixin, db.Model):
     form_submission_id = db.Column(db.Integer, db.ForeignKey('form_submissions.id'), nullable=False)
     file_type = db.Column(db.String(50), nullable=False)
     file_path = db.Column(db.String(255), nullable=False)
-    is_signature = db.Column(db.Boolean, nullable=False, default=False)
+    is_signature = db.Column(db.Boolean, nullable=False)
 
-    # Relationships
-    form_submission = db.relationship('FormSubmission', back_populates='attachments')
+    # Relationship
+    form_submission = db.relationship(
+        'FormSubmission',
+        back_populates='attachments'
+    )
     
     def __repr__(self):
         return f'<Attachment {self.file_path}>'

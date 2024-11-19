@@ -20,6 +20,14 @@ class Config:
         
         self.SQLALCHEMY_TRACK_MODIFICATIONS = False
         self.SQLALCHEMY_DATABASE_URI = self._get_database_uri()
+        
+        # Add these new configurations
+        self.UPLOAD_FOLDER = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'uploads')
+        self.MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB max file size
+        
+        # Ensure upload directory exists
+        if not os.path.exists(self.UPLOAD_FOLDER):
+            os.makedirs(self.UPLOAD_FOLDER)
 
     def create_db_and_user(self, db_host, db_name, db_user, db_pass):
         """Create database and user if they don't exist."""

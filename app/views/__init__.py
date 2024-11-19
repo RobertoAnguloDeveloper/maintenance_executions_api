@@ -9,6 +9,7 @@ from .question_views import question_bp
 from .answer_views import answer_bp
 from .form_views import form_bp
 from .form_submission_views import form_submission_bp
+from .answer_submitted_views import answer_submitted_bp
 from .attachment_views import attachment_bp
 from .role_permission_views import role_permission_bp
 from .form_question_views import form_question_bp
@@ -26,6 +27,7 @@ def register_blueprints(app):
         (answer_bp, '/api/answers'),
         (form_bp, '/api/forms'),
         (form_submission_bp, '/api/form-submissions'),
+        (answer_submitted_bp, '/api/answers-submitted'),
         (attachment_bp, '/api/attachments'),
         (role_permission_bp, '/api/role-permissions'),
         (form_question_bp, '/api/form-questions'),

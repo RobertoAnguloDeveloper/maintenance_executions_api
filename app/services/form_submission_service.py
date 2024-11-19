@@ -1,4 +1,5 @@
 from app import db
+from app.models.form import Form
 from app.models.form_submission import FormSubmission
 from app.models.answers_submitted import AnswerSubmitted
 from app.models.form_answer import FormAnswer
@@ -8,24 +9,23 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 import logging
 
+from app.models.user import User
+
 logger = logging.getLogger(__name__)
 
 class FormSubmissionService:
     @staticmethod
-    def create_submission(form_id, username, answers_data, attachments_data=None):
-        """
-        Create a new form submission with answers and attachments
-        
-        Args:
-            form_id (int): Form ID
-            username (str): Username of submitter
-            answers_data (list): List of answer data including form_question_id and answer_id
-            attachments_data (list, optional): List of attachment information
-            
-        Returns:
-            tuple: (FormSubmission, error_message)
-        """
+    def create_submission(form_id: int, username: str) -> tuple:
+        """Create a new form submission with answers and attachments"""
         try:
+            # Start transaction
+            db.session.begin_nested()
+            
+            # Verify form exists
+            form = Form.query.get(form_id)
+            if not form:
+                return None, "Form not found"
+
             # Create submission
             submission = FormSubmission(
                 form_id=form_id,
@@ -35,66 +35,72 @@ class FormSubmissionService:
             db.session.add(submission)
             db.session.flush()
 
-            # Process answers
-            for answer_data in answers_data:
-                # Create form answer if it doesn't exist
-                form_answer = FormAnswer.query.filter_by(
-                    form_question_id=answer_data['form_question_id'],
-                    answer_id=answer_data['answer_id']
-                ).first()
-
-                if not form_answer:
-                    form_answer = FormAnswer(
-                        form_question_id=answer_data['form_question_id'],
-                        answer_id=answer_data['answer_id'],
-                        remarks=answer_data.get('remarks')
-                    )
-                    db.session.add(form_answer)
-                    db.session.flush()
-
-                # Create answer submission
-                answer_submitted = AnswerSubmitted(
-                    form_answer_id=form_answer.id,
-                    form_submission_id=submission.id
-                )
-                db.session.add(answer_submitted)
-
-            # Process attachments if any
-            if attachments_data:
-                for attachment_data in attachments_data:
-                    attachment = Attachment(
-                        form_submission_id=submission.id,
-                        file_type=attachment_data['file_type'],
-                        file_path=attachment_data['file_path'],
-                        is_signature=attachment_data.get('is_signature', False)
-                    )
-                    db.session.add(attachment)
-
             db.session.commit()
             return submission, None
 
-        except IntegrityError as e:
-            db.session.rollback()
-            logger.error(f"Integrity error creating submission: {str(e)}")
-            return None, "Database integrity error"
         except Exception as e:
             db.session.rollback()
             logger.error(f"Error creating submission: {str(e)}")
             return None, str(e)
+        
+    @staticmethod
+    def get_all_submissions(filters: dict = None) -> list:
+        """
+        Get all submissions with optional filters
+        
+        Args:
+            filters (dict): Optional filters including:
+                - form_id (int): Filter by specific form
+                - start_date (datetime): Filter by start date
+                - end_date (datetime): Filter by end date
+                - environment_id (int): Filter by environment
+                - submitted_by (str): Filter by submitter
+        """
+        try:
+            query = FormSubmission.query.filter_by(is_deleted=False)
+
+            # Apply filters
+            if filters:
+                if filters.get('form_id'):
+                    query = query.filter(FormSubmission.form_id == filters['form_id'])
+                
+                if filters.get('start_date'):
+                    query = query.filter(FormSubmission.submitted_at >= filters['start_date'])
+                    
+                if filters.get('end_date'):
+                    query = query.filter(FormSubmission.submitted_at <= filters['end_date'])
+                    
+                if filters.get('submitted_by'):
+                    query = query.filter(FormSubmission.submitted_by == filters['submitted_by'])
+                    
+                if filters.get('environment_id'):
+                    query = query.join(Form).join(User).filter(
+                        User.environment_id == filters['environment_id']
+                    )
+
+            # Order by submission date
+            query = query.order_by(FormSubmission.submitted_at.desc())
+            
+            return query.all()
+            
+        except Exception as e:
+            logger.error(f"Error getting submissions: {str(e)}")
+            return []
 
     @staticmethod
-    def get_submission(submission_id):
-        """
-        Get a submission with all its relationships loaded
-        """
-        return FormSubmission.query.options(
-            joinedload(FormSubmission.answers_submitted)
-                .joinedload(AnswerSubmitted.form_answer),
-            joinedload(FormSubmission.attachments)
-        ).get(submission_id)
+    def get_submission(submission_id: int) -> FormSubmission:
+        """Get a specific submission"""
+        try:
+            return FormSubmission.query.filter_by(
+                id=submission_id,
+                is_deleted=False
+            ).first()
+        except Exception as e:
+            logger.error(f"Database error getting submission {submission_id}: {str(e)}")
+            return None
 
     @staticmethod
-    def get_submissions_by_form(form_id, include_deleted=False):
+    def get_submissions_by_form(form_id: int, include_deleted: bool = False) -> list:
         """Get all submissions for a form"""
         query = FormSubmission.query.filter_by(form_id=form_id)
         
@@ -120,16 +126,27 @@ class FormSubmissionService:
         return query.order_by(FormSubmission.submitted_at.desc()).all()
 
     @staticmethod
-    def get_submissions_by_environment(environment_id, form_id=None):
+    def get_submissions_by_environment(environment_id: int, form_id: int = None):
         """Get submissions for a specific environment"""
-        query = FormSubmission.query\
-            .join(FormSubmission.form)\
-            .filter_by(environment_id=environment_id)
+        try:
+            # Get forms in the environment
+            forms_query = Form.query\
+                .join(User, Form.user_id == User.id)\
+                .filter(User.environment_id == environment_id)
             
-        if form_id:
-            query = query.filter(FormSubmission.form_id == form_id)
+            form_ids = [f.id for f in forms_query.all()]  # Removed str() conversion
             
-        return query.order_by(FormSubmission.submitted_at.desc()).all()
+            # Get submissions for those forms
+            query = FormSubmission.query\
+                .filter(FormSubmission.form_id.in_(form_ids))
+                
+            if form_id:
+                query = query.filter(FormSubmission.form_id == form_id)  # Changed from form_submitted
+                
+            return query.order_by(FormSubmission.submitted_at.desc()).all()
+        except Exception as e:
+            logger.error(f"Error getting submissions by environment: {str(e)}")
+            return None
 
     @staticmethod
     def update_submission(submission_id, answers_data=None, attachments_data=None):

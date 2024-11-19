@@ -94,7 +94,7 @@ class PermissionService(BaseService):
     @staticmethod
     def get_all_permissions():
         try:
-            permissions = Permission.query.all()
+            permissions = Permission.query.order_by(Permission.id).all()
             logger.info(f"Number of permissions found: {len(permissions)}")
             for perm in permissions:
                 logger.info(f"Permission: id={perm.id}, name={perm.name}")

@@ -334,7 +334,7 @@ class DatabaseInitializer:
         try:
             default_types = [
                 'text', 'multiple_choices', 
-                'single_choice', 'date', 
+                'checkbox', 'date', 
                 'datetime', 'user'
             ]
             

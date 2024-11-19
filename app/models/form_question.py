@@ -21,9 +21,9 @@ class FormQuestion(TimestampMixin, SoftDeleteMixin, db.Model):
 
     def to_dict(self):
         return {
-            'id': id,
+            'id': self.id,
             'form_id': self.form_id,
             'question_id': self.question_id,
             'order_number': self.order_number,
-            'question': Question.query.get(self.question_id).to_dict()
+            'question': self.question.to_dict() if self.question else None
         }

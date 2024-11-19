@@ -69,6 +69,9 @@ def login():
 
         if not username or not password:
             return jsonify({"error": "Missing username or password"}), 400
+        
+        if UserController.get_user_by_username(username).is_deleted:
+            return jsonify({"error": "Invalid credentials"}), 401
 
         access_token = AuthService.authenticate_user(username, password)
         if access_token:
@@ -91,29 +94,31 @@ def get_all_users():
         if not current_user_obj:
             return jsonify({"error": "User not found"}), 404
 
+        # Only admins can see deleted users
         include_deleted = (current_user_obj.role.is_super_user and 
-                           request.args.get('include_deleted', '').lower() == 'true')
+                         request.args.get('include_deleted', '').lower() == 'true')
 
         try:
             if current_user_obj.role.is_super_user:
                 users = UserController.get_all_users(include_deleted=include_deleted)
             else:
+                # Non-admin users only see active users in their environment
                 users = UserController.get_users_by_environment(current_user_obj.environment_id)
 
-            user_list = [user.to_dict(
-                include_details=True,
-                include_deleted=current_user_obj.role.is_super_user
-            ) for user in users]
-
-            return jsonify(user_list), 200
+            return jsonify([
+                user.to_dict(
+                    include_details=True,
+                    include_deleted=current_user_obj.role.is_super_user
+                ) for user in users
+            ]), 200
 
         except Exception as e:
             logger.error(f"Database error while fetching users: {str(e)}")
             return jsonify({"error": f"Database error: {str(e)}"}), 500
 
     except Exception as e:
-        logger.error(f"Error in get_all_users: {str(e)}", exc_info=True)
-        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
+        logger.error(f"Error in get_all_users: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
     
 @user_bp.route('/byRole/<int:role_id>', methods=['GET'])
 @jwt_required()
@@ -243,19 +248,18 @@ def update_user(user_id):
 @user_bp.route('/<int:user_id>', methods=['DELETE'])
 @jwt_required()
 @PermissionManager.require_permission(action="delete", entity_type=EntityType.USERS)
-@PermissionManager.require_role(RoleType.ADMIN)
 def delete_user(user_id):
-    """Delete user with role-based restrictions"""
+    """Delete user with cascade soft delete"""
     try:
         current_user = get_jwt_identity()
         current_user_obj = AuthService.get_current_user(current_user)
 
-        # Get the user to be deleted
+        # Get the user to be deleted (with is_deleted=False check)
         user_to_delete = UserController.get_user(user_id)
         if not user_to_delete:
             return jsonify({"error": "User not found"}), 404
 
-        # Role-based access control
+        # Security validations
         if not current_user_obj.role.is_super_user:
             # Can only delete users in same environment
             if user_to_delete.environment_id != current_user_obj.environment_id:
@@ -269,12 +273,15 @@ def delete_user(user_id):
             if user_to_delete.id == current_user_obj.id:
                 return jsonify({"error": "Cannot delete own account"}), 403
 
-        success = UserController.delete_user(user_id)
+        success, result = UserController.delete_user(user_id)
         if success:
-            logger.info(f"User {user_id} deleted successfully by {current_user}")
-            return jsonify({"message": "User deleted successfully"}), 200
+            logger.info(f"User {user_id} and all associated data deleted by {current_user}")
+            return jsonify({
+                "message": "User and all associated data deleted successfully",
+                "deleted_items": result
+            }), 200
             
-        return jsonify({"error": "Failed to delete user"}), 400
+        return jsonify({"error": result}), 400
 
     except Exception as e:
         logger.error(f"Error deleting user {user_id}: {str(e)}")

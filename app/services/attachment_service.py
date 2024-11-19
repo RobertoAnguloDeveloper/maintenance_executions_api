@@ -9,29 +9,13 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 class AttachmentService:
-    ALLOWED_EXTENSIONS = {'pdf', 'doc', 'docx', 'txt', 'jpg', 'jpeg', 'png', 'xlsx', 'xls'}
-    MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB limit
+    ALLOWED_EXTENSIONS = {'pdf', 'png', 'jpg', 'jpeg', 'gif', 'doc', 'docx', 'xls', 'xlsx'}
     
     @staticmethod
-    def allowed_file(filename):
-        return '.' in filename and \
-            filename.rsplit('.', 1)[1].lower() in AttachmentService.ALLOWED_EXTENSIONS
-
-    @staticmethod
-    def create_attachment(form_submission_id, file_type, file_path, file_name, file_size, is_signature=False):
+    def create_attachment(form_submission_id: int, file_type: str, file_path: str, 
+                         file_name: str, is_signature: bool = False) -> tuple:
         """Create a new attachment"""
         try:
-            # Validate file size
-            if file_size > AttachmentService.MAX_FILE_SIZE:
-                return None, "File size exceeds maximum limit"
-
-            # Validate file type
-            if not AttachmentService.allowed_file(file_name):
-                return None, "File type not allowed"
-
-            # Secure the filename
-            secure_name = secure_filename(file_name)
-            
             new_attachment = Attachment(
                 form_submission_id=form_submission_id,
                 file_type=file_type,
@@ -45,9 +29,9 @@ class AttachmentService:
             logger.info(f"Created attachment for submission {form_submission_id}")
             return new_attachment, None
 
-        except IntegrityError as e:
+        except IntegrityError:
             db.session.rollback()
-            logger.error(f"Integrity error creating attachment: {str(e)}")
+            logger.error("Invalid form submission ID")
             return None, "Invalid form submission ID"
         except Exception as e:
             db.session.rollback()
@@ -55,12 +39,12 @@ class AttachmentService:
             return None, str(e)
 
     @staticmethod
-    def get_attachment(attachment_id):
+    def get_attachment(attachment_id: int) -> Attachment:
         """Get a specific attachment"""
         return Attachment.query.get(attachment_id)
 
     @staticmethod
-    def get_attachments_by_submission(form_submission_id, include_deleted=False):
+    def get_attachments_by_submission(form_submission_id: int, include_deleted: bool = False) -> list:
         """Get all attachments for a submission"""
         query = Attachment.query.filter_by(form_submission_id=form_submission_id)
         
@@ -70,40 +54,36 @@ class AttachmentService:
         return query.order_by(Attachment.created_at).all()
 
     @staticmethod
-    def get_signature_attachment(form_submission_id):
-        """Get signature attachment for a form submission"""
+    def get_signature_attachment(form_submission_id: int) -> Attachment:
+        """Get signature attachment for a submission"""
         return Attachment.query.filter_by(
             form_submission_id=form_submission_id,
-            is_signature=True
+            is_signature=True,
+            is_deleted=False
         ).first()
 
     @staticmethod
-    def update_attachment(attachment_id, **kwargs):
-        """Update an attachment's details"""
+    def update_attachment(attachment_id: int, **kwargs) -> tuple:
+        """Update an attachment"""
         try:
             attachment = Attachment.query.get(attachment_id)
             if not attachment:
                 return None, "Attachment not found"
 
-            # Update allowed fields
-            allowed_fields = ['file_type', 'file_path', 'is_signature']
             for key, value in kwargs.items():
-                if key in allowed_fields:
+                if hasattr(attachment, key):
                     setattr(attachment, key, value)
 
-            attachment.updated_at = datetime.utcnow()
             db.session.commit()
-            
-            logger.info(f"Updated attachment {attachment_id}")
             return attachment, None
 
         except Exception as e:
             db.session.rollback()
-            logger.error(f"Error updating attachment {attachment_id}: {str(e)}")
+            logger.error(f"Error updating attachment: {str(e)}")
             return None, str(e)
 
     @staticmethod
-    def delete_attachment(attachment_id):
+    def delete_attachment(attachment_id: int) -> tuple:
         """Soft delete an attachment"""
         try:
             attachment = Attachment.query.get(attachment_id)
@@ -118,27 +98,23 @@ class AttachmentService:
             return False, str(e)
 
     @staticmethod
-    def get_attachments_stats(form_submission_id=None):
+    def get_attachments_stats(form_submission_id: int = None) -> dict:
         """Get attachment statistics"""
         try:
             query = Attachment.query
             if form_submission_id:
                 query = query.filter_by(form_submission_id=form_submission_id)
 
-            attachments = query.all()
+            attachments = query.filter_by(is_deleted=False).all()
             
-            stats = {
+            return {
                 'total_attachments': len(attachments),
-                'by_type': {},
-                'signatures_count': sum(1 for a in attachments if a.is_signature),
-                'types_distribution': {},
+                'by_type': {
+                    file_type: len([a for a in attachments if a.file_type == file_type])
+                    for file_type in set(a.file_type for a in attachments)
+                },
+                'signatures_count': len([a for a in attachments if a.is_signature]),
             }
-
-            for attachment in attachments:
-                stats['by_type'][attachment.file_type] = \
-                    stats['by_type'].get(attachment.file_type, 0) + 1
-
-            return stats
 
         except Exception as e:
             logger.error(f"Error getting attachment statistics: {str(e)}")

@@ -124,28 +124,30 @@ def update_environment(environment_id):
 
 @environment_bp.route('/<int:environment_id>', methods=['DELETE'])
 @jwt_required()
-@PermissionManager.require_role(RoleType.ADMIN)  # Only Admin can delete environments
+@PermissionManager.require_role(RoleType.ADMIN)
 def delete_environment(environment_id):
-    """Delete an environment - Admin only"""
+    """Delete an environment with cascade soft delete - Admin only"""
     try:
+        current_user = get_jwt_identity()
         
-        # Check if environment has associated users or forms
-        users = EnvironmentController.get_users_in_environment(environment_id)
-        forms = EnvironmentController.get_forms_in_environment(environment_id)
-        print("PASSO:",forms)
-        
-        if users or forms:
+        # Get the environment checking is_deleted=False
+        environment = EnvironmentController.get_environment(environment_id)
+        if not environment:
+            return jsonify({"error": "Environment not found"}), 404
+
+        # Prevent deletion of ADMIN environment
+        if environment.name == "ADMIN":
             return jsonify({
-                "error": "Cannot delete environment with associated users or forms"
-            }), 400
-            
-        
+                "error": "Cannot delete the ADMIN environment"
+            }), 403
 
         success, error = EnvironmentController.delete_environment(environment_id)
         if success:
-            logger.info(f"Environment {environment_id} deleted successfully")
-            return jsonify({"message": "Environment deleted successfully"}), 200
-        return jsonify({"error": error}), 404
+            logger.info(f"Environment {environment_id} and all associated data deleted by {current_user}")
+            return jsonify({"message": "Environment and all associated data deleted successfully"}), 200
+            
+        return jsonify({"error": error}), 400
+        
     except Exception as e:
         logger.error(f"Error deleting environment {environment_id}: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500

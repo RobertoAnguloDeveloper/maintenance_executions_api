@@ -24,6 +24,8 @@ class Form(TimestampMixin, SoftDeleteMixin, db.Model):
     form_questions = db.relationship('FormQuestion', back_populates='form', 
                                    cascade='all, delete-orphan',
                                    order_by='FormQuestion.order_number')
+    submissions = db.relationship('FormSubmission', back_populates='form',
+                                cascade='all, delete-orphan')
 
     def __repr__(self) -> str:
         return f'<Form {self.title}>'
@@ -38,13 +40,18 @@ class Form(TimestampMixin, SoftDeleteMixin, db.Model):
             'username': self.creator.username,
             'first_name': self.creator.first_name,
             'last_name': self.creator.last_name,
-            'environment_id': self.creator.environment_id
+            'email': self.creator.email,
+            'fullname': self.creator.first_name+" "+self.creator.last_name,
+            'environment': {
+                            "id": self.creator.environment_id,
+                            "name": self.creator.environment.name if self.creator.environment else None
+                            }
         }
 
     def _get_submissions_count(self) -> int:
         """Get count of submissions for this form."""
         from app.models.form_submission import FormSubmission
-        return FormSubmission.query.filter_by(form_submitted=str(self.id)).count()
+        return FormSubmission.query.filter_by(form_id=str(self.id)).count()
 
     # app/models/form.py
 
@@ -100,7 +107,7 @@ class Form(TimestampMixin, SoftDeleteMixin, db.Model):
         }
 
         # Add possible answers only for choice-type questions
-        if question_type in ['single_choice', 'multiple_choices']:
+        if question_type in ['checkbox', 'multiple_choices']:
             formatted_question['possible_answers'] = self._get_question_answers(form_question)
 
         return formatted_question
@@ -123,7 +130,7 @@ class Form(TimestampMixin, SoftDeleteMixin, db.Model):
             'is_public': self.is_public,
             'created_at': self._format_timestamp(self.created_at),
             'updated_at': self._format_timestamp(self.updated_at),
-            'assigned_to': self._get_creator_dict(),
+            'created_by': self._get_creator_dict(),
             'questions': self._get_questions_list(),
             'submissions_count': self._get_submissions_count()
         }

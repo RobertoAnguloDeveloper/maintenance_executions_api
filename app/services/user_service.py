@@ -1,4 +1,10 @@
+from typing import Optional, Union
 from app import db
+from app.models.answers_submitted import AnswerSubmitted
+from app.models.attachment import Attachment
+from app.models.form import Form
+from app.models.form_question import FormQuestion
+from app.models.form_submission import FormSubmission
 from app.models.user import User
 from sqlalchemy.orm import joinedload
 from sqlalchemy.exc import IntegrityError
@@ -51,8 +57,12 @@ class UserService(BaseService):
             return None, str(e)
 
     @staticmethod
-    def get_user(user_id):
-        return User.query.filter_by(id=user_id, is_deleted=False).first()
+    def get_user(user_id: int) -> Optional[User]:
+        """Get non-deleted user by ID"""
+        return User.query.filter_by(
+            id=user_id,
+            is_deleted=False
+        ).first()
 
     @staticmethod
     def get_user_by_username(username):
@@ -91,8 +101,8 @@ class UserService(BaseService):
             raise
     
     @staticmethod
-    def search_users(username=None, role_id=None, environment_id=None):
-        """Search users with filters, excluding soft deleted"""
+    def search_users(username=None, role_id=None, environment_id=None) -> list[User]:
+        """Search non-deleted users with filters"""
         query = User.query.filter_by(is_deleted=False)
         
         if username:
@@ -102,7 +112,7 @@ class UserService(BaseService):
         if environment_id:
             query = query.filter_by(environment_id=environment_id)
             
-        return query.all()
+        return query.order_by(User.username).all()
 
     @staticmethod
     def update_user(user_id, **kwargs):
@@ -128,8 +138,12 @@ class UserService(BaseService):
         return None, "User not found"
     
     @staticmethod
-    def get_users_by_role(role_id):
-        return User.query.filter_by(role_id=role_id, is_deleted=False).all()
+    def get_users_by_role(role_id: int) -> list[User]:
+        """Get all non-deleted users with a specific role"""
+        return User.query.filter_by(
+            role_id=role_id,
+            is_deleted=False
+        ).order_by(User.username).all()
     
     @staticmethod
     def get_users_by_role_and_environment(role_id, environment_id):
@@ -144,18 +158,130 @@ class UserService(BaseService):
             raise
 
     @staticmethod
-    def get_users_by_environment(environment_id):
+    def get_users_by_environment(environment_id: int) -> list[User]:
         """Get all non-deleted users in an environment"""
         return User.query.filter_by(
-            environment_id=environment_id, 
+            environment_id=environment_id,
             is_deleted=False
-        ).all()
+        ).order_by(User.username).all()
 
     @staticmethod
-    def delete_user(user_id):
-        user = User.query.get(user_id)
-        if user:
+    def delete_user(user_id: int) -> tuple[bool, Union[dict, str]]:
+        """
+        Delete a user and all associated data through cascade soft delete
+        
+        Args:
+            user_id (int): ID of the user to delete
+            
+        Returns:
+            tuple: (success: bool, result: Union[dict, str])
+                  result contains either deletion statistics or error message
+        """
+        try:
+            user = User.query.filter_by(
+                id=user_id,
+                is_deleted=False
+            ).first()
+            
+            if not user:
+                return False, "User not found"
+
+            # Start transaction
+            db.session.begin_nested()
+
+            deletion_stats = {
+                'forms': 0,
+                'form_questions': 0,
+                'form_submissions': 0,
+                'attachments': 0,
+                'answers_submitted': 0
+            }
+
+            # 1. Soft delete forms created by user
+            forms = Form.query.filter_by(
+                user_id=user_id,
+                is_deleted=False
+            ).all()
+
+            for form in forms:
+                # Soft delete the form
+                form.soft_delete()
+                deletion_stats['forms'] += 1
+
+                # 2. Soft delete form questions
+                form_questions = FormQuestion.query.filter_by(
+                    form_id=form.id,
+                    is_deleted=False
+                ).all()
+                
+                for fq in form_questions:
+                    fq.soft_delete()
+                    deletion_stats['form_questions'] += 1
+
+                # 3. Soft delete form submissions and related data
+                submissions = FormSubmission.query.filter_by(
+                    form_id=form.id,
+                    is_deleted=False
+                ).all()
+
+                for submission in submissions:
+                    # Soft delete submission
+                    submission.soft_delete()
+                    deletion_stats['form_submissions'] += 1
+
+                    # 4. Soft delete attachments
+                    attachments = Attachment.query.filter_by(
+                        form_submission_id=submission.id,
+                        is_deleted=False
+                    ).all()
+                    
+                    for attachment in attachments:
+                        attachment.soft_delete()
+                        deletion_stats['attachments'] += 1
+
+                    # 5. Soft delete submitted answers
+                    answers_submitted = AnswerSubmitted.query.filter_by(
+                        form_submissions_id=submission.id,
+                        is_deleted=False
+                    ).all()
+                    
+                    for answer in answers_submitted:
+                        answer.soft_delete()
+                        deletion_stats['answers_submitted'] += 1
+
+            # 6. Soft delete submissions made by this user
+            user_submissions = FormSubmission.query.filter_by(
+                submitted_by=user.username,
+                is_deleted=False
+            ).all()
+
+            for submission in user_submissions:
+                if not submission.is_deleted:  # Check if not already deleted from form deletion
+                    submission.soft_delete()
+                    deletion_stats['form_submissions'] += 1
+
+                    # Soft delete related attachments and answers if not already deleted
+                    for attachment in submission.attachments:
+                        if not attachment.is_deleted:
+                            attachment.soft_delete()
+                            deletion_stats['attachments'] += 1
+
+                    for answer in submission.answers_submitted:
+                        if not answer.is_deleted:
+                            answer.soft_delete()
+                            deletion_stats['answers_submitted'] += 1
+
+            # Finally soft delete the user
             user.soft_delete()
+
+            # Commit all changes
             db.session.commit()
-            return True
-        return False
+            
+            logger.info(f"User {user_id} and associated data soft deleted. Stats: {deletion_stats}")
+            return True, deletion_stats
+
+        except Exception as e:
+            db.session.rollback()
+            error_msg = f"Error deleting user: {str(e)}"
+            logger.error(error_msg)
+            return False, error_msg

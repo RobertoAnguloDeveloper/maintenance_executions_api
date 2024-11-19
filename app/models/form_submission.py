@@ -9,15 +9,25 @@ class FormSubmission(TimestampMixin, SoftDeleteMixin, db.Model):
     __tablename__ = 'form_submissions'
     
     id = db.Column(db.Integer, primary_key=True)
-    form_submitted = db.Column(db.String(255), nullable=False)
+    form_id = db.Column(db.Integer, db.ForeignKey('forms.id'), nullable=False)
     submitted_by = db.Column(db.String(50), nullable=False)
     submitted_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     # Relationships
-    answers_submitted = db.relationship('AnswerSubmitted', back_populates='form_submission', 
-                                      cascade='all, delete-orphan')
-    attachments = db.relationship('Attachment', back_populates='form_submission', 
-                                cascade='all, delete-orphan')
+    form = db.relationship('Form', back_populates='submissions')
+    
+    answers_submitted = db.relationship(
+        'AnswerSubmitted',
+        back_populates='form_submission',
+        foreign_keys='AnswerSubmitted.form_submissions_id',
+        cascade='all, delete-orphan'
+    )
+    attachments = db.relationship(
+        'Attachment',
+        back_populates='form_submission',
+        foreign_keys='Attachment.form_submission_id',
+        cascade='all, delete-orphan'
+    )
 
     def __repr__(self):
         return f'<FormSubmission {self.id} by {self.submitted_by}>'
@@ -25,7 +35,7 @@ class FormSubmission(TimestampMixin, SoftDeleteMixin, db.Model):
     def _get_form_info(self) -> Dict[str, Any]:
         """Get associated form information."""
         from app.models.form import Form
-        form = Form.query.get(int(self.form_submitted))
+        form = Form.query.get(int(self.form_id))
         if not form:
             return None
         
@@ -64,7 +74,7 @@ class FormSubmission(TimestampMixin, SoftDeleteMixin, db.Model):
         """Convert form submission to dictionary representation."""
         return {
             'id': self.id,
-            'form': self._get_form_info(),
+            'form': self._get_form_info(),  # Changed from form_submitted
             'submitted_by': self.submitted_by,
             'submitted_at': self.submitted_at.isoformat() if self.submitted_at else None,
             'created_at': self.created_at.isoformat() if self.created_at else None,

@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.controllers.role_controller import RoleController
+from app.models.user import User
 from app.services.auth_service import AuthService
 from app.utils.permission_manager import PermissionManager, EntityType, RoleType
 import logging
@@ -128,8 +129,9 @@ def update_role(role_id):
 @jwt_required()
 @PermissionManager.require_role(RoleType.ADMIN)  # Only Admin can delete roles
 def delete_role(role_id):
-    """Delete a role - Admin only"""
+    """Delete a role with cascade soft delete - Admin only"""
     try:
+        # Get role with is_deleted=False check
         role = RoleController.get_role(role_id)
         if not role:
             return jsonify({"error": "Role not found"}), 404
@@ -138,16 +140,24 @@ def delete_role(role_id):
         if role.is_super_user and role_id == 1:
             return jsonify({"error": "Cannot delete the main administrator role"}), 403
 
-        # Check if role has associated users
-        if len(role.users) > 0:
+        # Check for active users with this role
+        active_users = User.query.filter_by(
+            role_id=role_id,
+            is_deleted=False
+        ).count()
+        
+        if active_users > 0:
             return jsonify({
-                "error": "Cannot delete role with associated users"
+                "error": "Cannot delete role with active users",
+                "active_users": active_users
             }), 400
 
         success, error = RoleController.delete_role(role_id)
         if success:
-            logger.info(f"Role {role_id} deleted successfully")
-            return jsonify({"message": "Role deleted successfully"}), 200
+            logger.info(f"Role {role_id} and associated data deleted successfully")
+            return jsonify({
+                "message": "Role and associated permissions deleted successfully"
+            }), 200
             
         return jsonify({"error": error}), 400
 

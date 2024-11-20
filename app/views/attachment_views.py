@@ -220,11 +220,12 @@ def get_signature(form_submission_id):
         current_user = get_jwt_identity()
         user = AuthService.get_current_user(current_user)
 
+        # Get the submission
         submission = FormSubmissionController.get_submission(form_submission_id)
         if not submission:
             return jsonify({"error": "Form submission not found"}), 404
 
-        # Check access rights
+        # Access control
         if not user.role.is_super_user:
             if user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
                 if submission.form.creator.environment_id != user.environment_id:
@@ -334,29 +335,46 @@ def get_attachment(attachment_id):
 @jwt_required()
 @PermissionManager.require_permission(action="delete", entity_type=EntityType.ATTACHMENTS)
 def delete_attachment(attachment_id):
-    """Delete a single attachment"""
+    """Delete an attachment with associated file"""
     try:
         current_user = get_jwt_identity()
         user = AuthService.get_current_user(current_user)
 
-        attachment, error = AttachmentController.get_attachment(attachment_id)
-        if error:
-            return jsonify({"error": error}), 404
+        # Get attachment checking is_deleted=False
+        attachment = AttachmentController.get_attachment(attachment_id)
+        if not attachment:
+            return jsonify({"error": "Attachment not found"}), 404
 
-        # Check access rights
+        # Access control
         if not user.role.is_super_user:
+            # Site Managers and Supervisors can delete in their environment
             if user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
                 if attachment.form_submission.form.creator.environment_id != user.environment_id:
                     return jsonify({"error": "Unauthorized access"}), 403
+            # Technicians can only delete their own attachments
             elif attachment.form_submission.submitted_by != current_user:
-                return jsonify({"error": "Unauthorized access"}), 403
+                return jsonify({"error": "Cannot delete attachments from other users"}), 403
 
-        success, error = AttachmentController.delete_attachment(attachment_id)
-        if not success:
-            return jsonify({"error": error}), 400
+            # Check submission age for non-admin users
+            submission_age = datetime.utcnow() - attachment.form_submission.submitted_at
+            if submission_age.days > 7:  # Configurable timeframe
+                return jsonify({
+                    "error": "Cannot delete attachments from submissions older than 7 days"
+                }), 400
 
-        logger.info(f"Attachment {attachment_id} deleted by user {current_user}")
-        return jsonify({"message": "Attachment deleted successfully"}), 200
+        # Prevent deletion of signature attachments by non-admins
+        if attachment.is_signature and not user.role.is_super_user:
+            return jsonify({"error": "Only administrators can delete signature attachments"}), 403
+
+        success, result = AttachmentController.delete_attachment(attachment_id)
+        if success:
+            logger.info(f"Attachment {attachment_id} deleted by {user.username}")
+            return jsonify({
+                "message": "Attachment deleted successfully",
+                "deleted_items": result
+            }), 200
+            
+        return jsonify({"error": result}), 400
 
     except Exception as e:
         logger.error(f"Error deleting attachment {attachment_id}: {str(e)}")

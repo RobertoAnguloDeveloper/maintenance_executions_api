@@ -31,7 +31,7 @@ def get_all_forms():
         
         is_public = request.args.get('is_public', type=bool)
         
-        # Use RoleType constants instead of Role enum
+        # Role-based access control
         if user.role.name == RoleType.TECHNICIAN:
             # Technicians can only see public forms
             forms = FormController.get_public_forms()
@@ -40,7 +40,11 @@ def get_all_forms():
             forms = FormController.get_forms_by_environment(user.environment_id)
         else:
             # Admins see all forms
-            forms = FormController.get_all_forms(is_public=is_public)
+            include_deleted = request.args.get('include_deleted', '').lower() == 'true'
+            forms = FormController.get_all_forms(
+                is_public=is_public,
+                include_deleted=include_deleted if user.role.is_super_user else False
+            )
         
         return jsonify([form.to_dict() for form in forms]), 200
         
@@ -451,42 +455,47 @@ def update_form(form_id):
 @jwt_required()
 @PermissionManager.require_permission(action="delete", entity_type=EntityType.FORMS)
 def delete_form(form_id):
-    """Delete a form - restricted to Admin and Site Manager roles"""
+    """Delete a form with cascade soft delete"""
     try:
         current_user = get_jwt_identity()
         user = AuthService.get_current_user(current_user)
         
-        # Get the form
+        # Get the form checking is_deleted=False
         form = FormController.get_form(form_id)
         if not form:
             return jsonify({"error": "Form not found"}), 404
 
-        # Check environment access for non-admin roles
+        # Access control checks
         if not user.role.is_super_user:
+            # Check environment access
             if form.creator.environment_id != user.environment_id:
                 return jsonify({
                     "error": "Unauthorized",
                     "message": "You can only delete forms in your environment"
                 }), 403
 
-        # Additional validation for role-specific restrictions
-        if user.role.name == RoleType.SUPERVISOR:
-            # Check if the form has any submissions
-            if form.submissions:
+        # Check for active submissions if user is not admin or site manager
+        if user.role.name not in [RoleType.ADMIN, RoleType.SITE_MANAGER]:
+            active_submissions = FormSubmission.query.filter_by(
+                form_id=form_id,
+                is_deleted=False
+            ).count()
+            
+            if active_submissions > 0:
                 return jsonify({
-                    "error": "Unauthorized",
-                    "message": "Supervisors cannot delete forms with submissions"
-                }), 403
+                    "error": "Cannot delete form with active submissions",
+                    "active_submissions": active_submissions
+                }), 400
 
-        # Delete the form
-        success, error = FormController.delete_form(form_id)
-        if not success:
-            return jsonify({"error": error}), 400
-
-        logger.info(f"Form {form_id} deleted successfully by user {user.username}")
-        return jsonify({
-            "message": "Form deleted successfully"
-        }), 200
+        success, result = FormController.delete_form(form_id)
+        if success:
+            logger.info(f"Form {form_id} and associated data deleted by {user.username}")
+            return jsonify({
+                "message": "Form and associated data deleted successfully",
+                "deleted_items": result
+            }), 200
+            
+        return jsonify({"error": result}), 400
 
     except Exception as e:
         logger.error(f"Error deleting form {form_id}: {str(e)}")

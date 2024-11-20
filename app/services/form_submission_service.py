@@ -1,3 +1,4 @@
+from typing import Optional, Union
 from app import db
 from app.models.form import Form
 from app.models.form_submission import FormSubmission
@@ -88,65 +89,82 @@ class FormSubmissionService:
             return []
 
     @staticmethod
-    def get_submission(submission_id: int) -> FormSubmission:
-        """Get a specific submission"""
-        try:
-            return FormSubmission.query.filter_by(
+    def get_submission(submission_id: int) -> Optional[FormSubmission]:
+        """Get non-deleted submission with relationships"""
+        return (FormSubmission.query
+            .filter_by(
                 id=submission_id,
                 is_deleted=False
-            ).first()
-        except Exception as e:
-            logger.error(f"Database error getting submission {submission_id}: {str(e)}")
-            return None
+            )
+            .options(
+                joinedload(FormSubmission.form)
+                    .joinedload(Form.creator),
+                joinedload(FormSubmission.answers_submitted)
+                    .joinedload(AnswerSubmitted.form_answer)
+                    .joinedload(FormAnswer.answer),
+                joinedload(FormSubmission.attachments)
+            )
+            .first())
 
     @staticmethod
-    def get_submissions_by_form(form_id: int, include_deleted: bool = False) -> list:
-        """Get all submissions for a form"""
-        query = FormSubmission.query.filter_by(form_id=form_id)
-        
-        if not include_deleted:
-            query = query.filter(FormSubmission.is_deleted == False)
-            
-        return query.order_by(FormSubmission.submitted_at.desc()).all()
+    def get_submissions_by_form(form_id: int) -> list[FormSubmission]:
+        """Get all non-deleted submissions for a form"""
+        return (FormSubmission.query
+            .filter_by(
+                form_id=form_id,
+                is_deleted=False
+            )
+            .options(
+                joinedload(FormSubmission.answers_submitted),
+                joinedload(FormSubmission.attachments)
+            )
+            .order_by(FormSubmission.submitted_at.desc())
+            .all())
 
     @staticmethod
-    def get_submissions_by_user(username, form_id=None, start_date=None, end_date=None):
-        """
-        Get submissions by username with optional filters
-        """
-        query = FormSubmission.query.filter_by(submitted_by=username)
+    def get_submissions_by_user(
+        username: str,
+        form_id: Optional[int] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None
+    ) -> list[FormSubmission]:
+        """Get submissions by username with optional filters"""
+        query = FormSubmission.query.filter_by(
+            submitted_by=username,
+            is_deleted=False
+        )
         
         if form_id:
             query = query.filter_by(form_id=form_id)
+            
         if start_date:
             query = query.filter(FormSubmission.submitted_at >= start_date)
+            
         if end_date:
             query = query.filter(FormSubmission.submitted_at <= end_date)
             
         return query.order_by(FormSubmission.submitted_at.desc()).all()
 
     @staticmethod
-    def get_submissions_by_environment(environment_id: int, form_id: int = None):
-        """Get submissions for a specific environment"""
-        try:
-            # Get forms in the environment
-            forms_query = Form.query\
-                .join(User, Form.user_id == User.id)\
-                .filter(User.environment_id == environment_id)
+    def get_submissions_by_environment(
+        environment_id: int,
+        form_id: Optional[int] = None
+    ) -> list[FormSubmission]:
+        """Get all non-deleted submissions for an environment"""
+        query = (FormSubmission.query
+            .join(Form)
+            .join(User)
+            .filter(
+                User.environment_id == environment_id,
+                FormSubmission.is_deleted == False,
+                Form.is_deleted == False,
+                User.is_deleted == False
+            ))
             
-            form_ids = [f.id for f in forms_query.all()]  # Removed str() conversion
+        if form_id:
+            query = query.filter(FormSubmission.form_id == form_id)
             
-            # Get submissions for those forms
-            query = FormSubmission.query\
-                .filter(FormSubmission.form_id.in_(form_ids))
-                
-            if form_id:
-                query = query.filter(FormSubmission.form_id == form_id)  # Changed from form_submitted
-                
-            return query.order_by(FormSubmission.submitted_at.desc()).all()
-        except Exception as e:
-            logger.error(f"Error getting submissions by environment: {str(e)}")
-            return None
+        return query.order_by(FormSubmission.submitted_at.desc()).all()
 
     @staticmethod
     def update_submission(submission_id, answers_data=None, attachments_data=None):
@@ -207,19 +225,68 @@ class FormSubmissionService:
             return None, str(e)
 
     @staticmethod
-    def delete_submission(submission_id):
-        """Soft delete a submission"""
+    def delete_submission(submission_id: int) -> tuple[bool, Union[dict, str]]:
+        """
+        Delete a submission and associated data through cascade soft delete
+        
+        Args:
+            submission_id (int): ID of the submission to delete
+            
+        Returns:
+            tuple: (success: bool, result: Union[dict, str])
+                  result contains either deletion statistics or error message
+        """
         try:
-            submission = FormSubmission.query.get(submission_id)
+            submission = FormSubmission.query.filter_by(
+                id=submission_id,
+                is_deleted=False
+            ).first()
+            
             if not submission:
                 return False, "Submission not found"
 
+            # Start transaction
+            db.session.begin_nested()
+
+            deletion_stats = {
+                'answers_submitted': 0,
+                'attachments': 0
+            }
+
+            # 1. Soft delete submitted answers
+            submitted_answers = AnswerSubmitted.query.filter_by(
+                form_submissions_id=submission_id,
+                is_deleted=False
+            ).all()
+
+            for submitted in submitted_answers:
+                submitted.soft_delete()
+                deletion_stats['answers_submitted'] += 1
+
+            # 2. Soft delete attachments
+            attachments = Attachment.query.filter_by(
+                form_submission_id=submission_id,
+                is_deleted=False
+            ).all()
+
+            for attachment in attachments:
+                attachment.soft_delete()
+                deletion_stats['attachments'] += 1
+
+            # Finally soft delete the submission
             submission.soft_delete()
+
+            # Commit all changes
             db.session.commit()
-            return True, None
+            
+            logger.info(f"Submission {submission_id} and associated data soft deleted. Stats: {deletion_stats}")
+            return True, deletion_stats
+
         except Exception as e:
             db.session.rollback()
-            return False, str(e)
+            error_msg = f"Error deleting submission: {str(e)}"
+            logger.error(error_msg)
+            return False, error_msg
 
     @staticmethod
     def get_submission_statistics(form_id=None, environment_id=None, date_range=None):

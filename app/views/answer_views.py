@@ -4,6 +4,7 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.controllers.answer_controller import AnswerController
 from app.controllers.form_controller import FormController
+from app.models.form_answer import FormAnswer
 from app.services.auth_service import AuthService
 from app.utils.permission_manager import PermissionManager, EntityType, RoleType
 import logging
@@ -95,17 +96,16 @@ def bulk_create_answers():
 @jwt_required()
 @PermissionManager.require_permission(action="view", entity_type=EntityType.ANSWERS)
 def get_all_answers():
-    """Get all answers with environment-based filtering"""
+    """Get all non-deleted answers"""
     try:
         current_user = get_jwt_identity()
         user = AuthService.get_current_user(current_user)
 
+        include_deleted = False
         if user.role.is_super_user:
-            answers = AnswerController.get_all_answers()
-        else:
-            # Filter answers by environment
-            answers = AnswerController.get_answers_by_environment(user.environment_id)
+            include_deleted = request.args.get('include_deleted', '').lower() == 'true'
 
+        answers = AnswerController.get_all_answers(include_deleted=include_deleted)
         return jsonify([answer.to_dict() for answer in answers]), 200
 
     except Exception as e:
@@ -139,16 +139,11 @@ def get_answer(answer_id):
 @jwt_required()
 @PermissionManager.require_permission(action="view", entity_type=EntityType.ANSWERS)
 def get_answers_by_form(form_id):
-    """Get answers for a specific form"""
+    """Get all non-deleted answers for a specific form"""
     try:
-        current_user = get_jwt_identity()
-        user = AuthService.get_current_user(current_user)
-
-        # Check form access
-        if not user.role.is_super_user:
-            form = FormController.get_form(form_id)
-            if not form or form.creator.environment_id != user.environment_id:
-                return jsonify({"error": "Unauthorized access to form"}), 403
+        form = FormController.get_form(form_id)
+        if not form:
+            return jsonify({"error": "Form not found"}), 404
 
         answers = AnswerController.get_answers_by_form(form_id)
         return jsonify([answer.to_dict() for answer in answers]), 200
@@ -205,25 +200,38 @@ def update_answer(answer_id):
 @jwt_required()
 @PermissionManager.require_permission(action="delete", entity_type=EntityType.ANSWERS)
 def delete_answer(answer_id):
-    """Delete an answer"""
+    """Delete an answer with cascade soft delete"""
     try:
         current_user = get_jwt_identity()
         user = AuthService.get_current_user(current_user)
 
-        # Get the answer
+        # Get the answer checking is_deleted=False
         answer = AnswerController.get_answer(answer_id)
         if not answer:
             return jsonify({"error": "Answer not found"}), 404
 
-        # Check environment access for non-admin users
-        if not user.role.is_super_user and answer.environment_id != user.environment_id:
-            return jsonify({"error": "Unauthorized access"}), 403
+        # Check if answer is in use in any non-deleted form answers
+        active_form_answers = (FormAnswer.query
+            .filter_by(
+                answer_id=answer_id,
+                is_deleted=False
+            ).count())
+            
+        if active_form_answers > 0:
+            return jsonify({
+                "error": "Cannot delete answer that is in use in forms",
+                "active_usages": active_form_answers
+            }), 400
 
-        success, error = AnswerController.delete_answer(answer_id)
+        success, result = AnswerController.delete_answer(answer_id)
         if success:
-            logger.info(f"Answer {answer_id} deleted by user {user.username}")
-            return jsonify({"message": "Answer deleted successfully"}), 200
-        return jsonify({"error": error}), 404
+            logger.info(f"Answer {answer_id} and associated data deleted by {user.username}")
+            return jsonify({
+                "message": "Answer and associated data deleted successfully",
+                "deleted_items": result
+            }), 200
+            
+        return jsonify({"error": result}), 400
 
     except Exception as e:
         logger.error(f"Error deleting answer {answer_id}: {str(e)}")

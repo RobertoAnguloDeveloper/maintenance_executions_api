@@ -125,13 +125,15 @@ def get_answers_by_submission(submission_id):
         user = AuthService.get_current_user(current_user)
 
         # Validate form submission access
-        form_submission = FormSubmissionController.get_form_submission(submission_id)
-        if not form_submission:
+        submission = FormSubmissionController.get_submission(submission_id)
+        if not submission:
             return jsonify({"error": "Form submission not found"}), 404
 
         if not user.role.is_super_user:
-            if form_submission.submitted_by != user.username and \
-               form_submission.form.creator.environment_id != user.environment_id:
+            if user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
+                if submission.form.creator.environment_id != user.environment_id:
+                    return jsonify({"error": "Unauthorized access"}), 403
+            elif submission.submitted_by != current_user:
                 return jsonify({"error": "Unauthorized access"}), 403
 
         submitted_answers = AnswerSubmittedController.get_answers_by_submission(submission_id)
@@ -175,20 +177,37 @@ def delete_answer_submitted(answer_submitted_id):
         current_user = get_jwt_identity()
         user = AuthService.get_current_user(current_user)
 
+        # Get the submitted answer checking is_deleted=False
         answer_submitted = AnswerSubmittedController.get_answer_submitted(answer_submitted_id)
         if not answer_submitted:
             return jsonify({"error": "Submitted answer not found"}), 404
 
-        # Check access
+        # Access control
         if not user.role.is_super_user:
-            if answer_submitted.form_submission.submitted_by != user.username:
-                return jsonify({"error": "Unauthorized access"}), 403
+            # Site Managers and Supervisors can delete in their environment
+            if user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
+                if answer_submitted.form_submission.form.creator.environment_id != user.environment_id:
+                    return jsonify({"error": "Unauthorized access"}), 403
+            # Technicians can only delete their own submissions
+            elif answer_submitted.form_submission.submitted_by != current_user:
+                return jsonify({"error": "Cannot delete answers submitted by other users"}), 403
 
-        success, error = AnswerSubmittedController.delete_answer_submitted(answer_submitted_id)
+            # Check submission age
+            submission_age = datetime.utcnow() - answer_submitted.form_submission.submitted_at
+            if submission_age.days > 7:  # Configurable timeframe
+                return jsonify({
+                    "error": "Cannot delete answers from submissions older than 7 days"
+                }), 400
+
+        success, result = AnswerSubmittedController.delete_answer_submitted(answer_submitted_id)
         if success:
-            logger.info(f"Submitted answer {answer_submitted_id} deleted by user {user.username}")
-            return jsonify({"message": "Submitted answer deleted successfully"}), 200
-        return jsonify({"error": error}), 404
+            logger.info(f"Submitted answer {answer_submitted_id} deleted by {user.username}")
+            return jsonify({
+                "message": "Submitted answer deleted successfully",
+                "deleted_items": result
+            }), 200
+            
+        return jsonify({"error": result}), 400
 
     except Exception as e:
         logger.error(f"Error deleting submitted answer {answer_submitted_id}: {str(e)}")

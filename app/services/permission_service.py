@@ -1,3 +1,4 @@
+from typing import Optional, Union
 from app import db
 from app.controllers.role_permission_controller import RolePermissionController
 from app.models import Permission
@@ -39,47 +40,118 @@ class PermissionService(BaseService):
             return None, str(e)
         
     @staticmethod
-    def bulk_create_permissions(permissions_data):
+    def bulk_create_permissions(permissions_data: list[dict]) -> tuple[Optional[list[Permission]], Optional[str]]:
+        """Create multiple permissions with validation"""
         try:
-            new_permissions = []
-            for p_data in permissions_data:
-                new_permission = Permission(
-                    name=p_data['name'],
-                    description=p_data.get('description')
-                )
-                new_permissions.append(new_permission)
+            created_permissions = []
             
-            db.session.bulk_save_objects(new_permissions)
+            # Start transaction
+            db.session.begin_nested()
+
+            for data in permissions_data:
+                name = data.get('name', '').strip()
+                
+                # Validate name
+                if not name:
+                    db.session.rollback()
+                    return None, "Permission name cannot be empty"
+                
+                if ' ' in name:
+                    db.session.rollback()
+                    return None, "Permission name cannot contain spaces"
+
+                # Check for existing permission
+                existing = Permission.query.filter_by(
+                    name=name,
+                    is_deleted=False
+                ).first()
+                
+                if existing:
+                    db.session.rollback()
+                    return None, f"Permission '{name}' already exists"
+
+                permission = Permission(
+                    name=name,
+                    description=data.get('description')
+                )
+                db.session.add(permission)
+                created_permissions.append(permission)
+
+            # Commit all changes
             db.session.commit()
-            return new_permissions, None
-        except IntegrityError:
-            db.session.rollback()
-            return None, "One or more permission names already exist"
+            return created_permissions, None
+
         except Exception as e:
             db.session.rollback()
-            return None, str(e)
+            error_msg = f"Error creating permissions: {str(e)}"
+            logger.error(error_msg)
+            return None, error_msg
 
     @staticmethod
-    def get_permission(permission_id):
-        return Permission.query.get(permission_id)
+    def get_permission(permission_id: int) -> Optional[Permission]:
+        """Get non-deleted permission by ID"""
+        return Permission.query.filter_by(
+            id=permission_id,
+            is_deleted=False
+        ).first()
 
     @staticmethod
-    def get_permission_by_name(name):
-        return Permission.get_by_name(name)
+    def get_permission_by_name(name: str) -> Optional[Permission]:
+        """Get non-deleted permission by name"""
+        return Permission.query.filter_by(
+            name=name,
+            is_deleted=False
+        ).first()
     
     @staticmethod
-    def user_has_permission(user_id, permission_name):
-        user = User.query.get(user_id)
-        if not user:
-            return False
-        
-        user_permissions = RolePermissionController.get_permissions_by_user(user_id)
-        
-        for permission in user_permissions:
-            if permission.name == permission_name:
+    def user_has_permission(user_id: int, permission_name: str) -> bool:
+        """Check if a user has a specific permission"""
+        try:
+            # Get non-deleted user
+            user = User.query.filter_by(
+                id=user_id,
+                is_deleted=False
+            ).first()
+            
+            if not user:
+                return False
+
+            # Get non-deleted role
+            role = Role.query.filter_by(
+                id=user.role_id,
+                is_deleted=False
+            ).first()
+            
+            if not role:
+                return False
+
+            # Super users have all permissions
+            if role.is_super_user:
                 return True
-        
-        return False
+
+            # Get non-deleted permission
+            permission = Permission.query.filter_by(
+                name=permission_name,
+                is_deleted=False
+            ).first()
+            
+            if not permission:
+                return False
+
+            # Check active role-permission mapping
+            has_permission = (RolePermission.query
+                .filter_by(
+                    role_id=role.id,
+                    permission_id=permission.id,
+                    is_deleted=False
+                )
+                .first() is not None)
+
+            return has_permission
+
+        except Exception as e:
+            logger.error(f"Error checking user permission: {str(e)}")
+            return False
 
             
     @staticmethod
@@ -94,7 +166,8 @@ class PermissionService(BaseService):
     @staticmethod
     def get_all_permissions():
         try:
-            permissions = Permission.query.order_by(Permission.id).all()
+            permissions = Permission.query.filter_by(is_deleted=False).all()
+
             logger.info(f"Number of permissions found: {len(permissions)}")
             for perm in permissions:
                 logger.info(f"Permission: id={perm.id}, name={perm.name}")
@@ -123,17 +196,74 @@ class PermissionService(BaseService):
         return None, "Permission not found"
 
     @staticmethod
-    def delete_permission(permission_id):
-        permission = Permission.query.get(permission_id)
-        if permission:
-            try:
-                db.session.delete(permission)
-                db.session.commit()
-                return True, None
-            except Exception as e:
-                db.session.rollback()
-                return False, str(e)
-        return False, "Permission not found"
+    def delete_permission(permission_id: int) -> tuple[bool, Union[dict, str]]:
+        """
+        Delete a permission and associated role mappings through cascade soft delete
+        
+        Args:
+            permission_id (int): ID of the permission to delete
+            
+        Returns:
+            tuple: (success: bool, result: Union[dict, str])
+                  result contains either deletion statistics or error message
+        """
+        try:
+            permission = Permission.query.filter_by(
+                id=permission_id,
+                is_deleted=False
+            ).first()
+            
+            if not permission:
+                return False, "Permission not found"
+
+            # Prevent deletion of core permissions
+            if permission.name.startswith('core_'):
+                return False, "Cannot delete core permissions"
+
+            # Check for active role assignments
+            active_roles = (RolePermission.query
+                .filter_by(
+                    permission_id=permission_id,
+                    is_deleted=False
+                )
+                .join(Role)
+                .filter(Role.is_deleted == False)
+                .count())
+                
+            if active_roles > 0:
+                return False, f"Permission is used by {active_roles} active role(s)"
+
+            # Start transaction
+            db.session.begin_nested()
+
+            deletion_stats = {
+                'role_permissions': 0
+            }
+
+            # Soft delete role-permission mappings
+            role_permissions = RolePermission.query.filter_by(
+                permission_id=permission_id,
+                is_deleted=False
+            ).all()
+
+            for rp in role_permissions:
+                rp.soft_delete()
+                deletion_stats['role_permissions'] += 1
+
+            # Finally soft delete the permission
+            permission.soft_delete()
+
+            # Commit changes
+            db.session.commit()
+            
+            logger.info(f"Permission {permission_id} and associated data soft deleted. Stats: {deletion_stats}")
+            return True, deletion_stats
+
+        except Exception as e:
+            db.session.rollback()
+            error_msg = f"Error deleting permission: {str(e)}"
+            logger.error(error_msg)
+            return False, error_msg
 
     @staticmethod
     def add_permission_to_role(role_id, permission_id):

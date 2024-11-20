@@ -4,6 +4,8 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.controllers.question_controller import QuestionController
 from app.controllers.question_type_controller import QuestionTypeController
+from app.models.form import Form
+from app.models.form_question import FormQuestion
 from app.services.auth_service import AuthService
 from app.utils.permission_manager import PermissionManager, EntityType, RoleType
 import logging
@@ -178,27 +180,13 @@ def search_questions():
         environment_id = None if user.role.is_super_user else user.environment_id
 
         # Perform search
-        if question_type_id:
-            # Validate question type access if not admin
-            if not user.role.is_super_user:
-                question_type = QuestionTypeController.get_question_type(question_type_id)
-                if not question_type or question_type.environment_id != user.environment_id:
-                    return jsonify({"error": "Unauthorized access to question type"}), 403
+        questions = QuestionController.search_questions(
+            search_query=search_query,
+            remarks=remarks,
+            environment_id=environment_id,
+            include_deleted=False  # Explicitly exclude deleted questions
+        )
 
-            questions = QuestionController.search_questions_by_type(
-                question_type_id=question_type_id,
-                search_query=search_query,
-                remarks=remarks,
-                environment_id=environment_id
-            )
-        else:
-            questions = QuestionController.search_questions(
-                search_query=search_query,
-                remarks=remarks,
-                environment_id=environment_id
-            )
-
-        # Add search metadata to response
         response_data = {
             "total_results": len(questions),
             "search_criteria": {
@@ -264,25 +252,40 @@ def update_question(question_id):
 @jwt_required()
 @PermissionManager.require_permission(action="delete", entity_type=EntityType.QUESTIONS)
 def delete_question(question_id):
-    """Delete a question"""
+    """Delete a question with cascade soft delete"""
     try:
         current_user = get_jwt_identity()
         user = AuthService.get_current_user(current_user)
 
-        # Get the question
+        # Get the question with is_deleted=False check
         question = QuestionController.get_question(question_id)
         if not question:
             return jsonify({"error": "Question not found"}), 404
 
-        # Check environment access for non-admin users
-        if not user.role.is_super_user and question.environment_id != user.environment_id:
-            return jsonify({"error": "Unauthorized access"}), 403
+        # Check if question is in use in any non-deleted form
+        active_forms = (FormQuestion.query
+            .join(Form)
+            .filter(
+                FormQuestion.question_id == question_id,
+                FormQuestion.is_deleted == False,
+                Form.is_deleted == False
+            ).count())
+            
+        if active_forms > 0:
+            return jsonify({
+                "error": "Cannot delete question that is in use in active forms",
+                "active_forms": active_forms
+            }), 400
 
-        success, error = QuestionController.delete_question(question_id)
+        success, result = QuestionController.delete_question(question_id)
         if success:
-            logger.info(f"Question {question_id} deleted by user {user.username}")
-            return jsonify({"message": "Question deleted successfully"}), 200
-        return jsonify({"error": error}), 404
+            logger.info(f"Question {question_id} and associated data deleted by {user.username}")
+            return jsonify({
+                "message": "Question and associated data deleted successfully",
+                "deleted_items": result
+            }), 200
+            
+        return jsonify({"error": result}), 400
 
     except Exception as e:
         logger.error(f"Error deleting question {question_id}: {str(e)}")

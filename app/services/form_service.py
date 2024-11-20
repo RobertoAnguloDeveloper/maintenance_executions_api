@@ -1,6 +1,7 @@
 # app/services/form_service.py
 
 from datetime import datetime
+from typing import Optional, Union
 from app.models.answers_submitted import AnswerSubmitted
 from app.models.attachment import Attachment
 from app.models.form_answer import FormAnswer
@@ -46,14 +47,20 @@ class FormService(BaseService):
         return query.order_by(Form.created_at.desc()).all()
     
     @staticmethod
-    def get_form(form_id):
+    def get_form(form_id: int) -> Optional[Form]:
         """Get non-deleted form with relationships"""
-        return Form.query.options(
-            joinedload(Form.creator),
-            joinedload(Form.form_questions)
-                .joinedload(FormQuestion.question)
-                .joinedload(Question.question_type)
-        ).filter_by(id=form_id, is_deleted=False).first()
+        return (Form.query
+            .options(
+                joinedload(Form.creator),
+                joinedload(Form.form_questions)
+                    .joinedload(FormQuestion.question)
+                    .joinedload(Question.question_type)
+            )
+            .filter_by(
+                id=form_id,
+                is_deleted=False
+            )
+            .first())
 
     def get_form_with_relations(self, form_id):
         """Get form with all related data loaded"""
@@ -63,18 +70,21 @@ class FormService(BaseService):
         ).get(form_id)
 
     @staticmethod
-    def get_forms_by_environment(environment_id):
+    def get_forms_by_environment(environment_id: int) -> list[Form]:
         """Get non-deleted forms for an environment"""
         return (Form.query
-                .join(Form.creator)
-                .filter(Form.is_deleted == False)
-                .filter_by(environment_id=environment_id)
-                .options(
-                    joinedload(Form.creator).joinedload(User.environment),
-                    joinedload(Form.form_questions)
-                )
-                .order_by(Form.created_at.desc())
-                .all())
+            .join(Form.creator)
+            .filter(
+                Form.is_deleted == False,
+                User.environment_id == environment_id,
+                User.is_deleted == False
+            )
+            .options(
+                joinedload(Form.creator).joinedload(User.environment),
+                joinedload(Form.form_questions)
+            )
+            .order_by(Form.created_at.desc())
+            .all())
 
     @staticmethod
     def get_form_submissions_count(form_id: int) -> int:
@@ -88,33 +98,41 @@ class FormService(BaseService):
             logger.error(f"Error getting submissions count: {str(e)}")
             return 0
 
-    def get_forms_by_user_or_public(self, user_id, is_public=None):
+    @staticmethod
+    def get_forms_by_user_or_public(
+        user_id: int,
+        is_public: Optional[bool] = None
+    ) -> list[Form]:
         """Get forms created by user or public forms"""
         query = Form.query.filter(
             db.or_(
                 Form.user_id == user_id,
                 Form.is_public == True
-            )
+            ),
+            Form.is_deleted == False
         )
         
         if is_public is not None:
-            query = query.filter_by(is_public=is_public)
+            query = query.filter(Form.is_public == is_public)
             
         return query.order_by(Form.created_at.desc()).all()
     
     @staticmethod
-    def get_public_forms():
+    def get_public_forms() -> list[Form]:
         """Get non-deleted public forms"""
         return (Form.query
-                .filter_by(is_public=True, is_deleted=False)
-                .options(
-                    joinedload(Form.creator).joinedload(User.environment),
-                    joinedload(Form.form_questions)
-                        .joinedload(FormQuestion.question)
-                        .joinedload(Question.question_type)
-                )
-                .order_by(Form.created_at.desc())
-                .all())
+            .filter_by(
+                is_public=True,
+                is_deleted=False
+            )
+            .options(
+                joinedload(Form.creator).joinedload(User.environment),
+                joinedload(Form.form_questions)
+                    .joinedload(FormQuestion.question)
+                    .joinedload(Question.question_type)
+            )
+            .order_by(Form.created_at.desc())
+            .all())
     
     @staticmethod
     def get_forms_by_creator(username: str):
@@ -456,32 +474,102 @@ class FormService(BaseService):
             
         return search_query.order_by(Form.created_at.desc()).all()
     
-    def delete_form(form_id):
+    @staticmethod
+    def delete_form(form_id: int) -> tuple[bool, Union[dict, str]]:
         """
-        Delete a form and all its related data
+        Delete a form and all associated data through cascade soft delete
         
         Args:
             form_id (int): ID of the form to delete
             
         Returns:
-            tuple: (bool success, str error_message)
+            tuple: (success: bool, result: Union[dict, str])
+                  result contains either deletion statistics or error message
         """
         try:
-            form = Form.query.get(form_id)
-            form_question = FormQuestion.query.filter_by(form_id=form_id).first()
+            form = Form.query.filter_by(
+                id=form_id,
+                is_deleted=False
+            ).first()
+            
             if not form:
                 return False, "Form not found"
-            
-            if FormQuestion.query.filter_by(form_id=form_id).first():
-                FormQuestion.query.filter_by(form_id=form_id).delete()
-            if form_question:
-                FormAnswer.query.filter_by(form_question_id=form_question.id).delete()
-                        
-            # Delete the form itself
+
+            # Start transaction
+            db.session.begin_nested()
+
+            deletion_stats = {
+                'form_questions': 0,
+                'form_answers': 0,
+                'form_submissions': 0,
+                'answers_submitted': 0,
+                'attachments': 0
+            }
+
+            # 1. Soft delete form questions
+            form_questions = FormQuestion.query.filter_by(
+                form_id=form_id,
+                is_deleted=False
+            ).all()
+
+            for fq in form_questions:
+                fq.soft_delete()
+                deletion_stats['form_questions'] += 1
+
+                # 2. Soft delete form answers
+                form_answers = FormAnswer.query.filter_by(
+                    form_question_id=fq.id,
+                    is_deleted=False
+                ).all()
+
+                for fa in form_answers:
+                    fa.soft_delete()
+                    deletion_stats['form_answers'] += 1
+
+            # 3. Soft delete form submissions and related data
+            submissions = FormSubmission.query.filter_by(
+                form_id=form_id,
+                is_deleted=False
+            ).all()
+
+            for submission in submissions:
+                submission.soft_delete()
+                deletion_stats['form_submissions'] += 1
+
+                # 4. Soft delete attachments
+                attachments = Attachment.query.filter_by(
+                    form_submission_id=submission.id,
+                    is_deleted=False
+                ).all()
+
+                for attachment in attachments:
+                    attachment.soft_delete()
+                    deletion_stats['attachments'] += 1
+
+                # 5. Soft delete submitted answers
+                submitted_answers = (AnswerSubmitted.query
+                    .join(FormAnswer)
+                    .join(FormQuestion)
+                    .filter(
+                        FormQuestion.form_id == form_id,
+                        AnswerSubmitted.is_deleted == False
+                    ).all())
+
+                for submitted in submitted_answers:
+                    submitted.soft_delete()
+                    deletion_stats['answers_submitted'] += 1
+
+            # Finally soft delete the form
             form.soft_delete()
+
+            # Commit all changes
             db.session.commit()
             
-            return True, None
+            logger.info(f"Form {form_id} and associated data soft deleted. Stats: {deletion_stats}")
+            return True, deletion_stats
+
         except Exception as e:
             db.session.rollback()
-            return False, str(e)
+            error_msg = f"Error deleting form: {str(e)}"
+            logger.error(error_msg)
+            return False, error_msg

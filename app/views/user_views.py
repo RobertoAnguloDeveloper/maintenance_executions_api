@@ -70,7 +70,7 @@ def login():
         if not username or not password:
             return jsonify({"error": "Missing username or password"}), 400
         
-        if UserController.get_user_by_username(username).is_deleted:
+        if not UserController.get_user_by_username(username):
             return jsonify({"error": "Invalid credentials"}), 401
 
         access_token = AuthService.authenticate_user(username, password)

@@ -34,7 +34,7 @@ def get_roles_with_permissions():
         current_user = get_jwt_identity()
         current_user_obj = AuthService.get_current_user(current_user)
         
-        roles = Role.query.all()
+        roles = Role.query.filter_by(is_deleted=False).all()
         result = []
         
         for role in roles:
@@ -43,9 +43,15 @@ def get_roles_with_permissions():
                 continue
                 
             role_data = role.to_dict()
+            role_data['permissions'] = [
+                rp.permission.to_dict() 
+                for rp in role.role_permissions 
+                if not rp.is_deleted and not rp.permission.is_deleted
+            ]
             result.append(role_data)
             
         return jsonify(result), 200
+
     except Exception as e:
         logger.error(f"Error getting roles with permissions: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
@@ -113,22 +119,53 @@ def update_role_permission(role_permission_id):
         logger.error(f"Error updating role permission: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
 
-@role_permission_bp.route('/<int:role_permission_id>', methods=['DELETE'])
+@role_permission_bp.route('', methods=['DELETE'])
 @jwt_required()
 @PermissionManager.require_role(RoleType.ADMIN)
-def remove_permission_from_role(role_permission_id):
-    """Remove permission from role - Admin only"""
+def remove_permission_from_role():
+    """Remove a permission from a role"""
     try:
-        # Check if trying to modify admin role permission
-        role_permission = RolePermissionController.get_role_permission(role_permission_id)
-        if role_permission and role_permission.role_id == 1:
-            return jsonify({"error": "Cannot modify the main administrator role"}), 403
+        data = request.get_json()
+        role_id = data.get('role_id')
+        permission_id = data.get('permission_id')
 
-        success, error = RolePermissionController.remove_permission_from_role(role_permission_id)
+        if not role_id or not permission_id:
+            return jsonify({"error": "Missing required fields"}), 400
+
+        # Get the role-permission checking is_deleted=False
+        role_permission = RolePermission.query.filter_by(
+            role_id=role_id,
+            permission_id=permission_id,
+            is_deleted=False
+        ).first()
+
+        if not role_permission:
+            return jsonify({"error": "Role-Permission mapping not found"}), 404
+
+        # Prevent modification of core admin role permissions
+        if role_permission.role_id == 1:  # Assuming 1 is admin role ID
+            return jsonify({
+                "error": "Cannot modify permissions of the main administrator role"
+            }), 403
+
+        # Prevent removal of core permissions
+        if role_permission.permission.name.startswith('core_'):
+            return jsonify({
+                "error": "Cannot remove core permissions from roles"
+            }), 403
+
+        success, result = RolePermissionController.remove_permission_from_role(
+            role_permission.id
+        )
         if success:
-            logger.info(f"Permission removed from role successfully: {role_permission_id}")
-            return jsonify({"message": "Permission removed from role successfully"}), 200
-        return jsonify({"error": error}), 404
+            logger.info(f"Permission {permission_id} removed from role {role_id}")
+            return jsonify({
+                "message": "Permission removed from role successfully",
+                "deleted_items": result
+            }), 200
+            
+        return jsonify({"error": result}), 400
+
     except Exception as e:
         logger.error(f"Error removing permission from role: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500

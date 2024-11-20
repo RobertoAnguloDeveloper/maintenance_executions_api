@@ -137,15 +137,22 @@ def get_form_submissions(form_id):
         user = AuthService.get_current_user(current_user)
 
         # Get form to check access
-        form = Form.query.get(form_id)
+        form = FormController.get_form(form_id)
         if not form:
             return jsonify({"error": "Form not found"}), 404
 
-        # Check access rights
+        # Access control
         if not user.role.is_super_user:
             if user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
                 if form.creator.environment_id != user.environment_id:
                     return jsonify({"error": "Unauthorized access"}), 403
+            elif user.role.name == RoleType.TECHNICIAN:
+                # Technicians can only see their own submissions
+                submissions = FormSubmissionController.get_submissions_by_user(
+                    current_user,
+                    form_id=form_id
+                )
+                return jsonify([sub.to_dict() for sub in submissions]), 200
 
         submissions = FormSubmissionController.get_submissions_by_form(form_id)
         return jsonify([sub.to_dict() for sub in submissions]), 200
@@ -199,11 +206,12 @@ def update_submission(submission_id):
 @jwt_required()
 @PermissionManager.require_permission(action="delete", entity_type=EntityType.SUBMISSIONS)
 def delete_submission(submission_id):
-    """Delete a submission"""
+    """Delete a submission with cascade soft delete"""
     try:
         current_user = get_jwt_identity()
         user = AuthService.get_current_user(current_user)
 
+        # Get the submission checking is_deleted=False
         submission = FormSubmissionController.get_submission(submission_id)
         if not submission:
             return jsonify({"error": "Submission not found"}), 404
@@ -214,13 +222,25 @@ def delete_submission(submission_id):
                 if submission.form.creator.environment_id != user.environment_id:
                     return jsonify({"error": "Unauthorized access"}), 403
             elif submission.submitted_by != current_user:
-                return jsonify({"error": "Unauthorized access"}), 403
+                return jsonify({"error": "Cannot delete submissions by other users"}), 403
 
-        success, error = FormSubmissionController.delete_submission(submission_id)
+        # Additional validation for older submissions
+        if not user.role.is_super_user:
+            submission_age = datetime.utcnow() - submission.submitted_at
+            if submission_age.days > 7:  # Configurable timeframe
+                return jsonify({
+                    "error": "Cannot delete submissions older than 7 days"
+                }), 400
+
+        success, result = FormSubmissionController.delete_submission(submission_id)
         if success:
-            logger.info(f"Submission {submission_id} deleted by user {current_user}")
-            return jsonify({"message": "Submission deleted successfully"}), 200
-        return jsonify({"error": error}), 400
+            logger.info(f"Submission {submission_id} and associated data deleted by {user.username}")
+            return jsonify({
+                "message": "Submission and associated data deleted successfully",
+                "deleted_items": result
+            }), 200
+            
+        return jsonify({"error": result}), 400
 
     except Exception as e:
         logger.error(f"Error deleting submission {submission_id}: {str(e)}")

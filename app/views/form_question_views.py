@@ -4,6 +4,8 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.controllers.form_controller import FormController
 from app.controllers.form_question_controller import FormQuestionController
+from app.models.answers_submitted import AnswerSubmitted
+from app.models.form_answer import FormAnswer
 from app.services.auth_service import AuthService
 from app.utils.permission_manager import PermissionManager, EntityType, RoleType
 import logging
@@ -71,7 +73,7 @@ def create_form_question():
 @jwt_required()
 @PermissionManager.require_permission(action="view", entity_type=EntityType.FORMS)
 def get_all_form_questions():
-    """Get all form questions with filtering and pagination"""
+    """Get all form questions with filtering"""
     try:
         current_user = get_jwt_identity()
         user = AuthService.get_current_user(current_user)
@@ -86,7 +88,6 @@ def get_all_form_questions():
         # Determine environment filtering based on user role
         environment_id = None if user.role.is_super_user else user.environment_id
 
-        # Get all form questions
         form_questions = FormQuestionController.get_all_form_questions(
             environment_id=environment_id,
             include_relations=True
@@ -100,80 +101,20 @@ def get_all_form_questions():
             form_questions = [fq for fq in form_questions if fq.form_id == form_id]
         
         if question_type_id:
-            form_questions = [fq for fq in form_questions if fq.question.question_type_id == question_type_id]
+            form_questions = [fq for fq in form_questions 
+                            if fq.question.question_type_id == question_type_id]
 
-        # Calculate pagination
-        total_items = len(form_questions)
-        total_pages = (total_items + per_page - 1) // per_page
-        start_idx = (page - 1) * per_page
-        end_idx = start_idx + per_page
-        
-        # Paginate results
-        paginated_questions = form_questions[start_idx:end_idx]
-
-        # Prepare response data
-        response_data = {
+        return jsonify({
             "metadata": {
-                "total_items": total_items,
-                "total_pages": total_pages,
+                "total_items": len(form_questions),
                 "current_page": page,
                 "per_page": per_page,
-                "has_next": page < total_pages,
-                "has_prev": page > 1
             },
-            "filters_applied": {
-                "form_id": form_id,
-                "question_type_id": question_type_id,
-                "environment_restricted": environment_id is not None,
-                "include_answers": include_answers
-            },
-            "items": []
-        }
+            "items": [fq.to_dict() for fq in form_questions]
+        }), 200
 
-        # Format question data
-        for form_question in paginated_questions:
-            question_data = {
-                "id": form_question.id,
-                "form_id": form_question.form_id,
-                "form": {
-                    "id": form_question.form.id,
-                    "title": form_question.form.title,
-                    "is_public": form_question.form.is_public
-                },
-                "question": {
-                    "id": form_question.question.id,
-                    "text": form_question.question.text,
-                    "type": {
-                        "id": form_question.question.question_type.id,
-                        "type": form_question.question.question_type.type
-                    },
-                    "remarks": form_question.question.remarks
-                },
-                "order_number": form_question.order_number,
-                "created_at": form_question.created_at.isoformat() if form_question.created_at else None,
-                "updated_at": form_question.updated_at.isoformat() if form_question.updated_at else None
-            }
-
-            # Include answers if requested
-            if include_answers:
-                question_data["answers"] = [{
-                    "id": fa.id,
-                    "answer": {
-                        "id": fa.answer.id,
-                        "value": fa.answer.value
-                    },
-                    "remarks": fa.remarks
-                } for fa in form_question.form_answers]
-
-            response_data["items"].append(question_data)
-
-        return jsonify(response_data), 200
-
-    except ValueError as ve:
-        logger.error(f"Validation error in get_all_form_questions: {str(ve)}")
-        return jsonify({"error": "Invalid parameter values provided"}), 400
     except Exception as e:
-        logger.error(f"Error in get_all_form_questions: {str(e)}")
+        logger.error(f"Error getting form questions: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
 
 @form_question_bp.route('/form/<int:form_id>', methods=['GET'])
@@ -311,25 +252,43 @@ def update_form_question(form_question_id):
 @jwt_required()
 @PermissionManager.require_permission(action="delete", entity_type=EntityType.FORMS)
 def delete_form_question(form_question_id):
-    """Delete a form question mapping"""
+    """Delete a form question with cascade soft delete"""
     try:
         current_user = get_jwt_identity()
         user = AuthService.get_current_user(current_user)
 
+        # Get form question with is_deleted=False check
         form_question = FormQuestionController.get_form_question(form_question_id)
         if not form_question:
             return jsonify({"error": "Form question not found"}), 404
 
-        # Check form access
+        # Access control
         if not user.role.is_super_user:
             if form_question.form.creator.environment_id != user.environment_id:
                 return jsonify({"error": "Unauthorized access"}), 403
 
-        success, error = FormQuestionController.delete_form_question(form_question_id)
+        # Check if there are any submissions using this question
+        has_submissions = (AnswerSubmitted.query
+            .join(FormAnswer)
+            .filter(
+                FormAnswer.form_question_id == form_question_id,
+                AnswerSubmitted.is_deleted == False
+            ).first() is not None)
+
+        if has_submissions and user.role.name not in [RoleType.ADMIN, RoleType.SITE_MANAGER]:
+            return jsonify({
+                "error": "Cannot delete question with existing submissions"
+            }), 400
+
+        success, result = FormQuestionController.delete_form_question(form_question_id)
         if success:
-            logger.info(f"Form question {form_question_id} deleted by user {user.username}")
-            return jsonify({"message": "Form question deleted successfully"}), 200
-        return jsonify({"error": error}), 404
+            logger.info(f"Form question {form_question_id} and associated data deleted by {user.username}")
+            return jsonify({
+                "message": "Form question and associated data deleted successfully",
+                "deleted_items": result
+            }), 200
+            
+        return jsonify({"error": result}), 400
 
     except Exception as e:
         logger.error(f"Error deleting form question: {str(e)}")

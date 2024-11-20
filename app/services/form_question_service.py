@@ -1,7 +1,8 @@
 # app/services/form_question_service.py
 
-from typing import Optional
+from typing import Optional, Union
 from app import db
+from app.models.answers_submitted import AnswerSubmitted
 from app.models.form import Form
 from app.models.form_answer import FormAnswer
 from app.models.form_question import FormQuestion
@@ -70,22 +71,27 @@ class FormQuestionService:
             return None, str(e)
         
     @staticmethod
-    def get_all_form_questions(environment_id=None, include_relations=True, include_deleted=False):
-        """Get all form questions with filters"""
-        query = FormQuestion.query
+    def get_all_form_questions(
+        environment_id: Optional[int] = None,
+        include_relations: bool = True
+    ) -> list[FormQuestion]:
+        """Get all form questions with optional filtering"""
+        query = FormQuestion.query.filter_by(is_deleted=False)
 
-        if not include_deleted:
-            query = query.filter(FormQuestion.is_deleted == False)
+        if include_relations:
+            query = query.options(
+                joinedload(FormQuestion.form),
+                joinedload(FormQuestion.question)
+                    .joinedload(Question.question_type)
+            )
 
         if environment_id:
             query = query.join(
                 Form,
-                FormQuestion.form_id == Form.id
-            ).join(
-                User,
-                Form.user_id == User.id
+                User
             ).filter(
-                User.environment_id == environment_id
+                User.environment_id == environment_id,
+                User.is_deleted == False
             )
 
         return query.order_by(
@@ -122,17 +128,67 @@ class FormQuestionService:
             raise
 
     @staticmethod
-    def get_form_question(form_question_id):
-        """Get a specific form question mapping"""
-        return FormQuestion.query.get(form_question_id)
+    def get_form_question(form_question_id: int) -> Optional[FormQuestion]:
+        """Get non-deleted form question by ID"""
+        return (FormQuestion.query
+            .filter_by(
+                id=form_question_id,
+                is_deleted=False
+            )
+            .options(
+                joinedload(FormQuestion.form),
+                joinedload(FormQuestion.question)
+            )
+            .first())
 
     @staticmethod
-    def get_questions_by_form(form_id):
-        """Get all questions for a specific form"""
-        return FormQuestion.query\
-            .filter_by(form_id=form_id)\
-            .order_by(FormQuestion.order_number)\
-            .all()
+    def get_questions_by_form(form_id: int) -> list[FormQuestion]:
+        """Get all non-deleted questions for a specific form"""
+        return (FormQuestion.query
+            .filter_by(
+                form_id=form_id,
+                is_deleted=False
+            )
+            .options(
+                joinedload(FormQuestion.question)
+                    .joinedload(Question.question_type)
+            )
+            .order_by(FormQuestion.order_number)
+            .all())
+        
+    @staticmethod
+    def reorder_questions(
+        form_id: int,
+        question_order: list[tuple]
+    ) -> tuple[bool, Optional[str]]:
+        """Update question order numbers"""
+        try:
+            # Verify all questions exist and belong to the form
+            for form_question_id, new_order in question_order:
+                form_question = FormQuestion.query.filter_by(
+                    id=form_question_id,
+                    form_id=form_id,
+                    is_deleted=False
+                ).first()
+                
+                if not form_question:
+                    return False, f"Form question {form_question_id} not found or not part of this form"
+
+            # Update order numbers
+            for form_question_id, new_order in question_order:
+                FormQuestion.query.filter_by(id=form_question_id).update({
+                    'order_number': new_order,
+                    'updated_at': datetime.utcnow()
+                })
+
+            db.session.commit()
+            return True, None
+
+        except Exception as e:
+            db.session.rollback()
+            error_msg = f"Error reordering questions: {str(e)}"
+            logger.error(error_msg)
+            return False, error_msg
 
     @staticmethod
     def update_form_question(form_question_id, **kwargs):
@@ -159,19 +215,68 @@ class FormQuestionService:
             return None, str(e)
 
     @staticmethod
-    def delete_form_question(form_question_id):
-        """Soft delete a form question"""
+    def delete_form_question(form_question_id: int) -> tuple[bool, Union[dict, str]]:
+        """
+        Delete a form question and associated data through cascade soft delete
+        
+        Args:
+            form_question_id (int): ID of the form question to delete
+            
+        Returns:
+            tuple: (success: bool, result: Union[dict, str])
+                  result contains either deletion statistics or error message
+        """
         try:
-            form_question = FormQuestion.query.get(form_question_id)
+            form_question = FormQuestion.query.filter_by(
+                id=form_question_id,
+                is_deleted=False
+            ).first()
+            
             if not form_question:
                 return False, "Form question not found"
 
+            # Start transaction
+            db.session.begin_nested()
+
+            deletion_stats = {
+                'form_answers': 0,
+                'answers_submitted': 0
+            }
+
+            # 1. Get and soft delete form answers
+            form_answers = FormAnswer.query.filter_by(
+                form_question_id=form_question_id,
+                is_deleted=False
+            ).all()
+
+            for fa in form_answers:
+                fa.soft_delete()
+                deletion_stats['form_answers'] += 1
+
+                # 2. Soft delete submitted answers
+                submitted_answers = AnswerSubmitted.query.filter_by(
+                    form_answers_id=fa.id,
+                    is_deleted=False
+                ).all()
+
+                for submitted in submitted_answers:
+                    submitted.soft_delete()
+                    deletion_stats['answers_submitted'] += 1
+
+            # Finally soft delete the form question
             form_question.soft_delete()
+
+            # Commit all changes
             db.session.commit()
-            return True, None
+            
+            logger.info(f"Form question {form_question_id} and associated data soft deleted. Stats: {deletion_stats}")
+            return True, deletion_stats
+
         except Exception as e:
             db.session.rollback()
-            return False, str(e)
+            error_msg = f"Error deleting form question: {str(e)}"
+            logger.error(error_msg)
+            return False, error_msg
 
     @staticmethod
     def bulk_create_form_questions(form_id, questions):

@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.controllers.question_type_controller import QuestionTypeController
+from app.models.question import Question
 from app.services.auth_service import AuthService
 from app.services.question_type_service import QuestionTypeService
 from app.utils.permission_manager import PermissionManager, EntityType, RoleType
@@ -55,9 +56,20 @@ def create_question_type():
 @jwt_required()
 @PermissionManager.require_permission(action="view", entity_type=EntityType.QUESTION_TYPES)
 def get_all_question_types():
-    """Get all question types - Available to all authenticated users"""
+    """Get all non-deleted question types"""
     try:
-        question_types = QuestionTypeController.get_all_question_types()
+        current_user = get_jwt_identity()
+        user = AuthService.get_current_user(current_user)
+
+        # Admins can see deleted types if requested
+        include_deleted = False
+        if user.role.is_super_user:
+            include_deleted = request.args.get('include_deleted', '').lower() == 'true'
+
+        question_types = QuestionTypeController.get_all_question_types(
+            include_deleted=include_deleted
+        )
+        
         return jsonify([qt.to_dict() for qt in question_types]), 200
 
     except Exception as e:
@@ -132,7 +144,7 @@ def update_question_type(type_id):
 @jwt_required()
 @PermissionManager.require_permission(action="delete", entity_type=EntityType.QUESTION_TYPES)
 def delete_question_type(type_id):
-    """Delete a question type - Admin only"""
+    """Delete a question type with cascade validation - Admin only"""
     try:
         current_user = get_jwt_identity()
         user = AuthService.get_current_user(current_user)
@@ -144,19 +156,36 @@ def delete_question_type(type_id):
                 "message": "Only administrators can delete question types"
             }), 403
 
-        # Check if it's a core question type
+        # Get the question type checking is_deleted=False
         question_type = QuestionTypeService.get_question_type(type_id)
-        if question_type and question_type.type in ['single_text', 'multiple_choice', 'single_choice', 'date']:
+        if not question_type:
+            return jsonify({"error": "Question type not found"}), 404
+
+        # Check if it's a core question type
+        if question_type.type in ['single_text', 'multiple_choice', 'single_choice', 'date']:
             return jsonify({"error": "Cannot delete core question types"}), 403
 
-        success, error = QuestionTypeService.delete_question_type(type_id)
-        if not success:
-            if error == "Question type not found":
-                return jsonify({"error": error}), 404
-            return jsonify({"error": error}), 400
+        # Check for active questions using this type
+        active_questions = Question.query.filter_by(
+            question_type_id=type_id,
+            is_deleted=False
+        ).count()
+        
+        if active_questions > 0:
+            return jsonify({
+                "error": f"Cannot delete question type with {active_questions} active questions",
+                "active_questions": active_questions
+            }), 400
 
-        logger.info(f"Question type {type_id} deleted by user {user.username}")
-        return jsonify({"message": "Question type deleted successfully"}), 200
+        success, result = QuestionTypeService.delete_question_type(type_id)
+        if success:
+            logger.info(f"Question type {type_id} deleted by {user.username}")
+            return jsonify({
+                "message": "Question type deleted successfully",
+                "deleted_items": result
+            }), 200
+            
+        return jsonify({"error": result}), 400
 
     except Exception as e:
         logger.error(f"Error deleting question type {type_id}: {str(e)}")

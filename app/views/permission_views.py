@@ -3,6 +3,8 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.controllers.permission_controller import PermissionController
 from app.controllers.role_controller import RoleController
 from app.controllers.user_controller import UserController
+from app.models.role import Role
+from app.models.role_permission import RolePermission
 from app.services.auth_service import AuthService
 from app.utils.permission_manager import PermissionManager, EntityType, RoleType
 import logging
@@ -91,27 +93,33 @@ def get_permission(permission_id):
 @permission_bp.route('/check/<int:user_id>/<string:permission_name>', methods=['GET'])
 @jwt_required()
 @PermissionManager.require_role(RoleType.ADMIN)
-def check_user_permission(user_id, permission_name):
+def check_user_permission(user_id: int, permission_name: str):
     """Check if a user has a specific permission"""
     try:
         current_user = get_jwt_identity()
         current_user_obj = AuthService.get_current_user(current_user)
         
+        # Get the user checking is_deleted=False
         user = UserController.get_user(user_id)
+        if not user:
+            return jsonify({"error": "User not found"}), 404
         
-        role=RoleController.get_role(user.role_id)
+        # Get user's role checking is_deleted=False
+        role = RoleController.get_role(user.role_id)
+        if not role:
+            return jsonify({"error": "User role not found"}), 404
 
         # Site Managers can only check users in their environment
-        if role.is_super_user:
-            if not user or user.environment_id != current_user_obj.environment_id:
+        if not current_user_obj.role.is_super_user:
+            if user.environment_id != current_user_obj.environment_id:
                 return jsonify({"error": "Unauthorized"}), 403
-            
+
         has_permission = PermissionController.user_has_permission(user_id, permission_name)
         return jsonify({
-                        "username": user.username,
-                        "permission_requested": permission_name,
-                        "has_permission": has_permission
-                        }), 200
+            "username": user.username,
+            "permission_requested": permission_name,
+            "has_permission": has_permission
+        }), 200
 
     except Exception as e:
         logger.error(f"Error checking permission: {str(e)}")
@@ -161,8 +169,9 @@ def update_permission(permission_id):
 @jwt_required()
 @PermissionManager.require_role(RoleType.ADMIN)  # Only Admin can delete permissions
 def delete_permission(permission_id):
-    """Delete a permission - Admin only"""
+    """Delete a permission with cascade soft delete - Admin only"""
     try:
+        # Get permission checking is_deleted=False
         permission = PermissionController.get_permission(permission_id)
         if not permission:
             return jsonify({"error": "Permission not found"}), 404
@@ -172,17 +181,29 @@ def delete_permission(permission_id):
             return jsonify({"error": "Cannot delete core permissions"}), 403
 
         # Check if permission is in use
-        roles_count = len(permission.roles)
-        if roles_count > 0:
+        active_roles = (RolePermission.query
+            .filter_by(
+                permission_id=permission_id,
+                is_deleted=False
+            )
+            .join(Role)
+            .filter(Role.is_deleted == False)
+            .count())
+
+        if active_roles > 0:
             return jsonify({
-                "error": f"Cannot delete permission. It is used by {roles_count} role(s)"
+                "error": f"Cannot delete permission. It is used by {active_roles} role(s)"
             }), 400
 
-        success, error = PermissionController.delete_permission(permission_id)
+        success, result = PermissionController.delete_permission(permission_id)
         if success:
-            logger.info(f"Permission {permission_id} deleted successfully")
-            return jsonify({"message": "Permission deleted successfully"}), 200
-        return jsonify({"error": error}), 404
+            logger.info(f"Permission {permission_id} and associated data deleted")
+            return jsonify({
+                "message": "Permission and associated data deleted successfully",
+                "deleted_items": result
+            }), 200
+            
+        return jsonify({"error": result}), 400
 
     except Exception as e:
         logger.error(f"Error deleting permission {permission_id}: {str(e)}")

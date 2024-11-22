@@ -1,4 +1,4 @@
-from typing import List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 from app import db
 from app.models.role_permission import RolePermission
 from app.models.role import Role
@@ -97,6 +97,83 @@ class RolePermissionService(BaseService):
             error_msg = f"Error assigning permission: {str(e)}"
             logger.error(error_msg)
             return None, error_msg
+    
+    @staticmethod
+    def bulk_assign_permissions(
+        role_id: int,
+        permission_ids: List[int],
+        current_user: User
+    ) -> Tuple[Optional[List[RolePermission]], Optional[str]]:
+        """
+        Bulk assign permissions to a role with transaction safety.
+        
+        Args:
+            role_id: ID of the role
+            permission_ids: List of permission IDs
+            current_user: Current user object for authorization
+            
+        Returns:
+            tuple: (List of created RolePermission objects or None, Error message or None)
+        """
+        try:
+            # Verify role exists and is not deleted
+            role = Role.query.filter_by(
+                id=role_id,
+                is_deleted=False
+            ).first()
+            
+            if not role:
+                return None, "Role not found or has been deleted"
+
+            # Prevent modification of admin role
+            if role.is_super_user and role_id == 1:
+                return None, "Cannot modify permissions of the main administrator role"
+
+            # Start transaction
+            db.session.begin_nested()
+
+            created_mappings = []
+
+            # Validate all permissions first
+            for permission_id in permission_ids:
+                permission = Permission.query.filter_by(
+                    id=permission_id,
+                    is_deleted=False
+                ).first()
+                
+                if not permission:
+                    db.session.rollback()
+                    return None, f"Permission {permission_id} not found or deleted"
+
+            # Create mappings for non-existing combinations
+            for permission_id in permission_ids:
+                existing = RolePermission.query.filter_by(
+                    role_id=role_id,
+                    permission_id=permission_id,
+                    is_deleted=False
+                ).first()
+                
+                if not existing:
+                    mapping = RolePermission(
+                        role_id=role_id,
+                        permission_id=permission_id
+                    )
+                    db.session.add(mapping)
+                    created_mappings.append(mapping)
+
+            db.session.commit()
+            
+            logger.info(
+                f"Bulk assigned {len(created_mappings)} permissions to role {role_id} "
+                f"by user {current_user.username}"
+            )
+            return created_mappings, None
+
+        except Exception as e:
+            db.session.rollback()
+            error_msg = f"Error in bulk permission assignment: {str(e)}"
+            logger.error(error_msg)
+            return None, error_msg
         
     @staticmethod
     def update_role_permission(role_permission_id, new_role_id, new_permission_id):
@@ -119,17 +196,17 @@ class RolePermissionService(BaseService):
     @staticmethod
     def remove_permission_from_role(
         role_permission_id: int,
-        current_user: User
-    ) -> Tuple[bool, Optional[str]]:
+        username: str
+    ) -> Tuple[bool, Union[Dict, str]]:
         """
         Remove a permission from a role with cascade soft delete.
         
         Args:
             role_permission_id: ID of the role-permission mapping
-            current_user: Current user object for authorization
+            username: Username of the user performing the action
             
         Returns:
-            tuple: (Success boolean, Error message or None)
+            tuple: (Success boolean, Dict with deletion stats or error message)
         """
         try:
             # Verify mapping exists and is not deleted
@@ -145,12 +222,22 @@ class RolePermissionService(BaseService):
             if role_permission.role_id == 1:
                 return False, "Cannot modify permissions of the main administrator role"
 
-            # Prevent removal of core permissions
-            if role_permission.permission.name.startswith('core_'):
-                return False, "Cannot remove core permissions from roles"
-
             # Start transaction
             db.session.begin_nested()
+
+            # Capture deletion details before soft delete
+            deletion_stats = {
+                'role_permission_id': role_permission.id,
+                'role': {
+                    'id': role_permission.role_id,
+                    'name': role_permission.role.name
+                },
+                'permission': {
+                    'id': role_permission.permission_id,
+                    'name': role_permission.permission.name
+                },
+                'deleted_at': datetime.utcnow().isoformat()
+            }
 
             # Soft delete the mapping
             role_permission.is_deleted = True
@@ -160,9 +247,9 @@ class RolePermissionService(BaseService):
 
             logger.info(
                 f"Removed permission {role_permission.permission_id} from role "
-                f"{role_permission.role_id} by user {current_user.username}"
+                f"{role_permission.role_id} by user {username}"
             )
-            return True, None
+            return True, {'role_permissions': [deletion_stats]}
 
         except Exception as e:
             db.session.rollback()

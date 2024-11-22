@@ -17,7 +17,7 @@ class UserController:
         return UserService.get_user_by_username(username)
 
     @staticmethod
-    def get_all_users(include_deleted=False):
+    def get_all_users(include_deleted):
         return UserService.get_all_users_with_relations(include_deleted=include_deleted)
     
     @staticmethod

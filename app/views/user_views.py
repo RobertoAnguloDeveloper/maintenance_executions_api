@@ -295,7 +295,7 @@ def get_current_user():
         current_user = get_jwt_identity()
         user = AuthService.get_current_user(current_user)
         if user:
-            return jsonify(user.to_dict(include_details=True)), 200
+            return jsonify(user.to_dict(include_details=True, include_deleted=False)), 200
             
         return jsonify({"error": "User not found"}), 404
 

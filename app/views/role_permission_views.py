@@ -87,6 +87,50 @@ def assign_permission_to_role():
         logger.error(f"Error assigning permission to role: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
     
+@role_permission_bp.route('/bulk-assign', methods=['POST'])
+@jwt_required()
+@PermissionManager.require_role(RoleType.ADMIN)  # Only Admin can bulk assign permissions
+def bulk_assign_permissions():
+    """Bulk assign permissions to a role - Admin only"""
+    try:
+        data = request.get_json()
+        role_id = data.get('role_id')
+        permission_ids = data.get('permission_ids', [])
+
+        if not role_id or not permission_ids:
+            return jsonify({
+                "error": "Missing required fields. Need role_id and permission_ids"
+            }), 400
+
+        if not isinstance(permission_ids, list):
+            return jsonify({
+                "error": "permission_ids must be a list of permission IDs"
+            }), 400
+
+        current_user = get_jwt_identity()
+        user = AuthService.get_current_user(current_user)
+
+        created_mappings, error = RolePermissionController.bulk_assign_permissions(
+            role_id=role_id,
+            permission_ids=permission_ids,
+            current_user=user
+        )
+
+        if error:
+            return jsonify({"error": error}), 400
+
+        logger.info(f"Bulk permission assignment successful by user {current_user}")
+        return jsonify({
+            "message": "Permissions assigned successfully",
+            "role_permissions": [
+                mapping.to_dict() for mapping in created_mappings
+            ]
+        }), 201
+
+    except Exception as e:
+        logger.error(f"Error in bulk permission assignment: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
+    
 @role_permission_bp.route('/<int:role_permission_id>', methods=['PUT'])
 @jwt_required()
 @PermissionManager.require_role(RoleType.ADMIN)
@@ -119,46 +163,21 @@ def update_role_permission(role_permission_id):
         logger.error(f"Error updating role permission: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
 
-@role_permission_bp.route('', methods=['DELETE'])
+@role_permission_bp.route('/<int:role_permission_id>', methods=['DELETE'])
 @jwt_required()
 @PermissionManager.require_role(RoleType.ADMIN)
-def remove_permission_from_role():
-    """Remove a permission from a role"""
+def remove_permission_from_role(role_permission_id):
+    """Remove a permission from a role with soft delete"""
     try:
-        data = request.get_json()
-        role_id = data.get('role_id')
-        permission_id = data.get('permission_id')
-
-        if not role_id or not permission_id:
-            return jsonify({"error": "Missing required fields"}), 400
-
-        # Get the role-permission checking is_deleted=False
-        role_permission = RolePermission.query.filter_by(
-            role_id=role_id,
-            permission_id=permission_id,
-            is_deleted=False
-        ).first()
-
-        if not role_permission:
-            return jsonify({"error": "Role-Permission mapping not found"}), 404
-
-        # Prevent modification of core admin role permissions
-        if role_permission.role_id == 1:  # Assuming 1 is admin role ID
-            return jsonify({
-                "error": "Cannot modify permissions of the main administrator role"
-            }), 403
-
-        # Prevent removal of core permissions
-        if role_permission.permission.name.startswith('core_'):
-            return jsonify({
-                "error": "Cannot remove core permissions from roles"
-            }), 403
+        current_user = get_jwt_identity()
 
         success, result = RolePermissionController.remove_permission_from_role(
-            role_permission.id
+            role_permission_id,
+            current_user
         )
+        
         if success:
-            logger.info(f"Permission {permission_id} removed from role {role_id}")
+            logger.info(f"Role-Permission {role_permission_id} deleted by {current_user}")
             return jsonify({
                 "message": "Permission removed from role successfully",
                 "deleted_items": result

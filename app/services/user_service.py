@@ -119,21 +119,23 @@ class UserService(BaseService):
     @staticmethod
     def update_user(user_id, **kwargs):
         user = User.query.get(user_id)
+        print(kwargs.items())
         if user:
             for key, value in kwargs.items():
-                if hasattr(user, key):
-                    if key == 'password':
-                        user.set_password(value)
-                    if key == 'environment_id':
-                        if Environment.query.filter_by(id=value, is_deleted=False).first():
-                            setattr(user, key, value)
-                        else:
-                            return None, "Environment not found"
-                    elif key == 'role_id':
-                        if Role.query.filter_by(id=value, is_deleted=False).first():
-                            setattr(user, key, value)
-                    else:
+                print("ENTRO")
+                
+                if key == 'password':
+                    user.set_password(value)
+                if key == 'environment_id':
+                    if Environment.query.filter_by(id=value, is_deleted=False).first():
                         setattr(user, key, value)
+                    else:
+                        return None, "Environment not found"
+                elif key == 'role_id':
+                    if Role.query.filter_by(id=value, is_deleted=False).first():
+                        setattr(user, key, value)
+                else:
+                    setattr(user, key, value)
             
             try:
                 db.session.commit()

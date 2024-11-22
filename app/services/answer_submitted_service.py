@@ -12,6 +12,7 @@ from app.models.form_answer import FormAnswer
 from app.models.form_question import FormQuestion
 from app.models.form_submission import FormSubmission
 from app.models.question import Question
+from app.models.question_type import QuestionType
 from app.models.user import User
 import logging
 
@@ -48,51 +49,75 @@ class AnswerSubmittedService:
         
     @staticmethod
     def get_all_answers_submitted(filters: dict = None) -> list:
-        """
-        Get all answers submitted with optional filters
-        
-        Args:
-            filters (dict): Optional filters including:
-                - form_id (int): Filter by specific form
-                - environment_id (int): Filter by environment
-                - submitted_by (str): Filter by submitter
-                - start_date (datetime): Filter by start date
-                - end_date (datetime): Filter by end date
-                
-        Returns:
-            list: List of AnswerSubmitted objects
-        """
+        """Get all answers submitted with filters"""
         try:
             query = AnswerSubmitted.query.filter_by(is_deleted=False)
 
             if filters:
                 if filters.get('form_id'):
-                    query = query.join(FormSubmission).filter(
-                        FormSubmission.form_id == filters['form_id']
+                    query = (query
+                        .join(
+                            FormSubmission,
+                            FormSubmission.id == AnswerSubmitted.form_submissions_id
+                        )
+                        .filter(
+                            FormSubmission.form_id == filters['form_id'],
+                            FormSubmission.is_deleted == False
+                        ))
+                        
+                if filters.get('environment_id'):
+                    query = (query
+                        .join(
+                            FormSubmission,
+                            FormSubmission.id == AnswerSubmitted.form_submissions_id
+                        )
+                        .join(
+                            Form,
+                            Form.id == FormSubmission.form_id
+                        )
+                        .join(
+                            User,
+                            User.id == Form.user_id
+                        )
+                        .filter(
+                            User.environment_id == filters['environment_id'],
+                            FormSubmission.is_deleted == False,
+                            Form.is_deleted == False,
+                            User.is_deleted == False
+                        ))
+
+                # Add date range filters with proper join validation
+                if filters.get('start_date'):
+                    query = query.join(
+                        FormSubmission,
+                        FormSubmission.id == AnswerSubmitted.form_submissions_id
+                    ).filter(
+                        FormSubmission.submitted_at >= filters['start_date'],
+                        FormSubmission.is_deleted == False
                     )
                     
-                if filters.get('environment_id'):
-                    query = query.join(FormSubmission)\
-                        .join(Form)\
-                        .join(User)\
-                        .filter(User.environment_id == filters['environment_id'])
-                    
-                if filters.get('submitted_by'):
-                    query = query.join(FormSubmission)\
-                        .filter(FormSubmission.submitted_by == filters['submitted_by'])
-                    
-                if filters.get('start_date'):
-                    query = query.join(FormSubmission)\
-                        .filter(FormSubmission.submitted_at >= filters['start_date'])
-                    
                 if filters.get('end_date'):
-                    query = query.join(FormSubmission)\
-                        .filter(FormSubmission.submitted_at <= filters['end_date'])
+                    query = query.join(
+                        FormSubmission,
+                        FormSubmission.id == AnswerSubmitted.form_submissions_id
+                    ).filter(
+                        FormSubmission.submitted_at <= filters['end_date'],
+                        FormSubmission.is_deleted == False
+                    )
 
-            # Order by most recent first
-            query = query.order_by(AnswerSubmitted.created_at.desc())
-            
-            return query.all()
+            # Add proper eager loading with soft delete checks
+            query = query.options(
+                joinedload(AnswerSubmitted.form_answer)
+                    .filter(FormAnswer.is_deleted == False)
+                    .joinedload(FormAnswer.form_question)
+                    .filter(FormQuestion.is_deleted == False)
+                    .joinedload(FormQuestion.question)
+                    .filter(Question.is_deleted == False),
+                joinedload(AnswerSubmitted.form_submission)
+                    .filter(FormSubmission.is_deleted == False)
+            )
+
+            return query.order_by(AnswerSubmitted.created_at.desc()).all()
 
         except Exception as e:
             logger.error(f"Error getting all answers submitted: {str(e)}")
@@ -202,20 +227,32 @@ class AnswerSubmittedService:
                 )
                 .options(
                     joinedload(AnswerSubmitted.form_answer)
+                        .filter(FormAnswer.is_deleted == False)
                         .joinedload(FormAnswer.form_question)
+                        .filter(FormQuestion.is_deleted == False)
                         .joinedload(FormQuestion.question)
+                        .filter(Question.is_deleted == False)
                         .joinedload(Question.question_type)
+                        .filter(QuestionType.is_deleted == False)
                 )
                 .all())
+
+            if not submitted_answers:
+                return None
 
             return {
                 'total_answers': len(submitted_answers),
                 'submission_time': (submitted_answers[0].form_submission.submitted_at 
-                                  if submitted_answers else None),
-                'has_remarks': any(sa.form_answer.remarks for sa in submitted_answers),
+                                if not submitted_answers[0].form_submission.is_deleted else None),
+                'has_remarks': any(sa.form_answer.remarks for sa in submitted_answers 
+                                if not sa.form_answer.is_deleted),
                 'answer_types': [
                     sa.form_answer.form_question.question.question_type.type 
-                    for sa in submitted_answers
+                    for sa in submitted_answers 
+                    if not sa.form_answer.is_deleted and 
+                    not sa.form_answer.form_question.is_deleted and
+                    not sa.form_answer.form_question.question.is_deleted and
+                    not sa.form_answer.form_question.question.question_type.is_deleted
                 ]
             }
 

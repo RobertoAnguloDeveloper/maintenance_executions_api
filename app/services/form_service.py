@@ -7,6 +7,7 @@ from app.models.attachment import Attachment
 from app.models.form_answer import FormAnswer
 from app.models.form_submission import FormSubmission
 from app.models.question import Question
+from app.models.question_type import QuestionType
 from app.models.user import User
 from app.services.base_service import BaseService
 from app.models.form import Form
@@ -138,29 +139,33 @@ class FormService(BaseService):
     def get_forms_by_creator(username: str):
         """
         Get all forms created by a specific user
-        
-        Args:
-            username (str): Username of the creator
-            
-        Returns:
-            list: List of Form objects or None if user not found
         """
         try:
-            from app.models.user import User  # Import here to avoid circular imports
+            user = User.query.filter_by(
+                username=username,
+                is_deleted=False
+            ).first()
             
-            # First verify user exists
-            user = User.query.filter_by(username=username).first()
             if not user:
                 return None
                 
             return (Form.query
-                    .filter_by(user_id=user.id)
-                    .options(
-                        joinedload(Form.creator).joinedload(User.environment),
-                        joinedload(Form.form_questions)
-                            .joinedload(FormQuestion.question)
-                            .joinedload(Question.question_type)
+                    .filter_by(
+                        user_id=user.id,
+                        is_deleted=False
                     )
+                    .join(User, User.id == Form.user_id)
+                    .options(
+                        joinedload(Form.creator)
+                            .joinedload(User.environment),
+                        joinedload(Form.form_questions)
+                            .filter(FormQuestion.is_deleted == False)
+                            .joinedload(FormQuestion.question)
+                            .filter(Question.is_deleted == False)
+                            .joinedload(Question.question_type)
+                            .filter(QuestionType.is_deleted == False)
+                    )
+                    .filter(User.is_deleted == False)
                     .order_by(Form.created_at.desc())
                     .all())
 
@@ -397,11 +402,15 @@ class FormService(BaseService):
             dict: Statistics dictionary containing counts and temporal data
         """
         try:
-            form = Form.query.get(form_id)
+            form = Form.query.filter_by(
+                id=form_id,
+                is_deleted=False
+            ).first()
+            
             if not form:
                 return None
                 
-            submissions = form.submissions
+            submissions = [s for s in form.submissions if not s.is_deleted]
             total_submissions = len(submissions)
             
             # Initialize statistics

@@ -1,6 +1,8 @@
-from typing import Optional, Union
+from typing import Optional, Union, List, Dict, Any
 from app import db
+from app.models.answer import Answer
 from app.models.form import Form
+from app.models.form_question import FormQuestion
 from app.models.form_submission import FormSubmission
 from app.models.answers_submitted import AnswerSubmitted
 from app.models.form_answer import FormAnswer
@@ -151,61 +153,144 @@ class FormSubmissionService:
         form_id: Optional[int] = None
     ) -> list[FormSubmission]:
         """Get all non-deleted submissions for an environment"""
-        query = (FormSubmission.query
-            .join(Form)
-            .join(User)
-            .filter(
-                User.environment_id == environment_id,
-                FormSubmission.is_deleted == False,
-                Form.is_deleted == False,
-                User.is_deleted == False
-            ))
-            
-        if form_id:
-            query = query.filter(FormSubmission.form_id == form_id)
-            
-        return query.order_by(FormSubmission.submitted_at.desc()).all()
+        try:
+            query = (FormSubmission.query
+                .join(Form, Form.id == FormSubmission.form_id)
+                .join(User, User.id == Form.user_id)
+                .filter(
+                    User.environment_id == environment_id,
+                    FormSubmission.is_deleted == False,
+                    Form.is_deleted == False,
+                    User.is_deleted == False
+                )
+                .options(
+                    joinedload(FormSubmission.answers_submitted)
+                        .filter(AnswerSubmitted.is_deleted == False)
+                        .joinedload(AnswerSubmitted.form_answer)
+                        .filter(FormAnswer.is_deleted == False),
+                    joinedload(FormSubmission.attachments)
+                        .filter(Attachment.is_deleted == False)
+                ))
+                
+            if form_id:
+                query = query.filter(FormSubmission.form_id == form_id)
+                
+            return query.order_by(FormSubmission.submitted_at.desc()).all()
+
+        except Exception as e:
+            logger.error(f"Error getting submissions by environment: {str(e)}")
+            return []
 
     @staticmethod
-    def update_submission(submission_id, answers_data=None, attachments_data=None):
+    def update_submission(
+        submission_id: int,
+        answers_data: Optional[List[Dict[str, Any]]] = None,
+        attachments_data: Optional[List[Dict[str, Any]]] = None
+    ) -> tuple[Optional[FormSubmission], Optional[str]]:
         """
-        Update a submission's answers and attachments
+        Update a form submission with new answers and attachments.
+        
+        Args:
+            submission_id: ID of the submission to update
+            answers_data: List of answer data dictionaries
+            attachments_data: List of attachment data dictionaries
+            
+        Returns:
+            tuple: (Updated FormSubmission object or None, Error message or None)
         """
         try:
-            submission = FormSubmission.query.get(submission_id)
+            # Verify submission exists and is not deleted
+            submission = FormSubmission.query.filter_by(
+                id=submission_id,
+                is_deleted=False
+            ).first()
+            
             if not submission:
-                return None, "Submission not found"
+                return None, "Submission not found or has been deleted"
+
+            # Start transaction
+            db.session.begin_nested()
 
             if answers_data:
-                # Remove existing answers
-                AnswerSubmitted.query.filter_by(form_submission_id=submission_id).delete()
-                
-                # Add new answers
+                # Validate all answers before making any changes
                 for answer_data in answers_data:
+                    # Verify form question exists and is not deleted
+                    form_question = FormQuestion.query.filter_by(
+                        id=answer_data.get('form_question_id'),
+                        is_deleted=False
+                    ).first()
+                    
+                    if not form_question:
+                        db.session.rollback()
+                        return None, f"Form question {answer_data.get('form_question_id')} not found or has been deleted"
+
+                    # Verify form question belongs to the submission's form
+                    if form_question.form_id != submission.form_id:
+                        db.session.rollback()
+                        return None, f"Form question {form_question.id} does not belong to this form"
+
+                    # Verify answer exists and is not deleted
+                    answer = Answer.query.filter_by(
+                        id=answer_data.get('answer_id'),
+                        is_deleted=False
+                    ).first()
+                    
+                    if not answer:
+                        db.session.rollback()
+                        return None, f"Answer {answer_data.get('answer_id')} not found or has been deleted"
+
+                # Soft delete existing answers
+                existing_submissions = AnswerSubmitted.query.filter_by(
+                    form_submissions_id=submission_id,
+                    is_deleted=False
+                ).all()
+                
+                for existing in existing_submissions:
+                    existing.is_deleted = True
+                    existing.deleted_at = datetime.utcnow()
+
+                # Create new answer submissions
+                for answer_data in answers_data:
+                    # Get or create form answer
                     form_answer = FormAnswer.query.filter_by(
                         form_question_id=answer_data['form_question_id'],
-                        answer_id=answer_data['answer_id']
+                        answer_id=answer_data['answer_id'],
+                        is_deleted=False
                     ).first()
 
                     if not form_answer:
                         form_answer = FormAnswer(
                             form_question_id=answer_data['form_question_id'],
-                            answer_id=answer_data['answer_id'],
-                            remarks=answer_data.get('remarks')
+                            answer_id=answer_data['answer_id']
                         )
                         db.session.add(form_answer)
                         db.session.flush()
 
+                    # Create new answer submission
                     answer_submitted = AnswerSubmitted(
-                        form_answer_id=form_answer.id,
-                        form_submission_id=submission_id
+                        form_answers_id=form_answer.id,
+                        form_submissions_id=submission_id
                     )
                     db.session.add(answer_submitted)
 
             if attachments_data:
-                # Handle attachments update
-                Attachment.query.filter_by(form_submission_id=submission_id).delete()
+                # Validate attachment data
+                for attachment_data in attachments_data:
+                    if not all(key in attachment_data for key in ['file_type', 'file_path']):
+                        db.session.rollback()
+                        return None, "Invalid attachment data: missing required fields"
+
+                # Soft delete existing attachments
+                existing_attachments = Attachment.query.filter_by(
+                    form_submission_id=submission_id,
+                    is_deleted=False
+                ).all()
                 
+                for existing in existing_attachments:
+                    existing.is_deleted = True
+                    existing.deleted_at = datetime.utcnow()
+
+                # Create new attachments
                 for attachment_data in attachments_data:
                     attachment = Attachment(
                         form_submission_id=submission_id,
@@ -215,28 +300,44 @@ class FormSubmissionService:
                     )
                     db.session.add(attachment)
 
+            # Update submission timestamp
             submission.updated_at = datetime.utcnow()
+            
+            # Commit all changes
             db.session.commit()
+            
+            # Refresh submission to load relationships
+            db.session.refresh(submission)
+            
+            logger.info(f"Successfully updated submission {submission_id}")
             return submission, None
 
+        except IntegrityError as e:
+            db.session.rollback()
+            error_msg = "Database integrity error: possibly invalid relationships"
+            logger.error(f"{error_msg}: {str(e)}")
+            return None, error_msg
+            
         except Exception as e:
             db.session.rollback()
-            logger.error(f"Error updating submission {submission_id}: {str(e)}")
-            return None, str(e)
+            error_msg = f"Error updating submission: {str(e)}"
+            logger.error(error_msg)
+            return None, error_msg
 
     @staticmethod
-    def delete_submission(submission_id: int) -> tuple[bool, Union[dict, str]]:
+    def delete_submission(submission_id: int, current_user: User) -> tuple[bool, Union[dict, str]]:
         """
-        Delete a submission and associated data through cascade soft delete
+        Delete a submission with cascade soft delete using SoftDeleteMixin.
         
         Args:
-            submission_id (int): ID of the submission to delete
+            submission_id: ID of the submission to delete
+            current_user: Current user object for authorization
             
         Returns:
             tuple: (success: bool, result: Union[dict, str])
-                  result contains either deletion statistics or error message
         """
         try:
+            # Get submission checking is_deleted=False
             submission = FormSubmission.query.filter_by(
                 id=submission_id,
                 is_deleted=False
@@ -245,41 +346,59 @@ class FormSubmissionService:
             if not submission:
                 return False, "Submission not found"
 
+            # Authorization check
+            if not current_user.role.is_super_user:
+                if current_user.role.name in ['Site Manager', 'Supervisor']:
+                    if submission.form.creator.environment_id != current_user.environment_id:
+                        return False, "Unauthorized: Submission belongs to different environment"
+                elif submission.submitted_by != current_user.username:
+                    return False, "Unauthorized: Cannot delete submissions by other users"
+
+            # Check submission age for non-admin users
+            if not current_user.role.is_super_user:
+                submission_age = datetime.utcnow() - submission.submitted_at
+                if submission_age.days > 7:  # Configurable timeframe
+                    return False, "Cannot delete submissions older than 7 days"
+
             # Start transaction
             db.session.begin_nested()
 
             deletion_stats = {
                 'answers_submitted': 0,
-                'attachments': 0
+                'attachments': 0,
+                'submissions': 1
             }
 
-            # 1. Soft delete submitted answers
-            submitted_answers = AnswerSubmitted.query.filter_by(
+            # Soft delete submitted answers using SoftDeleteMixin
+            answers_submitted = AnswerSubmitted.query.filter_by(
                 form_submissions_id=submission_id,
                 is_deleted=False
             ).all()
 
-            for submitted in submitted_answers:
-                submitted.soft_delete()
+            for answer in answers_submitted:
+                answer.soft_delete()  # Using SoftDeleteMixin method
                 deletion_stats['answers_submitted'] += 1
 
-            # 2. Soft delete attachments
+            # Soft delete attachments using SoftDeleteMixin
             attachments = Attachment.query.filter_by(
                 form_submission_id=submission_id,
                 is_deleted=False
             ).all()
 
             for attachment in attachments:
-                attachment.soft_delete()
+                attachment.soft_delete()  # Using SoftDeleteMixin method
                 deletion_stats['attachments'] += 1
 
-            # Finally soft delete the submission
-            submission.soft_delete()
+            # Soft delete the submission using SoftDeleteMixin
+            submission.soft_delete()  # Using SoftDeleteMixin method
 
             # Commit all changes
             db.session.commit()
             
-            logger.info(f"Submission {submission_id} and associated data soft deleted. Stats: {deletion_stats}")
+            logger.info(
+                f"Submission {submission_id} and associated data deleted by "
+                f"{current_user.username}. Stats: {deletion_stats}"
+            )
             return True, deletion_stats
 
         except Exception as e:
@@ -292,13 +411,20 @@ class FormSubmissionService:
     def get_submission_statistics(form_id=None, environment_id=None, date_range=None):
         """Get submission statistics with optional filters"""
         try:
-            query = FormSubmission.query
+            query = FormSubmission.query.filter_by(is_deleted=False)
 
             if form_id:
                 query = query.filter_by(form_id=form_id)
+                
             if environment_id:
-                query = query.join(FormSubmission.form)\
-                    .filter_by(environment_id=environment_id)
+                query = (query
+                    .join(Form, Form.id == FormSubmission.form_id)
+                    .join(User, User.id == Form.user_id)
+                    .filter(
+                        User.environment_id == environment_id,
+                        Form.is_deleted == False,
+                        User.is_deleted == False
+                    ))
             if date_range:
                 query = query.filter(
                     FormSubmission.submitted_at.between(
@@ -313,33 +439,28 @@ class FormSubmissionService:
                 'total_submissions': len(submissions),
                 'submissions_by_user': {},
                 'submissions_by_date': {},
-                'average_answers_per_submission': 0,
                 'attachment_stats': {
                     'total_attachments': 0,
                     'submissions_with_attachments': 0
                 }
             }
 
-            if submissions:
-                # Calculate user statistics
-                for submission in submissions:
-                    # User stats
-                    stats['submissions_by_user'][submission.submitted_by] = \
-                        stats['submissions_by_user'].get(submission.submitted_by, 0) + 1
+            # Only count non-deleted related records
+            for submission in submissions:
+                # User stats
+                stats['submissions_by_user'][submission.submitted_by] = \
+                    stats['submissions_by_user'].get(submission.submitted_by, 0) + 1
 
-                    # Date stats
-                    date_key = submission.submitted_at.date().isoformat()
-                    stats['submissions_by_date'][date_key] = \
-                        stats['submissions_by_date'].get(date_key, 0) + 1
+                # Date stats
+                date_key = submission.submitted_at.date().isoformat()
+                stats['submissions_by_date'][date_key] = \
+                    stats['submissions_by_date'].get(date_key, 0) + 1
 
-                    # Attachment stats
-                    if submission.attachments:
-                        stats['attachment_stats']['total_attachments'] += len(submission.attachments)
-                        stats['attachment_stats']['submissions_with_attachments'] += 1
-
-                # Calculate averages
-                total_answers = sum(len(s.answers_submitted) for s in submissions)
-                stats['average_answers_per_submission'] = total_answers / len(submissions)
+                # Attachment stats
+                active_attachments = [a for a in submission.attachments if not a.is_deleted]
+                if active_attachments:
+                    stats['attachment_stats']['total_attachments'] += len(active_attachments)
+                    stats['attachment_stats']['submissions_with_attachments'] += 1
 
             return stats
 

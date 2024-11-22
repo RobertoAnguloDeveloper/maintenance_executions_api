@@ -154,15 +154,27 @@ class RoleService(BaseService):
 
     @staticmethod
     def add_permission_to_role(role_id: int, permission_id: int) -> tuple[bool, Optional[str]]:
-        """Add permission to role with proper validation"""
+        """Add permission to role with comprehensive validation"""
         try:
-            # Verify role exists and is not deleted
-            role = Role.query.filter_by(id=role_id, is_deleted=False).first()
+            # Verify role exists and is active
+            role = Role.query.filter_by(
+                id=role_id,
+                is_deleted=False
+            ).first()
+            
             if not role:
                 return False, "Role not found or inactive"
 
-            # Verify permission exists and is not deleted
-            permission = Permission.query.filter_by(id=permission_id, is_deleted=False).first()
+            # Prevent modification of core admin role
+            if role.is_super_user and role_id == 1:  # Admin role ID
+                return False, "Cannot modify the main administrator role"
+
+            # Verify permission exists and is active
+            permission = Permission.query.filter_by(
+                id=permission_id,
+                is_deleted=False
+            ).first()
+            
             if not permission:
                 return False, "Permission not found or inactive"
 
@@ -188,7 +200,7 @@ class RoleService(BaseService):
 
         except Exception as e:
             db.session.rollback()
-            error_msg = f"Error adding permission to role: {str(e)}"
+            error_msg = f"Error assigning permission to role: {str(e)}"
             logger.error(error_msg)
             return False, error_msg
 

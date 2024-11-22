@@ -161,10 +161,26 @@ class FormQuestionService:
         form_id: int,
         question_order: list[tuple]
     ) -> tuple[bool, Optional[str]]:
-        """Update question order numbers"""
+        """Update question order numbers with proper validation"""
         try:
+            # Verify form exists and is active
+            form = Form.query.filter_by(
+                id=form_id,
+                is_deleted=False
+            ).first()
+            
+            if not form:
+                return False, "Form not found or inactive"
+
             # Verify all questions exist and belong to the form
+            order_numbers = set()
             for form_question_id, new_order in question_order:
+                # Validate order number
+                if new_order in order_numbers:
+                    return False, f"Duplicate order number: {new_order}"
+                order_numbers.add(new_order)
+                
+                # Check question exists and is active
                 form_question = FormQuestion.query.filter_by(
                     id=form_question_id,
                     form_id=form_id,
@@ -174,7 +190,9 @@ class FormQuestionService:
                 if not form_question:
                     return False, f"Form question {form_question_id} not found or not part of this form"
 
-            # Update order numbers
+            # Update order numbers in a single transaction
+            db.session.begin_nested()
+            
             for form_question_id, new_order in question_order:
                 FormQuestion.query.filter_by(id=form_question_id).update({
                     'order_number': new_order,
@@ -281,63 +299,75 @@ class FormQuestionService:
     @staticmethod
     def bulk_create_form_questions(form_id, questions):
         """
-        Bulk create form questions
-        
-        Args:
-            form_id (int): ID of the form
-            questions (list): List of dicts with question_id and optional order_number
-            
-        Returns:
-            tuple: (List[FormQuestion], str) - List of created questions or error message
+        Bulk create form questions with proper validation
         """
         try:
-            # First verify the form exists
-            form = Form.query.get(form_id)
+            # Verify form exists and is active
+            form = Form.query.filter_by(
+                id=form_id,
+                is_deleted=False
+            ).first()
+            
             if not form:
-                return None, "Form not found"
+                return None, "Form not found or inactive"
 
-            # Get current max order
-            current_max_order = db.session.query(db.func.max(FormQuestion.order_number))\
-                .filter_by(form_id=form_id).scalar() or 0
+            # Get current max order with soft-delete consideration
+            current_max_order = db.session.query(
+                db.func.max(FormQuestion.order_number)
+            ).filter_by(
+                form_id=form_id,
+                is_deleted=False
+            ).scalar() or 0
 
             form_questions = []
+            seen_questions = set()  # To prevent duplicates
             
-            # Create and add each form question individually
             for i, question_data in enumerate(questions, 1):
                 question_id = question_data.get('question_id')
                 
-                # Verify question exists
-                if not Question.query.get(question_id):
-                    return None, f"Question with ID {question_id} not found"
+                # Prevent duplicate questions in the same form
+                if question_id in seen_questions:
+                    return None, f"Duplicate question ID {question_id} in request"
+                seen_questions.add(question_id)
+                
+                # Verify question exists and is active
+                question = Question.query.filter_by(
+                    id=question_id,
+                    is_deleted=False
+                ).first()
+                
+                if not question:
+                    return None, f"Question with ID {question_id} not found or inactive"
 
-                # Create form question
+                # Check if question already exists in form and is not deleted
+                existing = FormQuestion.query.filter_by(
+                    form_id=form_id,
+                    question_id=question_id,
+                    is_deleted=False
+                ).first()
+                
+                if existing:
+                    return None, f"Question {question_id} is already in this form"
+
+                # Create form question with proper order
                 form_question = FormQuestion(
                     form_id=form_id,
                     question_id=question_id,
                     order_number=question_data.get('order_number', current_max_order + i)
                 )
                 
-                # Add to session
                 db.session.add(form_question)
                 form_questions.append(form_question)
 
-            # Commit the transaction
-            db.session.commit()
-
-            # Query to get the persisted form questions with relationships loaded
-            persisted_questions = FormQuestion.query.options(
-                joinedload(FormQuestion.form),
-                joinedload(FormQuestion.question)
-            ).filter(
-                FormQuestion.id.in_([fq.id for fq in form_questions])
-            ).all()
-
-            return persisted_questions, None
-
-        except IntegrityError as e:
-            db.session.rollback()
-            logger.error(f"Integrity error in bulk_create_form_questions: {str(e)}")
-            return None, "Invalid form_id or question_id provided"
+            try:
+                db.session.commit()
+                return form_questions, None
+                
+            except IntegrityError as e:
+                db.session.rollback()
+                logger.error(f"Integrity error in bulk_create_form_questions: {str(e)}")
+                return None, "Database integrity error"
+                
         except Exception as e:
             db.session.rollback()
             logger.error(f"Error in bulk_create_form_questions: {str(e)}")

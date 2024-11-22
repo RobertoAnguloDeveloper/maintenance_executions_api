@@ -1,4 +1,4 @@
-from typing import Optional, Union
+from typing import Any, Dict, Optional, Tuple, Union
 from app import db
 from flask import current_app
 from app.models.attachment import Attachment
@@ -11,6 +11,7 @@ from datetime import datetime
 
 from app.models.form import Form
 from app.models.form_submission import FormSubmission
+from app.models.user import User
 
 logger = logging.getLogger(__name__)
 
@@ -18,31 +19,94 @@ class AttachmentService:
     ALLOWED_EXTENSIONS = {'pdf', 'png', 'jpg', 'jpeg', 'gif', 'doc', 'docx', 'xls', 'xlsx'}
     
     @staticmethod
-    def create_attachment(form_submission_id: int, file_type: str, file_path: str, 
-                         file_name: str, is_signature: bool = False) -> tuple:
-        """Create a new attachment"""
+    def create_attachment(
+        form_submission_id: int,
+        file_type: str,
+        file_path: str,
+        file_name: str,
+        file_size: int,
+        is_signature: bool = False,
+        current_user: User = None
+    ) -> Tuple[Optional[Attachment], Optional[str]]:
+        """
+        Create a new attachment with validation and soft-delete checks.
+        
+        Args:
+            form_submission_id: ID of the form submission
+            file_type: MIME type of the file
+            file_path: Path where file is stored
+            file_name: Original name of the file
+            file_size: Size of the file in bytes
+            is_signature: Whether this is a signature file
+            current_user: Current user object for additional validation
+            
+        Returns:
+            tuple: (Created Attachment object or None, Error message or None)
+        """
         try:
+            # Verify form submission exists and is not deleted
+            submission = FormSubmission.query.filter_by(
+                id=form_submission_id,
+                is_deleted=False
+            ).first()
+            
+            if not submission:
+                return None, "Form submission not found or has been deleted"
+
+            # Additional validation for submission ownership if user provided
+            if current_user and not current_user.role.is_super_user:
+                if submission.submitted_by != current_user.username:
+                    if current_user.role.name not in ['Site Manager', 'Supervisor']:
+                        return None, "Unauthorized: Cannot create attachment for this submission"
+                    elif submission.form.creator.environment_id != current_user.environment_id:
+                        return None, "Unauthorized: Submission belongs to different environment"
+
+            # Validate file extension
+            if not AttachmentService._is_allowed_file(file_name):
+                return None, f"File type not allowed. Allowed types: {', '.join(AttachmentService.ALLOWED_EXTENSIONS)}"
+
+            # Validate file size
+            if file_size > AttachmentService.MAX_FILE_SIZE:
+                return None, f"File size exceeds limit of {AttachmentService.MAX_FILE_SIZE / (1024*1024)}MB"
+
+            # Start transaction
+            db.session.begin_nested()
+
+            # If this is a signature, soft delete any existing signature
+            if is_signature:
+                existing_signatures = Attachment.query.filter_by(
+                    form_submission_id=form_submission_id,
+                    is_signature=True,
+                    is_deleted=False
+                ).all()
+                
+                for existing in existing_signatures:
+                    existing.is_deleted = True
+                    existing.deleted_at = datetime.utcnow()
+
+            # Create new attachment
             new_attachment = Attachment(
                 form_submission_id=form_submission_id,
                 file_type=file_type,
                 file_path=file_path,
                 is_signature=is_signature
             )
-            
             db.session.add(new_attachment)
             db.session.commit()
-            
+
             logger.info(f"Created attachment for submission {form_submission_id}")
             return new_attachment, None
 
-        except IntegrityError:
+        except IntegrityError as e:
             db.session.rollback()
-            logger.error("Invalid form submission ID")
-            return None, "Invalid form submission ID"
+            error_msg = "Database integrity error: possibly invalid form submission ID"
+            logger.error(f"{error_msg}: {str(e)}")
+            return None, error_msg
         except Exception as e:
             db.session.rollback()
-            logger.error(f"Error creating attachment: {str(e)}")
-            return None, str(e)
+            error_msg = f"Error creating attachment: {str(e)}"
+            logger.error(error_msg)
+            return None, error_msg
 
     @staticmethod
     def get_attachment(attachment_id: int) -> Optional[Attachment]:
@@ -123,24 +187,78 @@ class AttachmentService:
             return False, error_msg
 
     @staticmethod
-    def update_attachment(attachment_id: int, **kwargs) -> tuple:
-        """Update an attachment"""
+    def update_attachment(
+        attachment_id: int,
+        current_user: User,
+        **kwargs
+    ) -> Tuple[Optional[Attachment], Optional[str]]:
+        """
+        Update an attachment with proper validation and soft-delete checks.
+        
+        Args:
+            attachment_id: ID of the attachment to update
+            current_user: Current user object for authorization
+            **kwargs: Fields to update (file_type, is_signature)
+            
+        Returns:
+            tuple: (Updated Attachment object or None, Error message or None)
+        """
         try:
-            attachment = Attachment.query.get(attachment_id)
+            # Verify attachment exists and is not deleted
+            attachment = Attachment.query.filter_by(
+                id=attachment_id,
+                is_deleted=False
+            ).first()
+            
             if not attachment:
-                return None, "Attachment not found"
+                return None, "Attachment not found or has been deleted"
 
-            for key, value in kwargs.items():
-                if hasattr(attachment, key):
-                    setattr(attachment, key, value)
+            # Authorization check
+            if not current_user.role.is_super_user:
+                submission = attachment.form_submission
+                if current_user.role.name in ['Site Manager', 'Supervisor']:
+                    if submission.form.creator.environment_id != current_user.environment_id:
+                        return None, "Unauthorized: Attachment belongs to different environment"
+                elif submission.submitted_by != current_user.username:
+                    return None, "Unauthorized: Cannot update this attachment"
 
+            # Validate updateable fields
+            allowed_fields = {'file_type', 'is_signature'}
+            update_data = {k: v for k, v in kwargs.items() if k in allowed_fields}
+
+            if not update_data:
+                return None, "No valid fields to update"
+
+            # Start transaction
+            db.session.begin_nested()
+
+            # Handle signature updates
+            if update_data.get('is_signature'):
+                existing_signatures = Attachment.query.filter_by(
+                    form_submission_id=attachment.form_submission_id,
+                    is_signature=True,
+                    is_deleted=False
+                ).filter(Attachment.id != attachment_id).all()
+                
+                for existing in existing_signatures:
+                    existing.is_deleted = True
+                    existing.deleted_at = datetime.utcnow()
+
+            # Update attachment
+            for key, value in update_data.items():
+                setattr(attachment, key, value)
+
+            attachment.updated_at = datetime.utcnow()
             db.session.commit()
+
+            logger.info(f"Updated attachment {attachment_id}")
             return attachment, None
 
         except Exception as e:
             db.session.rollback()
-            logger.error(f"Error updating attachment: {str(e)}")
-            return None, str(e)
+            error_msg = f"Error updating attachment: {str(e)}"
+            logger.error(error_msg)
+            return None, error_msg
 
     @staticmethod
     def delete_attachment(attachment_id: int) -> tuple[bool, Union[dict, str]]:
@@ -199,25 +317,65 @@ class AttachmentService:
             return False, error_msg
 
     @staticmethod
-    def get_attachments_stats(form_submission_id: Optional[int] = None) -> Optional[dict]:
-        """Get attachment statistics"""
+    def get_attachments_stats(
+        form_submission_id: Optional[int] = None,
+        environment_id: Optional[int] = None
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+        """
+        Get attachment statistics with proper soft-delete handling.
+        
+        Args:
+            form_submission_id: Optional submission ID to filter by
+            environment_id: Optional environment ID to filter by
+            
+        Returns:
+            tuple: (Statistics dictionary or None, Error message or None)
+        """
         try:
             query = Attachment.query.filter_by(is_deleted=False)
-            
+
             if form_submission_id:
                 query = query.filter_by(form_submission_id=form_submission_id)
 
+            if environment_id:
+                query = query.join(
+                    FormSubmission,
+                    Form,
+                    User
+                ).filter(
+                    User.environment_id == environment_id,
+                    User.is_deleted == False,
+                    Form.is_deleted == False,
+                    FormSubmission.is_deleted == False
+                )
+
             attachments = query.all()
-            
-            return {
+
+            stats = {
                 'total_attachments': len(attachments),
-                'by_type': {
-                    file_type: len([a for a in attachments if a.file_type == file_type])
-                    for file_type in set(a.file_type for a in attachments)
-                },
-                'signatures_count': len([a for a in attachments if a.is_signature]),
+                'by_type': {},
+                'total_size': 0,
+                'signatures_count': 0
             }
 
+            for attachment in attachments:
+                # Count by type
+                stats['by_type'][attachment.file_type] = \
+                    stats['by_type'].get(attachment.file_type, 0) + 1
+
+                # Count signatures
+                if attachment.is_signature:
+                    stats['signatures_count'] += 1
+
+            return stats, None
+
         except Exception as e:
-            logger.error(f"Error getting attachment statistics: {str(e)}")
-            return None
+            error_msg = f"Error generating attachment statistics: {str(e)}"
+            logger.error(error_msg)
+            return None, error_msg
+        
+    @staticmethod
+    def _is_allowed_file(filename: str) -> bool:
+        """Check if the file extension is allowed."""
+        return '.' in filename and \
+            filename.rsplit('.', 1)[1].lower() in AttachmentService.ALLOWED_EXTENSIONS

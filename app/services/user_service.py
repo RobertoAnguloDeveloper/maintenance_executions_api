@@ -2,9 +2,11 @@ from typing import Optional, Union
 from app import db
 from app.models.answers_submitted import AnswerSubmitted
 from app.models.attachment import Attachment
+from app.models.environment import Environment
 from app.models.form import Form
 from app.models.form_question import FormQuestion
 from app.models.form_submission import FormSubmission
+from app.models.role import Role
 from app.models.user import User
 from sqlalchemy.orm import joinedload
 from sqlalchemy.exc import IntegrityError
@@ -122,6 +124,14 @@ class UserService(BaseService):
                 if hasattr(user, key):
                     if key == 'password':
                         user.set_password(value)
+                    if key == 'environment_id':
+                        if Environment.query.filter_by(id=value, is_deleted=False).first():
+                            setattr(user, key, value)
+                        else:
+                            return None, "Environment not found"
+                    elif key == 'role_id':
+                        if Role.query.filter_by(id=value, is_deleted=False).first():
+                            setattr(user, key, value)
                     else:
                         setattr(user, key, value)
             
@@ -148,14 +158,21 @@ class UserService(BaseService):
     @staticmethod
     def get_users_by_role_and_environment(role_id, environment_id):
         try:
-            return User.query.filter(
-                User.role_id == role_id,
-                User.environment_id == environment_id,
-                User.is_deleted == False  # Add soft delete filter
-            ).all()
+            return (User.query
+                .join(Role, Role.id == User.role_id)
+                .join(Environment, Environment.id == User.environment_id)
+                .filter(
+                    User.role_id == role_id,
+                    User.environment_id == environment_id,
+                    User.is_deleted == False,
+                    Role.is_deleted == False,
+                    Environment.is_deleted == False
+                )
+                .order_by(User.username)
+                .all())
         except Exception as e:
-            logger.error(f"Error getting users by role and environment: {str(e)}", exc_info=True)
-            raise
+            logger.error(f"Error getting users by role and environment: {str(e)}")
+            return []
 
     @staticmethod
     def get_users_by_environment(environment_id: int) -> list[User]:

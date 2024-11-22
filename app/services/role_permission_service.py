@@ -1,4 +1,4 @@
-from typing import Optional, Union
+from typing import List, Optional, Tuple, Union
 from app import db
 from app.models.role_permission import RolePermission
 from app.models.role import Role
@@ -23,9 +23,20 @@ class RolePermissionService(BaseService):
     @staticmethod
     def assign_permission_to_role(
         role_id: int,
-        permission_id: int
-    ) -> tuple[Optional[RolePermission], Optional[str]]:
-        """Assign permission to role with validation"""
+        permission_id: int,
+        current_user: User
+    ) -> Tuple[Optional[RolePermission], Optional[str]]:
+        """
+        Assign a permission to a role with comprehensive validation.
+        
+        Args:
+            role_id: ID of the role
+            permission_id: ID of the permission
+            current_user: Current user object for authorization
+            
+        Returns:
+            tuple: (Created RolePermission object or None, Error message or None)
+        """
         try:
             # Verify role exists and is not deleted
             role = Role.query.filter_by(
@@ -34,7 +45,11 @@ class RolePermissionService(BaseService):
             ).first()
             
             if not role:
-                return None, "Role not found or inactive"
+                return None, "Role not found or has been deleted"
+
+            # Prevent modification of admin role
+            if role.is_super_user and role_id == 1:  # Admin role ID
+                return None, "Cannot modify permissions of the main administrator role"
 
             # Verify permission exists and is not deleted
             permission = Permission.query.filter_by(
@@ -43,9 +58,12 @@ class RolePermissionService(BaseService):
             ).first()
             
             if not permission:
-                return None, "Permission not found or inactive"
+                return None, "Permission not found or has been deleted"
 
-            # Check if relationship already exists and is not deleted
+            # Start transaction
+            db.session.begin_nested()
+
+            # Check for existing non-deleted mapping
             existing = RolePermission.query.filter_by(
                 role_id=role_id,
                 permission_id=permission_id,
@@ -53,9 +71,9 @@ class RolePermissionService(BaseService):
             ).first()
             
             if existing:
-                return None, "Permission already assigned to role"
+                return None, "Permission is already assigned to this role"
 
-            # Create new relationship
+            # Create new role-permission mapping
             role_permission = RolePermission(
                 role_id=role_id,
                 permission_id=permission_id
@@ -63,11 +81,20 @@ class RolePermissionService(BaseService):
             db.session.add(role_permission)
             db.session.commit()
 
+            logger.info(
+                f"Assigned permission {permission_id} to role {role_id} "
+                f"by user {current_user.username}"
+            )
             return role_permission, None
 
+        except IntegrityError as e:
+            db.session.rollback()
+            error_msg = "Database integrity error: possibly invalid IDs"
+            logger.error(f"{error_msg}: {str(e)}")
+            return None, error_msg
         except Exception as e:
             db.session.rollback()
-            error_msg = f"Error assigning permission to role: {str(e)}"
+            error_msg = f"Error assigning permission: {str(e)}"
             logger.error(error_msg)
             return None, error_msg
         
@@ -90,58 +117,119 @@ class RolePermissionService(BaseService):
         return None, "RolePermission not found"
 
     @staticmethod
-    def remove_permission_from_role(role_permission_id: int) -> tuple[bool, Union[dict, str]]:
+    def remove_permission_from_role(
+        role_permission_id: int,
+        current_user: User
+    ) -> Tuple[bool, Optional[str]]:
         """
-        Remove permission from role through soft delete
+        Remove a permission from a role with cascade soft delete.
         
         Args:
-            role_permission_id (int): ID of the role-permission mapping to delete
+            role_permission_id: ID of the role-permission mapping
+            current_user: Current user object for authorization
             
         Returns:
-            tuple: (success: bool, result: Union[dict, str])
-                  result contains either deletion statistics or error message
+            tuple: (Success boolean, Error message or None)
         """
         try:
+            # Verify mapping exists and is not deleted
             role_permission = RolePermission.query.filter_by(
                 id=role_permission_id,
                 is_deleted=False
             ).first()
             
             if not role_permission:
-                return False, "Role-Permission mapping not found"
+                return False, "Role-Permission mapping not found or has been deleted"
 
-            # Check if it's a core admin role permission
-            if role_permission.role_id == 1:  # Assuming 1 is admin role ID
+            # Prevent modification of admin role
+            if role_permission.role_id == 1:
                 return False, "Cannot modify permissions of the main administrator role"
 
-            # Check if it's a core permission
+            # Prevent removal of core permissions
             if role_permission.permission.name.startswith('core_'):
                 return False, "Cannot remove core permissions from roles"
 
             # Start transaction
             db.session.begin_nested()
 
-            # Soft delete the role-permission mapping
-            role_permission.soft_delete()
-
-            # Commit changes
-            db.session.commit()
+            # Soft delete the mapping
+            role_permission.is_deleted = True
+            role_permission.deleted_at = datetime.utcnow()
             
-            logger.info(f"Role-Permission mapping {role_permission_id} soft deleted")
-            return True, {"role_permissions": 1}
+            db.session.commit()
+
+            logger.info(
+                f"Removed permission {role_permission.permission_id} from role "
+                f"{role_permission.role_id} by user {current_user.username}"
+            )
+            return True, None
 
         except Exception as e:
             db.session.rollback()
-            error_msg = f"Error removing permission from role: {str(e)}"
+            error_msg = f"Error removing permission: {str(e)}"
+            logger.error(error_msg)
+            return False, error_msg
+        
+    @staticmethod
+    def check_user_has_permission(
+        user: User,
+        permission_name: str
+    ) -> Tuple[bool, Optional[str]]:
+        """
+        Check if a user has a specific permission through their role.
+        
+        Args:
+            user: User object to check
+            permission_name: Name of the permission
+            
+        Returns:
+            tuple: (Has permission boolean, Error message or None)
+        """
+        try:
+            # Super users have all permissions
+            if user.role.is_super_user:
+                return True, None
+
+            # Verify permission exists and is not deleted
+            permission = Permission.query.filter_by(
+                name=permission_name,
+                is_deleted=False
+            ).first()
+            
+            if not permission:
+                return False, "Permission not found or has been deleted"
+
+            # Check if user's role has the permission
+            role_permission = RolePermission.query.filter_by(
+                role_id=user.role_id,
+                permission_id=permission.id,
+                is_deleted=False
+            ).first()
+
+            return bool(role_permission), None
+
+        except Exception as e:
+            error_msg = f"Error checking permission: {str(e)}"
             logger.error(error_msg)
             return False, error_msg
     
     @staticmethod
     def bulk_assign_permissions(
         role_id: int,
-        permission_ids: list[int]
-    ) -> tuple[bool, Optional[str]]:
-        """Bulk assign permissions to a role"""
+        permission_ids: List[int],
+        current_user: User
+    ) -> Tuple[Optional[List[RolePermission]], Optional[str]]:
+        """
+        Bulk assign permissions to a role with transaction safety.
+        
+        Args:
+            role_id: ID of the role
+            permission_ids: List of permission IDs
+            current_user: Current user object for authorization
+            
+        Returns:
+            tuple: (List of created RolePermission objects or None, Error message or None)
+        """
         try:
             # Verify role exists and is not deleted
             role = Role.query.filter_by(
@@ -150,13 +238,30 @@ class RolePermissionService(BaseService):
             ).first()
             
             if not role:
-                return False, "Role not found or inactive"
+                return None, "Role not found or has been deleted"
+
+            # Prevent modification of admin role
+            if role.is_super_user and role_id == 1:
+                return None, "Cannot modify permissions of the main administrator role"
 
             # Start transaction
             db.session.begin_nested()
 
+            created_mappings = []
+
+            # Validate all permissions first
             for permission_id in permission_ids:
-                # Skip if mapping already exists
+                permission = Permission.query.filter_by(
+                    id=permission_id,
+                    is_deleted=False
+                ).first()
+                
+                if not permission:
+                    db.session.rollback()
+                    return None, f"Permission {permission_id} not found or deleted"
+
+            # Create mappings for non-existing combinations
+            for permission_id in permission_ids:
                 existing = RolePermission.query.filter_by(
                     role_id=role_id,
                     permission_id=permission_id,
@@ -164,20 +269,26 @@ class RolePermissionService(BaseService):
                 ).first()
                 
                 if not existing:
-                    role_permission = RolePermission(
+                    mapping = RolePermission(
                         role_id=role_id,
                         permission_id=permission_id
                     )
-                    db.session.add(role_permission)
+                    db.session.add(mapping)
+                    created_mappings.append(mapping)
 
             db.session.commit()
-            return True, None
+            
+            logger.info(
+                f"Bulk assigned {len(created_mappings)} permissions to role {role_id} "
+                f"by user {current_user.username}"
+            )
+            return created_mappings, None
 
         except Exception as e:
             db.session.rollback()
-            error_msg = f"Error bulk assigning permissions: {str(e)}"
+            error_msg = f"Error in bulk permission assignment: {str(e)}"
             logger.error(error_msg)
-            return False, error_msg
+            return None, error_msg
     
     @staticmethod
     def check_role_has_permission(role_id, permission_id):
@@ -185,40 +296,81 @@ class RolePermissionService(BaseService):
         return role_permission is not None
 
     @staticmethod
-    def get_permissions_by_role(role_id: int) -> list[Permission]:
-        """Get all non-deleted permissions for a role"""
-        return (Permission.query
-            .join(RolePermission)
-            .filter(
+    def get_permissions_by_role(
+        role_id: int,
+        current_user: User
+    ) -> Tuple[List[Permission], Optional[str]]:
+        """
+        Get all permissions for a role with proper authorization.
+        
+        Args:
+            role_id: ID of the role
+            current_user: Current user object for authorization
+            
+        Returns:
+            tuple: (List of Permission objects, Error message or None)
+        """
+        try:
+            # Verify role exists and is not deleted
+            role = Role.query.filter_by(
+                id=role_id,
+                is_deleted=False
+            ).first()
+            
+            if not role:
+                return [], "Role not found or has been deleted"
+
+            # Get all active permissions for the role
+            permissions = Permission.query.join(
+                RolePermission,
+                RolePermission.permission_id == Permission.id
+            ).filter(
                 RolePermission.role_id == role_id,
                 Permission.is_deleted == False,
                 RolePermission.is_deleted == False
-            )
-            .all())
+            ).order_by(Permission.name).all()
+
+            return permissions, None
+
+        except Exception as e:
+            error_msg = f"Error retrieving permissions: {str(e)}"
+            logger.error(error_msg)
+            return [], error_msg
     
     @staticmethod
     def get_permissions_by_user(user_id: int) -> list[Permission]:
-        """Get all non-deleted permissions for a user through their role"""
-        user = User.query.filter_by(
-            id=user_id,
-            is_deleted=False
-        ).first()
-        
-        if not user or not user.role_id:
+        """Get all permissions for a user through their role with proper validation"""
+        try:
+            user = (User.query
+                .join(Role, Role.id == User.role_id)
+                .filter(
+                    User.id == user_id,
+                    User.is_deleted == False,
+                    Role.is_deleted == False
+                ).first())
+            
+            if not user:
+                return []
+
+            # Super users have all non-deleted permissions
+            if user.role.is_super_user:
+                return Permission.query.filter_by(is_deleted=False).all()
+
+            # Get permissions through role-permission relationship
+            return (Permission.query
+                .join(RolePermission, RolePermission.permission_id == Permission.id)
+                .join(Role, Role.id == RolePermission.role_id)
+                .filter(
+                    Role.id == user.role_id,
+                    Permission.is_deleted == False,
+                    RolePermission.is_deleted == False,
+                    Role.is_deleted == False
+                )
+                .order_by(Permission.name)
+                .all())
+        except Exception as e:
+            logger.error(f"Error getting permissions for user {user_id}: {str(e)}")
             return []
-
-        # Super users have all permissions
-        if user.role.is_super_user:
-            return Permission.query.filter_by(is_deleted=False).all()
-
-        return (Permission.query
-            .join(RolePermission)
-            .filter(
-                RolePermission.role_id == user.role_id,
-                Permission.is_deleted == False,
-                RolePermission.is_deleted == False
-            )
-            .all())
 
     @staticmethod
     def get_roles_by_permission(permission_id: int) -> list[Role]:

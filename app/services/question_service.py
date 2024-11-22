@@ -1,22 +1,57 @@
 from tkinter.tix import Form
-from typing import Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 from app import db
 from app.models.answers_submitted import AnswerSubmitted
 from app.models.form_answer import FormAnswer
 from app.models.form_question import FormQuestion
 from app.models.question import Question
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import or_
 from datetime import datetime
 import logging
 
 logger = logging.getLogger(__name__)
 
+from app.models.question_type import QuestionType
 from app.models.user import User
 
 class QuestionService:
     @staticmethod
-    def create_question(text, question_type_id, remarks):
+    def create_question(
+        text: str,
+        question_type_id: int,
+        remarks: Optional[str],
+        current_user: User
+    ) -> Tuple[Optional[Question], Optional[str]]:
+        """
+        Create a new question with validation.
+        
+        Args:
+            text: Question text
+            question_type_id: ID of the question type
+            remarks: Optional remarks
+            current_user: Current user object for authorization
+            
+        Returns:
+            tuple: (Created Question object or None, Error message or None)
+        """
         try:
+            # Validate question text
+            if not text or len(text.strip()) < 3:
+                return None, "Question text must be at least 3 characters long"
+
+            # Verify question type exists and is not deleted
+            question_type = QuestionType.query.filter_by(
+                id=question_type_id,
+                is_deleted=False
+            ).first()
+            
+            if not question_type:
+                return None, "Question type not found or has been deleted"
+
+            # Start transaction
+            db.session.begin_nested()
+
             new_question = Question(
                 text=text,
                 question_type_id=question_type_id,
@@ -24,35 +59,61 @@ class QuestionService:
             )
             db.session.add(new_question)
             db.session.commit()
+
+            logger.info(
+                f"Question created by user {current_user.username}: {text[:50]}..."
+            )
             return new_question, None
-        except IntegrityError:
+
+        except IntegrityError as e:
             db.session.rollback()
-            return None, "Error creating question. Please check the question_type_id."
+            error_msg = "Database integrity error"
+            logger.error(f"{error_msg}: {str(e)}")
+            return None, error_msg
         except Exception as e:
             db.session.rollback()
-            return None, str(e)
+            error_msg = f"Error creating question: {str(e)}"
+            logger.error(error_msg)
+            return None, error_msg
         
     @staticmethod
-    def bulk_create_questions(questions_data):
+    def bulk_create_questions(
+        questions_data: List[Dict[str, Any]],
+        current_user: User
+    ) -> Tuple[Optional[List[Question]], Optional[str]]:
         """
-        Bulk create questions
+        Bulk create questions with validation.
         
         Args:
-            questions_data (list): List of dictionaries containing question data
+            questions_data: List of question data dictionaries
+            current_user: Current user object for authorization
             
         Returns:
-            tuple: (List of created Question objects, error message)
+            tuple: (List of created Question objects or None, Error message or None)
         """
         try:
-            new_questions = []
-            
+            if not questions_data:
+                return None, "No questions provided"
+
+            # Start transaction
+            db.session.begin_nested()
+
+            created_questions = []
+
             # Validate all questions first
             for data in questions_data:
-                if not data.get('text') or not data.get('question_type_id'):
-                    return None, "Text and question_type_id are required for all questions"
-                    
-                if len(str(data['text']).strip()) < 3:
+                if not data.get('text') or len(str(data['text']).strip()) < 3:
+                    db.session.rollback()
                     return None, "Question text must be at least 3 characters long"
+
+                question_type = QuestionType.query.filter_by(
+                    id=data.get('question_type_id'),
+                    is_deleted=False
+                ).first()
+                
+                if not question_type:
+                    db.session.rollback()
+                    return None, f"Question type {data.get('question_type_id')} not found or deleted"
 
             # Create all questions
             for data in questions_data:
@@ -62,17 +123,20 @@ class QuestionService:
                     remarks=data.get('remarks')
                 )
                 db.session.add(question)
-                new_questions.append(question)
-            
+                created_questions.append(question)
+
             db.session.commit()
-            return new_questions, None
             
-        except IntegrityError:
-            db.session.rollback()
-            return None, "Error creating questions. Please check the question_type_ids."
+            logger.info(
+                f"Bulk created {len(created_questions)} questions by user {current_user.username}"
+            )
+            return created_questions, None
+
         except Exception as e:
             db.session.rollback()
-            return None, str(e)
+            error_msg = f"Error in bulk question creation: {str(e)}"
+            logger.error(error_msg)
+            return None, error_msg
 
     @staticmethod
     def get_question(question_id: int) -> Optional[Question]:
@@ -98,33 +162,57 @@ class QuestionService:
     @staticmethod
     def search_questions(
         search_query: Optional[str] = None,
-        remarks: Optional[str] = None,
+        question_type_id: Optional[int] = None,
         environment_id: Optional[int] = None,
-        include_deleted: bool = False
-    ) -> list[Question]:
-        """Search questions with filters"""
-        query = Question.query
+        current_user: User = None
+    ) -> Tuple[List[Question], Optional[str]]:
+        """
+        Search questions with filters and proper soft-delete handling.
+        
+        Args:
+            search_query: Optional text to search in question text
+            question_type_id: Optional question type filter
+            environment_id: Optional environment filter
+            current_user: Current user object for authorization
+            
+        Returns:
+            tuple: (List of Question objects, Error message or None)
+        """
+        try:
+            query = Question.query.filter_by(is_deleted=False)
 
-        if not include_deleted:
-            query = query.filter(Question.is_deleted == False)
+            # Apply search filters
+            if search_query:
+                query = query.filter(
+                    or_(
+                        Question.text.ilike(f"%{search_query}%"),
+                        Question.remarks.ilike(f"%{search_query}%")
+                    )
+                )
 
-        if search_query:
-            query = query.filter(Question.text.ilike(f"%{search_query}%"))
+            if question_type_id:
+                query = query.filter(Question.question_type_id == question_type_id)
 
-        if remarks:
-            query = query.filter(Question.remarks.ilike(f"%{remarks}%"))
+            # Apply environment filter for non-admin users
+            if environment_id and current_user and not current_user.role.is_super_user:
+                query = query.join(
+                    FormQuestion,
+                    Form,
+                    User
+                ).filter(
+                    User.environment_id == environment_id,
+                    User.is_deleted == False,
+                    Form.is_deleted == False,
+                    FormQuestion.is_deleted == False
+                )
 
-        if environment_id:
-            query = query.join(
-                FormQuestion,
-                Form,
-                User
-            ).filter(
-                User.environment_id == environment_id,
-                User.is_deleted == False
-            )
+            questions = query.order_by(Question.text).distinct().all()
+            return questions, None
 
-        return query.order_by(Question.text).distinct().all()
+        except Exception as e:
+            error_msg = f"Error searching questions: {str(e)}"
+            logger.error(error_msg)
+            return [], error_msg
 
     @staticmethod
     def search_questions_by_type(
@@ -148,14 +236,21 @@ class QuestionService:
         if environment_id:
             query = query.join(
                 FormQuestion,
+                FormQuestion.question_id == Question.id
+            ).join(
                 Form,
-                User
+                Form.id == FormQuestion.form_id
+            ).join(
+                User,
+                User.id == Form.user_id
             ).filter(
                 User.environment_id == environment_id,
-                User.is_deleted == False
+                User.is_deleted == False,
+                Form.is_deleted == False,
+                FormQuestion.is_deleted == False
             )
 
-        return query.order_by(Question.text).distinct().all()
+        return query.distinct().order_by(Question.text).all()
 
     @staticmethod
     def get_all_questions(include_deleted=False):
@@ -166,104 +261,151 @@ class QuestionService:
         return query.order_by(Question.id).all()
 
     @staticmethod
-    def update_question(question_id, **kwargs):
-        question = Question.query.get(question_id)
-        if question:
-            try:
-                for key, value in kwargs.items():
-                    if hasattr(question, key):
-                        setattr(question, key, value)
-                db.session.commit()
-                return question, None
-            except IntegrityError:
-                db.session.rollback()
-                return None, "Error updating question. Please check the question_type_id."
-            except Exception as e:
-                db.session.rollback()
-                return None, str(e)
-        return None, "Question not found"
-
-    @staticmethod
-    def delete_question(question_id: int) -> tuple[bool, Union[dict, str]]:
+    def update_question(
+        question_id: int,
+        current_user: User,
+        **kwargs
+    ) -> Tuple[Optional[Question], Optional[str]]:
         """
-        Delete a question and associated data through cascade soft delete
+        Update a question with validation and soft-delete checking.
         
         Args:
-            question_id (int): ID of the question to delete
+            question_id: ID of the question to update
+            current_user: Current user object for authorization
+            **kwargs: Fields to update
             
         Returns:
-            tuple: (success: bool, result: Union[dict, str])
-                  result contains either deletion statistics or error message
+            tuple: (Updated Question object or None, Error message or None)
         """
         try:
+            # Verify question exists and is not deleted
             question = Question.query.filter_by(
                 id=question_id,
                 is_deleted=False
             ).first()
             
             if not question:
-                return False, "Question not found"
+                return None, "Question not found or has been deleted"
 
-            # Check if question is in use in active forms
-            active_forms = (FormQuestion.query
-                .join(Form)
-                .filter(
-                    FormQuestion.question_id == question_id,
-                    FormQuestion.is_deleted == False,
-                    Form.is_deleted == False
-                ).count())
+            # Validate text if provided
+            if 'text' in kwargs:
+                if not kwargs['text'] or len(kwargs['text'].strip()) < 3:
+                    return None, "Question text must be at least 3 characters long"
+
+            # Validate question type if provided
+            if 'question_type_id' in kwargs:
+                question_type = QuestionType.query.filter_by(
+                    id=kwargs['question_type_id'],
+                    is_deleted=False
+                ).first()
                 
-            if active_forms > 0:
-                return False, f"Question is in use in {active_forms} active forms"
+                if not question_type:
+                    return None, "Question type not found or has been deleted"
+
+            # Check if question is in use
+            if FormQuestion.query.filter_by(
+                question_id=question_id,
+                is_deleted=False
+            ).first():
+                # Only allow updating remarks if question is in use
+                if set(kwargs.keys()) - {'remarks'}:
+                    return None, "Cannot modify question that is in use (except remarks)"
 
             # Start transaction
             db.session.begin_nested()
 
-            deletion_stats = {
-                'form_questions': 0,
-                'form_answers': 0,
-                'answers_submitted': 0
-            }
+            # Update fields
+            for key, value in kwargs.items():
+                if hasattr(question, key):
+                    setattr(question, key, value)
 
-            # 1. Get all form questions (including deleted forms)
-            form_questions = FormQuestion.query.filter_by(
+            question.updated_at = datetime.utcnow()
+            db.session.commit()
+
+            logger.info(f"Question {question_id} updated by user {current_user.username}")
+            return question, None
+
+        except Exception as e:
+            db.session.rollback()
+            error_msg = f"Error updating question: {str(e)}"
+            logger.error(error_msg)
+            return None, error_msg
+
+    @staticmethod
+    def delete_question(
+        question_id: int,
+        current_user: User
+    ) -> Tuple[bool, Optional[str]]:
+        """
+        Delete a question with cascade soft delete.
+        
+        Args:
+            question_id: ID of the question to delete
+            current_user: Current user object for authorization
+            
+        Returns:
+            tuple: (Success boolean, Error message or None)
+        """
+        try:
+            # Verify question exists and is not deleted
+            question = Question.query.filter_by(
+                id=question_id,
+                is_deleted=False
+            ).first()
+            
+            if not question:
+                return False, "Question not found or has been deleted"
+
+            # Check for active form questions
+            active_forms = FormQuestion.query.filter_by(
                 question_id=question_id,
                 is_deleted=False
+            ).count()
+            
+            if active_forms > 0:
+                return False, f"Cannot delete question used in {active_forms} active forms"
+
+            # Start transaction
+            db.session.begin_nested()
+
+            # Soft delete related data
+            form_questions = FormQuestion.query.filter_by(
+                question_id=question_id
             ).all()
 
             for fq in form_questions:
-                # Soft delete form question
-                fq.soft_delete()
-                deletion_stats['form_questions'] += 1
+                if not fq.is_deleted:
+                    fq.is_deleted = True
+                    fq.deleted_at = datetime.utcnow()
 
-                # 2. Soft delete form answers
+                # Soft delete related form answers
                 form_answers = FormAnswer.query.filter_by(
                     form_question_id=fq.id,
                     is_deleted=False
                 ).all()
 
                 for fa in form_answers:
-                    fa.soft_delete()
-                    deletion_stats['form_answers'] += 1
+                    fa.is_deleted = True
+                    fa.deleted_at = datetime.utcnow()
 
-                    # 3. Soft delete submitted answers
-                    answers_submitted = AnswerSubmitted.query.filter_by(
+                    # Soft delete submitted answers
+                    submitted_answers = AnswerSubmitted.query.filter_by(
                         form_answers_id=fa.id,
                         is_deleted=False
                     ).all()
 
-                    for ans in answers_submitted:
-                        ans.soft_delete()
-                        deletion_stats['answers_submitted'] += 1
+                    for sa in submitted_answers:
+                        sa.is_deleted = True
+                        sa.deleted_at = datetime.utcnow()
 
             # Finally soft delete the question
-            question.soft_delete()
+            question.is_deleted = True
+            question.deleted_at = datetime.utcnow()
 
-            # Commit all changes
             db.session.commit()
-            
-            logger.info(f"Question {question_id} and associated data soft deleted. Stats: {deletion_stats}")
-            return True, deletion_stats
+
+            logger.info(f"Question {question_id} deleted by user {current_user.username}")
+            return True, None
 
         except Exception as e:
             db.session.rollback()

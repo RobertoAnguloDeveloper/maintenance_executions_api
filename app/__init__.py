@@ -76,6 +76,7 @@ def create_app(config_class=None):
     CORS(app, resources={
         r"/*": {
             "origins": ["http://localhost:5000",
+                        "http://localhost:3000",
                         "http://127.0.0.1:5000"],
             "methods": ["OPTIONS", "GET", "POST", "PUT", "DELETE"],
             "allow_headers": [

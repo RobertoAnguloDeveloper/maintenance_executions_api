@@ -77,8 +77,14 @@ def create_app(config_class=None):
         r"/*": {
             "origins": ["*"],
             "methods": ["OPTIONS", "GET", "POST", "PUT", "DELETE"],
-            "allow_headers": ["Access-Control-Allow-Origin","Content-Type", "Authorization"],
-            "supports_credentials": True
+            "allow_headers": [
+            "Content-Type", 
+            "Authorization",
+            "Access-Control-Allow-Origin",
+            "Access-Control-Allow-Credentials"
+        ],
+        "supports_credentials": True,
+        "expose_headers": ["Content-Type", "Authorization"]
         }
     })
     

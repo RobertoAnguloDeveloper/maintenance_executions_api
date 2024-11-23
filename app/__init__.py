@@ -78,7 +78,7 @@ def create_app(config_class=None):
             "origins": ["http://localhost:3000",
                         "http://localhost",
                         "http://10.0.2.2:5000",
-                        "http://10.0.2.2",
+                        "http://localhost:57960",
                         "http://localhost:5000",
                         "http://127.0.0.1:5000",
                         "http://localhost:8080",  # Common Flutter web dev server port

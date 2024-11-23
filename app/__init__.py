@@ -75,14 +75,8 @@ def create_app(config_class=None):
     app = Flask(__name__)
     CORS(app, resources={
         r"/*": {
-            "origins": ["http://localhost:3000",
-                        "http://localhost",
-                        "http://10.0.2.2:5000",
-                        "http://localhost:57960",
-                        "http://localhost:5000",
-                        "http://127.0.0.1:5000",
-                        "http://localhost:8080",  # Common Flutter web dev server port
-                        "http://127.0.0.1:8080"],
+            "origins": ["http://localhost:*",
+                        "http://127.0.0.1:*"],
             "methods": ["OPTIONS", "GET", "POST", "PUT", "DELETE"],
             "allow_headers": [
             "Content-Type", 

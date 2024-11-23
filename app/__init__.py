@@ -75,8 +75,8 @@ def create_app(config_class=None):
     app = Flask(__name__)
     CORS(app, resources={
         r"/*": {
-            "origins": ["http://localhost:*",
-                        "http://127.0.0.1:*"],
+            "origins": ["http://localhost:5000",
+                        "http://127.0.0.1:5000"],
             "methods": ["OPTIONS", "GET", "POST", "PUT", "DELETE"],
             "allow_headers": [
             "Content-Type", 

@@ -40,11 +40,7 @@ def get_all_forms():
             forms = FormController.get_forms_by_environment(user.environment_id)
         else:
             # Admins see all forms
-            include_deleted = request.args.get('include_deleted', '').lower() == 'true'
-            forms = FormController.get_all_forms(
-                is_public=is_public,
-                include_deleted=include_deleted if user.role.is_super_user else False
-            )
+            forms = FormController.get_all_forms(is_public=is_public)
         
         return jsonify([form.to_dict() for form in forms]), 200
         
@@ -109,26 +105,6 @@ def get_forms_by_environment(environment_id):
         logger.error(f"Error getting forms by environment: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
     
-@staticmethod
-def get_forms_by_user_or_public(user_id, is_public=None):
-    """Get forms created by user or public forms"""
-    query = Form.query.filter(
-        db.or_(
-            Form.user_id == user_id,
-            Form.is_public == True
-        )
-    ).options(
-        joinedload(Form.creator),
-        joinedload(Form.form_questions)
-            .joinedload(FormQuestion.question)
-            .joinedload(Question.question_type)
-    )
-    
-    if is_public is not None:
-        query = query.filter_by(is_public=is_public)
-        
-    return query.order_by(Form.created_at.desc()).all()
-    
 @form_bp.route('/public', methods=['GET'])
 @jwt_required()
 def get_public_forms():
@@ -139,6 +115,43 @@ def get_public_forms():
 
     except Exception as e:
         logger.error(f"Error getting public forms: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
+    
+@form_bp.route('/creator/<string:username>', methods=['GET'])
+@jwt_required()
+@PermissionManager.require_permission(action="view", entity_type=EntityType.FORMS)
+def get_forms_by_creator(username: str):
+    """
+    Get all forms created by a specific username with proper authorization
+    """
+    try:
+        current_user = get_jwt_identity()
+        user = AuthService.get_current_user(current_user)
+
+        # Get the forms through controller
+        forms = FormController.get_forms_by_creator(username)
+        
+        if forms is None:
+            return jsonify({
+                "error": "Creator not found or has been deleted"
+            }), 404
+
+        # For non-admin users, filter based on role
+        if not user.role.is_super_user:
+            if user.role.name == RoleType.TECHNICIAN:
+                # Technicians can only see public forms
+                forms = [form for form in forms if form['is_public']]
+            elif user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
+                # Site Managers and Supervisors can only see forms in their environment
+                forms = [
+                    form for form in forms 
+                    if form['created_by']['environment']['id'] == user.environment_id
+                ]
+
+        return jsonify(forms), 200
+
+    except Exception as e:
+        logger.error(f"Error getting forms by creator {username}: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
 
 @form_bp.route('', methods=['POST'])
@@ -258,53 +271,6 @@ def add_questions_to_form(form_id):
 
     except Exception as e:
         logger.error(f"Error adding questions to form {form_id}: {str(e)}")
-        return jsonify({"error": "Internal server error"}), 500
-
-@form_bp.route('/<int:form_id>/submit', methods=['POST'])
-@jwt_required()
-@PermissionManager.require_permission(action="create", entity_type=EntityType.SUBMISSIONS)
-def submit_form(form_id):
-    """Submit a form with answers"""
-    try:
-        current_user = get_jwt_identity()
-        user = AuthService.get_current_user(current_user)
-        
-        # Get the form
-        form = FormController.get_form(form_id)
-        if not form:
-            return jsonify({"error": "Form not found"}), 404
-            
-        # For technicians, check if form is public
-        if user.role.name == RoleType.TECHNICIAN and not form.is_public:
-            return jsonify({"error": "Unauthorized access to non-public form"}), 403
-            
-        # For other roles, check environment access
-        if not user.role.is_super_user and user.role.name != RoleType.TECHNICIAN:
-            if form.creator.environment_id != user.environment_id:
-                return jsonify({"error": "Unauthorized access"}), 403
-
-        data = request.get_json()
-        if 'answers' not in data:
-            return jsonify({"error": "Answers are required"}), 400
-
-        submission, error = FormController.submit_form(
-            form_id=form_id,
-            username=current_user,
-            answers=data['answers'],
-            attachments=data.get('attachments')
-        )
-
-        if error:
-            return jsonify({"error": error}), 400
-
-        logger.info(f"Form {form_id} submitted by user {user.username}")
-        return jsonify({
-            "message": "Form submitted successfully",
-            "submission": submission.to_dict()
-        }), 201
-
-    except Exception as e:
-        logger.error(f"Error submitting form {form_id}: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
 
 @form_bp.route('/<int:form_id>/submissions', methods=['GET'])

@@ -140,16 +140,37 @@ def delete_role(role_id):
         if role.is_super_user and role_id == 1:
             return jsonify({"error": "Cannot delete the main administrator role"}), 403
 
-        # Check for active users with this role
+        # Get active users with this role
         active_users = User.query.filter_by(
             role_id=role_id,
             is_deleted=False
-        ).count()
+        ).all()
         
-        if active_users > 0:
+        if active_users:
+            # Create a detailed response about the active users
+            active_users_info = [{
+                'id': user.id,
+                'username': user.username,
+                'full_name': f"{user.first_name} {user.last_name}",
+                'email': user.email,
+                'environment': {
+                    'id': user.environment_id,
+                    'name': user.environment.name if user.environment and not user.environment.is_deleted else None
+                }
+            } for user in active_users]
+
             return jsonify({
                 "error": "Cannot delete role with active users",
-                "active_users": active_users
+                "role": {
+                    "id": role.id,
+                    "name": role.name,
+                    "description": role.description
+                },
+                "active_users": {
+                    "count": len(active_users),
+                    "users": active_users_info
+                },
+                "suggestion": "Please reassign or deactivate these users before deleting this role"
             }), 400
 
         success, error = RoleController.delete_role(role_id)

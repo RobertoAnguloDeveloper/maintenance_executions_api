@@ -193,6 +193,63 @@ class FormController:
     def get_all_forms(is_public=None):
         """Get all forms with optional public filter"""
         return FormService.get_all_forms(is_public=is_public)
+    
+    @staticmethod
+    def get_forms_by_creator(username: str) -> dict:
+        """
+        Get all forms created by a specific username with formatted response
+        
+        Args:
+            username (str): Username of the creator
+            
+        Returns:
+            dict: Dictionary containing list of serialized forms or None if user not found
+        """
+        try:
+            forms = FormService.get_forms_by_creator(username)
+            if forms is None:
+                return None
+
+            forms_data = []
+            for form in forms:
+                # Get submissions count
+                submissions_count = FormService.get_form_submissions_count(form.id)
+
+                # Format creator info
+                creator_info = None
+                if form.creator:
+                    creator_info = {
+                        'id': form.creator.id,
+                        'username': form.creator.username,
+                        'first_name': form.creator.first_name,
+                        'last_name': form.creator.last_name,
+                        'email': form.creator.email,
+                        'fullname': f"{form.creator.first_name} {form.creator.last_name}",
+                        'environment': {
+                            'id': form.creator.environment_id,
+                            'name': form.creator.environment.name if form.creator.environment else None
+                        }
+                    }
+
+                # Create form dictionary to match general forms endpoint format
+                form_dict = {
+                    'id': form.id,
+                    'title': form.title,
+                    'description': form.description,
+                    'is_public': form.is_public,
+                    'created_at': form.created_at.isoformat() if form.created_at else None,
+                    'updated_at': form.updated_at.isoformat() if form.updated_at else None,
+                    'created_by': creator_info,
+                    'questions': [q.to_dict() for q in form.form_questions if not q.is_deleted],
+                    'submissions_count': submissions_count
+                }
+                forms_data.append(form_dict)
+
+            return forms_data
+
+        except Exception as e:
+            logger.error(f"Error formatting forms data: {str(e)}")
+            raise
 
     @staticmethod
     def update_form(form_id: int, **kwargs) -> dict:

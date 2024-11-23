@@ -40,8 +40,8 @@ class FormService(BaseService):
             joinedload(Form.form_questions)
                 .joinedload(FormQuestion.question)
                 .joinedload(Question.question_type),
-        )
-        
+        ).filter_by(is_deleted=False)
+
         if is_public is not None:
             query = query.filter_by(is_public=is_public)
             
@@ -68,7 +68,7 @@ class FormService(BaseService):
         return Form.query.options(
             joinedload(Form.creator),
             joinedload(Form.form_questions).joinedload(FormQuestion.question)
-        ).get(form_id)
+        ).filter_by(id=form_id, is_default=False).first()
 
     @staticmethod
     def get_forms_by_environment(environment_id: int) -> list[Form]:
@@ -83,7 +83,7 @@ class FormService(BaseService):
             .options(
                 joinedload(Form.creator).joinedload(User.environment),
                 joinedload(Form.form_questions)
-            )
+            ).filter_by(is_deleted=False)
             .order_by(Form.created_at.desc())
             .all())
 
@@ -391,7 +391,43 @@ class FormService(BaseService):
                 .order_by(FormSubmission.submitted_at.desc())
                 .all())
         
-    def get_form_statistics(self, form_id):
+    @staticmethod
+    def get_forms_by_creator(username: str):
+        """
+        Get all forms created by a specific username.
+        
+        Args:
+            username (str): Username of the creator
+            
+        Returns:
+            list: List of Form objects or None if user not found
+        """
+        try:
+            # First verify user exists and is not deleted
+            user = User.query.filter_by(
+                username=username,
+                is_deleted=False
+            ).first()
+            
+            if not user:
+                return None
+
+            # Get active forms for the user with all necessary relationships
+            return (Form.query
+                    .filter(Form.user_id == user.id)
+                    .filter(Form.is_deleted == False)
+                    .options(
+                        joinedload(Form.creator).joinedload(User.environment),
+                        joinedload(Form.form_questions)
+                    )
+                    .order_by(Form.created_at.desc())
+                    .all())
+
+        except Exception as e:
+            logger.error(f"Error getting forms by creator: {str(e)}")
+            raise
+        
+    def get_form_statistics(form_id):
         """
         Get statistics for a form
         

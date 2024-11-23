@@ -51,7 +51,8 @@ class Form(TimestampMixin, SoftDeleteMixin, db.Model):
     def _get_submissions_count(self) -> int:
         """Get count of submissions for this form."""
         from app.models.form_submission import FormSubmission
-        return FormSubmission.query.filter_by(form_id=str(self.id)).count()
+        return FormSubmission.query.filter_by(form_id=str(self.id), is_deleted=False).count()
+
 
     # app/models/form.py
 

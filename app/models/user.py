@@ -1,4 +1,5 @@
 from app import db
+from app.models.role_permission import RolePermission
 from app.models.soft_delete_mixin import SoftDeleteMixin
 from app.models.timestamp_mixin import TimestampMixin
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -38,7 +39,20 @@ class User(TimestampMixin, SoftDeleteMixin, db.Model):
         self.deleted_at = None
 
     def to_dict(self, include_details=False, include_deleted=False):
-        """Convert User object to dictionary representation"""
+        """
+        Convert User object to dictionary representation with soft-delete awareness.
+        
+        Args:
+            include_details (bool): Whether to include additional details
+            include_deleted (bool): Whether to include soft-delete information
+            
+        Returns:
+            dict: Dictionary representation of the user
+        """
+        # Get non-deleted role and environment
+        active_role = self.role if self.role and not self.role.is_deleted else None
+        active_environment = self.environment if self.environment and not self.environment.is_deleted else None
+
         base_dict = {
             'id': self.id,
             'username': self.username,
@@ -47,20 +61,20 @@ class User(TimestampMixin, SoftDeleteMixin, db.Model):
             'email': self.email,
             'contact_number': self.contact_number,
             'role': {
-                        "role_id": self.role_id,
-                        "role_name": self.role.name if self.role else None,
-                        "role_description": self.role.description if self.role else None
-                     },
-            'environment':{
-                            "environment_id": self.environment_id,
-                            "environment_name": self.environment.name if self.environment else None,
-                            "environment_description": self.environment.description if self.environment else None
-                            },
+                "role_id": self.role_id,
+                "role_name": active_role.name if active_role else None,
+                "role_description": active_role.description if active_role else None
+            },
+            'environment': {
+                "environment_id": self.environment_id,
+                "environment_name": active_environment.name if active_environment else None,
+                "environment_description": active_environment.description if active_environment else None
+            },
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }
         
-        # Include soft delete information for admin users
+        # Include soft delete information if requested
         if include_deleted:
             base_dict.update({
                 'is_deleted': self.is_deleted,
@@ -68,25 +82,46 @@ class User(TimestampMixin, SoftDeleteMixin, db.Model):
             })
         
         if include_details:
-            base_dict.update({
+            # Get active forms (not deleted)
+            active_forms = [form for form in self.created_forms if not form.is_deleted] if self.created_forms else []
+            
+            # Get active permissions from active role
+            active_permissions = []
+            if active_role:
+                active_permissions = [
+                    p.name 
+                    for p in active_role.permissions 
+                    if not p.is_deleted  # Check permission is not deleted
+                    and not RolePermission.query.filter_by(  # Check role-permission mapping is not deleted
+                        role_id=active_role.id,
+                        permission_id=p.id,
+                        is_deleted=True
+                    ).first()
+                ]
+
+            details_dict = {
                 'role': {
-                    'id': self.role.id,
-                    'name': self.role.name,
-                    'description': self.role.description,
-                    'is_super_user': self.role.is_super_user
-                } if self.role else None,
+                    'id': active_role.id,
+                    'name': active_role.name,
+                    'description': active_role.description,
+                    'is_super_user': active_role.is_super_user
+                } if active_role else None,
                 
                 'environment': {
-                    'id': self.environment.id,
-                    'name': self.environment.name,
-                    'description': self.environment.description
-                } if self.environment else None,
+                    'id': active_environment.id,
+                    'name': active_environment.name,
+                    'description': active_environment.description
+                } if active_environment else None,
                 
-                'created_forms_count': len(self.created_forms) if self.created_forms else 0,
+                'created_forms_count': len(active_forms),
                 'full_name': f"{self.first_name} {self.last_name}",
                 'email': self.email,
                 'contact_number': self.contact_number,
-                'permissions': [p.name for p in self.role.permissions] if self.role else []
-            })
+                'permissions': active_permissions
+            }
+            
+            base_dict.update(details_dict)
+        
+        return base_dict
         
         return base_dict

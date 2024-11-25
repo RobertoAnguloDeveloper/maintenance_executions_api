@@ -103,10 +103,12 @@ class UserService(BaseService):
             raise
     
     @staticmethod
-    def search_users(username=None, role_id=None, environment_id=None) -> list[User]:
+    def search_users(id=None, username=None, role_id=None, environment_id=None) -> list[User]:
         """Search non-deleted users with filters"""
         query = User.query.filter_by(is_deleted=False)
         
+        if id:
+            query = User.query.filter_by(id=id)
         if username:
             query = query.filter(User.username.ilike(f"%{username}%"))
         if role_id:

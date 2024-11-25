@@ -174,16 +174,18 @@ def search_users():
     # Check if parameters are in URL or in JSON body
     if request.is_json:
         data = request.get_json()
+        id = data.get('id')
         username = data.get('username')
         role_id = data.get('role_id')
         environment_id = data.get('environment_id')
     else:
+        id = request.args.get('id')
         username = request.args.get('username')
         role_id = request.args.get('role_id')
         environment_id = request.args.get('environment_id')
 
-    users = UserController.search_users(username, role_id, environment_id)
-    return jsonify([user.to_dict() for user in users]), 200
+    users = UserController.search_users(id, username, role_id, environment_id)
+    return jsonify([user.to_dict(include_details=True) for user in users]), 200
 
 @user_bp.route('/<int:user_id>', methods=['GET'])
 @jwt_required()

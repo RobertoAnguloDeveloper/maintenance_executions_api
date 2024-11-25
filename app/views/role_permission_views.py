@@ -216,18 +216,21 @@ def get_permissions_by_role(role_id):
 @jwt_required()
 @PermissionManager.require_permission(action="view", entity_type=EntityType.ROLES)
 def get_roles_by_permission(permission_id):
-    """Get all roles that have a specific permission"""
-    try:
-        current_user = get_jwt_identity()
-        current_user_obj = AuthService.get_current_user(current_user)
+   try:
+       current_user = get_jwt_identity()
+       current_user_obj = AuthService.get_current_user(current_user)
 
-        roles = RolePermissionController.get_roles_by_permission(permission_id)
-        
-        # Filter out super user roles for non-admin users
-        if not current_user_obj.role.is_super_user:
-            roles = [role for role in roles if not role.is_super_user]
-            
-        return jsonify([role.to_dict() for role in roles]), 200
-    except Exception as e:
-        logger.error(f"Error getting roles for permission {permission_id}: {str(e)}")
-        return jsonify({"error": "Internal server error"}), 500
+       permission_info, roles = RolePermissionController.get_roles_by_permission(permission_id)
+       if not permission_info:
+           return jsonify({"error": "Permission not found"}), 404
+
+       if not current_user_obj.role.is_super_user:
+           roles = [role for role in roles if not role.get('is_super_user')]
+
+       return jsonify({
+           "permission": permission_info,
+           "roles": roles
+       }), 200
+   except Exception as e:
+       logger.error(f"Error getting roles for permission {permission_id}: {str(e)}")
+       return jsonify({"error": "Internal server error"}), 500

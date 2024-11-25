@@ -433,16 +433,19 @@ class RolePermissionService(BaseService):
             return []
 
     @staticmethod
-    def get_roles_by_permission(permission_id: int) -> list[Role]:
-        """Get all non-deleted roles that have a specific permission"""
-        return (Role.query
-            .join(RolePermission)
-            .filter(
-                RolePermission.permission_id == permission_id,
-                Role.is_deleted == False,
-                RolePermission.is_deleted == False
-            )
-            .all())
+    def get_roles_by_permission(permission_id):
+        permission = Permission.query.get(permission_id)
+        if not permission:
+            return None, None
+            
+        role_permissions = RolePermission.query.filter_by(
+            permission_id=permission_id,
+            is_deleted=False
+        ).join(Role).filter(
+            Role.is_deleted==False
+        ).all()
+        
+        return permission, [rp.role for rp in role_permissions]
 
     @staticmethod
     def get_role_permission(role_permission_id: int) -> Optional[RolePermission]:

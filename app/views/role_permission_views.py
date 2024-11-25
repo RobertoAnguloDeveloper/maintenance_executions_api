@@ -193,18 +193,21 @@ def remove_permission_from_role(role_permission_id):
 @jwt_required()
 @PermissionManager.require_permission(action="view", entity_type=EntityType.ROLES)
 def get_permissions_by_role(role_id):
-    """Get all permissions for a specific role"""
     try:
         current_user = get_jwt_identity()
         current_user_obj = AuthService.get_current_user(current_user)
 
-        # Check access to super user roles
-        role = Role.query.get(role_id)
-        if role and role.is_super_user and not current_user_obj.role.is_super_user:
+        role_info, permissions = RolePermissionController.get_permissions_by_role(role_id)
+        if not role_info:
+            return jsonify({"error": "Role not found"}), 404
+            
+        if role_info['id'] == 1 and not current_user_obj.role.is_super_user:
             return jsonify({"error": "Unauthorized access"}), 403
 
-        permissions = RolePermissionController.get_permissions_by_role(role_id)
-        return jsonify([permission.to_dict() for permission in permissions]), 200
+        return jsonify({
+            "role": role_info,
+            "permissions": permissions
+        }), 200
     except Exception as e:
         logger.error(f"Error getting permissions for role {role_id}: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500

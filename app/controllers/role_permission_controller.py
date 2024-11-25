@@ -1,5 +1,7 @@
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Union
+from app.models.permission import Permission
+from app.models.role import Role
 from app.models.role_permission import RolePermission
 from app.models.user import User
 from app.services.role_permission_service import RolePermissionService
@@ -59,7 +61,16 @@ class RolePermissionController:
 
     @staticmethod
     def get_permissions_by_role(role_id):
-        return RolePermissionService.get_permissions_by_role(role_id)
+        role, permissions = RolePermissionService.get_permissions_by_role(role_id)
+        if not role:
+            return None, None
+        
+        role_info = {
+            'id': role.id,
+            'name': role.name,
+            'description': role.description
+        }
+        return role_info, [permission.to_dict() for permission in permissions]
     
     @staticmethod
     def get_permissions_by_user(user_id):

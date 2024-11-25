@@ -383,46 +383,19 @@ class RolePermissionService(BaseService):
         return role_permission is not None
 
     @staticmethod
-    def get_permissions_by_role(
-        role_id: int,
-        current_user: User
-    ) -> Tuple[List[Permission], Optional[str]]:
-        """
-        Get all permissions for a role with proper authorization.
+    def get_permissions_by_role(role_id):
+        role = Role.query.get(role_id)
+        if not role:
+            return None, None
+            
+        role_permissions = RolePermission.query.filter_by(
+            role_id=role_id,
+            is_deleted=False
+        ).join(Permission).filter(
+            Permission.is_deleted==False
+        ).all()
         
-        Args:
-            role_id: ID of the role
-            current_user: Current user object for authorization
-            
-        Returns:
-            tuple: (List of Permission objects, Error message or None)
-        """
-        try:
-            # Verify role exists and is not deleted
-            role = Role.query.filter_by(
-                id=role_id,
-                is_deleted=False
-            ).first()
-            
-            if not role:
-                return [], "Role not found or has been deleted"
-
-            # Get all active permissions for the role
-            permissions = Permission.query.join(
-                RolePermission,
-                RolePermission.permission_id == Permission.id
-            ).filter(
-                RolePermission.role_id == role_id,
-                Permission.is_deleted == False,
-                RolePermission.is_deleted == False
-            ).order_by(Permission.name).all()
-
-            return permissions, None
-
-        except Exception as e:
-            error_msg = f"Error retrieving permissions: {str(e)}"
-            logger.error(error_msg)
-            return [], error_msg
+        return role, [rp.permission for rp in role_permissions]
     
     @staticmethod
     def get_permissions_by_user(user_id: int) -> list[Permission]:

@@ -89,15 +89,18 @@ class User(TimestampMixin, SoftDeleteMixin, db.Model):
             active_permissions = []
             if active_role:
                 active_permissions = [
-                    p.name 
-                    for p in active_role.permissions 
-                    if not p.is_deleted  # Check permission is not deleted
-                    and not RolePermission.query.filter_by(  # Check role-permission mapping is not deleted
-                        role_id=active_role.id,
-                        permission_id=p.id,
-                        is_deleted=True
-                    ).first()
-                ]
+                                        {
+                                            'id': p.id,
+                                            'name': p.name
+                                        }
+                                        for p in active_role.permissions 
+                                        if not p.is_deleted  # Check permission is not deleted
+                                        and not RolePermission.query.filter_by(  # Check role-permission mapping is not deleted
+                                            role_id=active_role.id,
+                                            permission_id=p.id,
+                                            is_deleted=True
+                                        ).first()
+                                    ]
 
             details_dict = {
                 'role': {
@@ -121,7 +124,5 @@ class User(TimestampMixin, SoftDeleteMixin, db.Model):
             }
             
             base_dict.update(details_dict)
-        
-        return base_dict
         
         return base_dict

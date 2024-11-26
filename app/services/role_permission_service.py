@@ -23,8 +23,7 @@ class RolePermissionService(BaseService):
     @staticmethod
     def assign_permission_to_role(
         role_id: int,
-        permission_id: int,
-        current_user: User
+        permission_id: int
     ) -> Tuple[Optional[RolePermission], Optional[str]]:
         """
         Assign a permission to a role with comprehensive validation.
@@ -83,7 +82,6 @@ class RolePermissionService(BaseService):
 
             logger.info(
                 f"Assigned permission {permission_id} to role {role_id} "
-                f"by user {current_user.username}"
             )
             return role_permission, None
 
@@ -199,7 +197,7 @@ class RolePermissionService(BaseService):
         username: str
     ) -> Tuple[bool, Union[Dict, str]]:
         """
-        Remove a permission from a role with cascade soft delete.
+        Remove a permission from a role with hard delete.
         
         Args:
             role_permission_id: ID of the role-permission mapping
@@ -209,14 +207,11 @@ class RolePermissionService(BaseService):
             tuple: (Success boolean, Dict with deletion stats or error message)
         """
         try:
-            # Verify mapping exists and is not deleted
-            role_permission = RolePermission.query.filter_by(
-                id=role_permission_id,
-                is_deleted=False
-            ).first()
+            # Verify mapping exists
+            role_permission = RolePermission.query.get(role_permission_id)
             
             if not role_permission:
-                return False, "Role-Permission mapping not found or has been deleted"
+                return False, "Role-Permission mapping not found"
 
             # Prevent modification of admin role
             if role_permission.role_id == 1:
@@ -225,7 +220,7 @@ class RolePermissionService(BaseService):
             # Start transaction
             db.session.begin_nested()
 
-            # Capture deletion details before soft delete
+            # Capture deletion details before delete
             deletion_stats = {
                 'role_permission_id': role_permission.id,
                 'role': {
@@ -239,16 +234,15 @@ class RolePermissionService(BaseService):
                 'deleted_at': datetime.utcnow().isoformat()
             }
 
-            # Soft delete the mapping
-            role_permission.is_deleted = True
-            role_permission.deleted_at = datetime.utcnow()
-            
-            db.session.commit()
+            # Hard delete the mapping
+            db.session.delete(role_permission)
 
             logger.info(
                 f"Removed permission {role_permission.permission_id} from role "
                 f"{role_permission.role_id} by user {username}"
             )
+            
+            db.session.commit()
             return True, {'role_permissions': [deletion_stats]}
 
         except Exception as e:

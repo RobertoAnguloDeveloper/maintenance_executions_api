@@ -170,10 +170,11 @@ def remove_permission_from_role(role_permission_id):
     """Remove a permission from a role with soft delete"""
     try:
         current_user = get_jwt_identity()
+        user = AuthService.get_current_user(current_user)
 
         success, result = RolePermissionController.remove_permission_from_role(
             role_permission_id,
-            current_user
+            user.username
         )
         
         if success:

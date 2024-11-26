@@ -18,7 +18,7 @@ class RolePermission(TimestampMixin, SoftDeleteMixin, db.Model):
     __table_args__ = (db.UniqueConstraint('role_id', 'permission_id', name='uq_role_permission'),)
 
     def __repr__(self):
-        return f'<RolePermission role_id={self.role_id} permission_id={self.permission_id}>'
+        return f'<RolePermission id={self.id} RolePermission role_id={self.role_id} permission_id={self.permission_id}>'
     
     def to_dict(self):
         return {

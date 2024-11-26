@@ -395,7 +395,9 @@ class RolePermissionService(BaseService):
             Permission.is_deleted==False
         ).all()
         
-        return role, [rp.permission for rp in role_permissions]
+        print(role_permissions)
+        
+        return role, [(rp.id, rp.permission) for rp in role_permissions]
     
     @staticmethod
     def get_permissions_by_user(user_id: int) -> list[Permission]:

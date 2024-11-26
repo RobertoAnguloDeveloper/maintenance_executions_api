@@ -76,18 +76,27 @@ class RolePermissionController:
     def get_permissions_by_user(user_id):
         return RolePermissionService.get_permissions_by_user(user_id)
 
-    @staticmethod 
-    def get_roles_by_permission(permission_id):
-        permission, roles = RolePermissionService.get_roles_by_permission(permission_id)
-        if not permission:
+    @staticmethod
+    def get_permissions_by_role(role_id):
+        role, permission_data = RolePermissionService.get_permissions_by_role(role_id)
+        if not role:
             return None, None
-
-        permission_info = {
-            'id': permission.id,
-            'name': permission.name,
-            'description': permission.description
+        
+        role_info = {
+            'id': role.id,
+            'name': role.name,
+            'description': role.description
         }
-        return permission_info, [role.to_dict() for role in roles]
+        
+        permissions_with_mapping = [
+            {
+                **permission.to_dict(),
+                'role_permission_id': rp_id
+            } 
+            for rp_id, permission in permission_data
+        ]
+        
+        return role_info, permissions_with_mapping
 
     @staticmethod
     def get_role_permission(role_permission_id):

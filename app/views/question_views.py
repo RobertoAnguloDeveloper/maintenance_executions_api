@@ -59,7 +59,6 @@ def create_question():
 @jwt_required()
 @PermissionManager.require_permission(action="create", entity_type=EntityType.QUESTIONS)
 def bulk_create_questions():
-    """Create multiple questions at once"""
     try:
         current_user = get_jwt_identity()
         user = AuthService.get_current_user(current_user)
@@ -69,13 +68,9 @@ def bulk_create_questions():
             return jsonify({"error": "Questions data is required"}), 400
 
         questions_data = data['questions']
-        if not isinstance(questions_data, list):
-            return jsonify({"error": "Questions must be provided as a list"}), 400
-
-        if not questions_data:
+        if not isinstance(questions_data, list) or not questions_data:
             return jsonify({"error": "At least one question is required"}), 400
 
-        # For non-admin users, check environment access for question types
         if not user.role.is_super_user:
             for question in questions_data:
                 question_type = QuestionTypeController.get_question_type(
@@ -162,32 +157,27 @@ def get_question(question_id):
         logger.error(f"Error getting question {question_id}: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
     
+#View
 @question_bp.route('/search', methods=['GET'])
 @jwt_required()
 @PermissionManager.require_permission(action="view", entity_type=EntityType.QUESTIONS)
 def search_questions():
-    """Search questions with filters"""
     try:
         current_user = get_jwt_identity()
         user = AuthService.get_current_user(current_user)
 
-        # Get search parameters
-        search_query = request.args.get('q')
-        remarks = request.args.get('remarks', default=None)
+        search_query = request.args.get('text')  # Changed from 'q' to 'text'
+        remarks = request.args.get('remarks')
         question_type_id = request.args.get('type_id', type=int)
-
-        # Determine environment filtering based on user role
         environment_id = None if user.role.is_super_user else user.environment_id
 
-        # Perform search
         questions = QuestionController.search_questions(
             search_query=search_query,
             remarks=remarks,
-            environment_id=environment_id,
-            include_deleted=False  # Explicitly exclude deleted questions
+            environment_id=environment_id
         )
 
-        response_data = {
+        return jsonify({
             "total_results": len(questions),
             "search_criteria": {
                 "query": search_query,
@@ -195,10 +185,8 @@ def search_questions():
                 "question_type_id": question_type_id,
                 "environment_restricted": environment_id is not None
             },
-            "results": [question.to_dict() for question in questions]
-        }
-
-        return jsonify(response_data), 200
+            "results": [q.to_dict() for q in questions]
+        }), 200
 
     except Exception as e:
         logger.error(f"Error searching questions: {str(e)}")
@@ -231,6 +219,7 @@ def update_question(question_id):
             return jsonify({"error": "Question text must be at least 3 characters long"}), 400
 
         updated_question, error = QuestionController.update_question(
+            user,
             question_id,
             **update_data
         )

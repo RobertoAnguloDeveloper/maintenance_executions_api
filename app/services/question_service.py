@@ -77,30 +77,14 @@ class QuestionService:
             return None, error_msg
         
     @staticmethod
-    def bulk_create_questions(
-        questions_data: List[Dict[str, Any]],
-        current_user: User
-    ) -> Tuple[Optional[List[Question]], Optional[str]]:
-        """
-        Bulk create questions with validation.
-        
-        Args:
-            questions_data: List of question data dictionaries
-            current_user: Current user object for authorization
-            
-        Returns:
-            tuple: (List of created Question objects or None, Error message or None)
-        """
+    def bulk_create_questions(questions_data: List[Dict[str, Any]]) -> Tuple[Optional[List[Question]], Optional[str]]:
         try:
             if not questions_data:
                 return None, "No questions provided"
 
-            # Start transaction
             db.session.begin_nested()
-
             created_questions = []
 
-            # Validate all questions first
             for data in questions_data:
                 if not data.get('text') or len(str(data['text']).strip()) < 3:
                     db.session.rollback()
@@ -112,10 +96,9 @@ class QuestionService:
                 ).first()
                 
                 if not question_type:
-                    db.session.rollback()
+                    db.session.rollback() 
                     return None, f"Question type {data.get('question_type_id')} not found or deleted"
 
-            # Create all questions
             for data in questions_data:
                 question = Question(
                     text=data['text'],
@@ -126,17 +109,11 @@ class QuestionService:
                 created_questions.append(question)
 
             db.session.commit()
-            
-            logger.info(
-                f"Bulk created {len(created_questions)} questions by user {current_user.username}"
-            )
             return created_questions, None
 
         except Exception as e:
             db.session.rollback()
-            error_msg = f"Error in bulk question creation: {str(e)}"
-            logger.error(error_msg)
-            return None, error_msg
+            return None, f"Error in bulk question creation: {str(e)}"
 
     @staticmethod
     def get_question(question_id: int) -> Optional[Question]:
@@ -161,11 +138,13 @@ class QuestionService:
     
     @staticmethod
     def search_questions(
-        search_query: Optional[str] = None,
-        question_type_id: Optional[int] = None,
-        environment_id: Optional[int] = None,
-        current_user: User = None
-    ) -> Tuple[List[Question], Optional[str]]:
+        search_query = None,
+        remarks = None,
+        question_type_id = None,
+        environment_id= None,
+        current_user: User = None,
+        include_deleted=False
+    ) -> list[Question]:
         """
         Search questions with filters and proper soft-delete handling.
         
@@ -262,8 +241,8 @@ class QuestionService:
 
     @staticmethod
     def update_question(
+        user: User,
         question_id: int,
-        current_user: User,
         **kwargs
     ) -> Tuple[Optional[Question], Optional[str]]:
         """
@@ -322,7 +301,7 @@ class QuestionService:
             question.updated_at = datetime.utcnow()
             db.session.commit()
 
-            logger.info(f"Question {question_id} updated by user {current_user.username}")
+            logger.info(f"Question {question_id} updated by user {user.username}")
             return question, None
 
         except Exception as e:

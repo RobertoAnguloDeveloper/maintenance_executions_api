@@ -10,6 +10,8 @@ from app.models.user import User
 from app.services.base_service import BaseService
 import logging
 
+from app.utils.permission_manager import RoleType
+
 logger = logging.getLogger(__name__)
 
 class RolePermissionService(BaseService):
@@ -19,6 +21,41 @@ class RolePermissionService(BaseService):
     @staticmethod
     def get_all_role_permissions():
         return RolePermission.query.filter_by(is_deleted=False).all()
+    
+    @staticmethod
+    def get_roles_by_permission(permission_id: int) -> Tuple[Optional[Permission], Optional[List[Role]]]:
+        """
+        Get all roles associated with a specific permission.
+        
+        Args:
+            permission_id: ID of the permission to query
+            
+        Returns:
+            Tuple[Optional[Permission], Optional[List[Role]]]: Tuple containing:
+                - Permission object
+                - List of Role objects associated with the permission
+        """
+        try:
+            # First verify the permission exists
+            permission = Permission.query.get(permission_id)
+            if not permission:
+                return None, None
+
+            # Get all active roles for this permission through the relationship
+            roles = Role.query\
+                .join(RolePermission)\
+                .filter(
+                    RolePermission.permission_id == permission_id,
+                    RolePermission.is_deleted == False,
+                    Role.is_deleted == False
+                )\
+                .all()
+
+            return permission, roles
+
+        except Exception as e:
+            logger.error(f"Error fetching roles for permission {permission_id}: {str(e)}")
+            raise
 
     @staticmethod
     def assign_permission_to_role(
@@ -174,22 +211,54 @@ class RolePermissionService(BaseService):
             return None, error_msg
         
     @staticmethod
-    def update_role_permission(role_permission_id, new_role_id, new_permission_id):
-        role_permission = RolePermission.query.filter_by(id=role_permission_id, is_deleted=False).first()
-        if role_permission:
-            try:
-                role_permission.role_id = new_role_id
-                role_permission.permission_id = new_permission_id
-                role_permission.updated_at = datetime.utcnow()
-                db.session.commit()
-                return role_permission, None
-            except IntegrityError:
-                db.session.rollback()
-                return None, "Invalid role_id or permission_id, or this combination already exists"
-            except Exception as e:
-                db.session.rollback()
-                return None, str(e)
-        return None, "RolePermission not found"
+    def update_role_permission(role_permission_id: int, current_user_role: str, **kwargs) -> Tuple[Optional[RolePermission], Optional[str]]:
+        """
+        Update role permission with provided fields.
+        Only ADMIN users can modify the is_deleted field.
+        
+        Args:
+            role_permission_id: ID of the role permission to update
+            current_user_role: Role of the current user
+            **kwargs: Fields to update (role_id, permission_id, is_deleted)
+            
+        Returns:
+            Tuple[Optional[RolePermission], Optional[str]]: Updated role permission and error message if any
+        """
+        role_permission = RolePermission.query.filter_by(id=role_permission_id).first()
+        
+        if not role_permission:
+            return None, "RolePermission not found"
+
+        try:
+            # Handle is_deleted separately based on user role
+            if 'is_deleted' in kwargs:
+                if current_user_role != RoleType.ADMIN:
+                    return None, "Only administrators can modify deletion status"
+                
+                is_deleted = kwargs.pop('is_deleted')
+                role_permission.is_deleted = is_deleted
+                
+                # Update deleted_at timestamp if needed
+                if is_deleted:
+                    role_permission.deleted_at = datetime.utcnow()
+                else:
+                    role_permission.deleted_at = None
+            
+            # Update other fields
+            for field, value in kwargs.items():
+                if hasattr(role_permission, field) and value is not None:
+                    setattr(role_permission, field, value)
+            
+            role_permission.updated_at = datetime.utcnow()
+            db.session.commit()
+            return role_permission, None
+            
+        except IntegrityError:
+            db.session.rollback()
+            return None, "Invalid role_id or permission_id, or this combination already exists"
+        except Exception as e:
+            db.session.rollback()
+            return None, str(e)
 
     @staticmethod
     def remove_permission_from_role(

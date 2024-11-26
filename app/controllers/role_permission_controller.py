@@ -14,6 +14,25 @@ class RolePermissionController:
     @staticmethod
     def get_all_role_permissions():
         return RolePermissionService.get_all_role_permissions()
+    
+    @staticmethod
+    def get_roles_by_permission(permission_id: int) -> Tuple[Optional[Dict], Optional[List[Dict]]]:
+        """
+        Get all roles associated with a specific permission.
+        
+        Args:
+            permission_id: ID of the permission to query
+            
+        Returns:
+            Tuple containing permission info dict and list of associated roles dicts
+        """
+        permission, roles = RolePermissionService.get_roles_by_permission(permission_id)
+        
+        # Convert permission and roles to dicts if they exist
+        permission_dict = permission.to_dict() if permission else None
+        roles_dict = [role.to_dict() for role in roles] if roles else []
+        
+        return permission_dict, roles_dict
 
     @staticmethod
     def assign_permission_to_role(role_id, permission_id):
@@ -39,8 +58,19 @@ class RolePermissionController:
         )
     
     @staticmethod
-    def update_role_permission(role_permission_id, new_role_id, new_permission_id):
-        return RolePermissionService.update_role_permission(role_permission_id, new_role_id, new_permission_id)
+    def update_role_permission(role_permission_id: int, current_user_role: str, **kwargs) -> Tuple[Optional[RolePermission], Optional[str]]:
+        """
+        Update role permission with provided fields.
+        
+        Args:
+            role_permission_id: ID of the role permission to update
+            current_user_role: Role of the current user
+            **kwargs: Fields to update
+            
+        Returns:
+            Tuple[Optional[RolePermission], Optional[str]]: Updated role permission and error message if any
+        """
+        return RolePermissionService.update_role_permission(role_permission_id, current_user_role, **kwargs)
 
     @staticmethod
     def remove_permission_from_role(role_permission_id: int, username: str) -> tuple[bool, Union[Dict, str]]:

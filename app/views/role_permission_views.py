@@ -138,27 +138,42 @@ def update_role_permission(role_permission_id):
     """Update role-permission mapping - Admin only"""
     try:
         data = request.get_json()
-        new_role_id = data.get('role_id')
-        new_permission_id = data.get('permission_id')
-
-        if not new_role_id or not new_permission_id:
-            return jsonify({"error": "Missing required fields"}), 400
-
-        # Check if trying to modify admin role
-        if new_role_id == 1:  # Admin role ID
-            return jsonify({"error": "Cannot modify the main administrator role"}), 403
+        current_user = get_jwt_identity()
+        user = AuthService.get_current_user(current_user)
+        update_fields = {}
+        
+        # Collect only provided fields
+        if 'role_id' in data:
+            # Check if trying to modify admin role
+            if data['role_id'] == 1:  # Admin role ID
+                return jsonify({"error": "Cannot modify the main administrator role"}), 403
+            update_fields['role_id'] = data['role_id']
+            
+        if 'permission_id' in data:
+            update_fields['permission_id'] = data['permission_id']
+            
+        # Handle is_deleted field for ADMIN users
+        if 'is_deleted' in data and isinstance(data['is_deleted'], bool):
+            update_fields['is_deleted'] = data['is_deleted']
+            
+        if not update_fields:
+            return jsonify({"error": "No valid fields provided for update"}), 400
 
         updated_role_permission, error = RolePermissionController.update_role_permission(
-            role_permission_id, new_role_id, new_permission_id
+            role_permission_id,
+            user.role.name,
+            **update_fields
         )
+        
         if error:
             return jsonify({"error": error}), 400
 
-        logger.info(f"Role permission {role_permission_id} updated successfully")
+        logger.info(f"Role permission {role_permission_id} updated successfully by {current_user}")
         return jsonify({
             "message": "Role permission updated successfully",
             "role_permission": updated_role_permission.to_dict()
         }), 200
+        
     except Exception as e:
         logger.error(f"Error updating role permission: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500

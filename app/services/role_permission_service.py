@@ -394,9 +394,7 @@ class RolePermissionService(BaseService):
         ).join(Permission).filter(
             Permission.is_deleted==False
         ).all()
-        
-        print(role_permissions)
-        
+                
         return role, [(rp.id, rp.permission) for rp in role_permissions]
     
     @staticmethod

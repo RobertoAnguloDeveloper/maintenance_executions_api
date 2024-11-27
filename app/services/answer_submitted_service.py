@@ -164,20 +164,17 @@ class AnswerSubmittedService:
     @staticmethod
     def delete_answer_submitted(answer_submitted_id: int) -> tuple[bool, Union[dict, str]]:
         """
-        Delete a submitted answer
+        Permanently delete a submitted answer
         
         Args:
             answer_submitted_id (int): ID of the submitted answer to delete
             
         Returns:
             tuple: (success: bool, result: Union[dict, str])
-                  result contains either deletion statistics or error message
+                result contains either deletion statistics or error message
         """
         try:
-            answer_submitted = AnswerSubmitted.query.filter_by(
-                id=answer_submitted_id,
-                is_deleted=False
-            ).first()
+            answer_submitted = AnswerSubmitted.query.get(answer_submitted_id)
             
             if not answer_submitted:
                 return False, "Submitted answer not found"
@@ -185,13 +182,11 @@ class AnswerSubmittedService:
             # Start transaction
             db.session.begin_nested()
 
-            # Soft delete the submitted answer
-            answer_submitted.soft_delete()
-
-            # Commit changes
+            # Perform hard delete
+            db.session.delete(answer_submitted)
             db.session.commit()
             
-            logger.info(f"Submitted answer {answer_submitted_id} soft deleted")
+            logger.info(f"Submitted answer {answer_submitted_id} permanently deleted")
             return True, {"answers_submitted": 1}
 
         except Exception as e:

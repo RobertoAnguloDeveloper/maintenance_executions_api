@@ -132,8 +132,8 @@ def get_form_questions(form_id):
             if not form or form.creator.environment_id != user.environment_id:
                 return jsonify({"error": "Unauthorized access to form"}), 403
 
-        form_questions = FormQuestionController.get_questions_by_form(form_id)
-        return jsonify([fq.to_dict() for fq in form_questions]), 200
+        questions = FormQuestionController.get_questions_by_form(form_id)
+        return jsonify(questions), 200
 
     except Exception as e:
         logger.error(f"Error getting form questions: {str(e)}")

@@ -4,7 +4,7 @@ from app.models.form import Form
 from app.models.form_question import FormQuestion
 from app.services.form_question_service import FormQuestionService
 from sqlalchemy.exc import SQLAlchemyError
-from typing import List, Optional
+from typing import Dict, List, Optional
 import logging
 
 logger = logging.getLogger(__name__)
@@ -69,9 +69,43 @@ class FormQuestionController:
             return None
 
     @staticmethod
-    def get_questions_by_form(form_id):
-        """Get all questions for a specific form"""
-        return FormQuestionService.get_questions_by_form(form_id)
+    def get_questions_by_form(form_id: int) -> List[Dict]:
+        """
+        Get all questions for a specific form with form info shown once
+        
+        Args:
+            form_id: ID of the form
+            
+        Returns:
+            List of dictionaries containing form questions
+        """
+        form, questions = FormQuestionService.get_questions_by_form(form_id)
+        
+        if not form:
+            return []
+            
+        result = []
+        
+        for i, question in enumerate(questions):
+            question_dict = {
+                'id': question.id,
+                'question_id': question.question_id,
+                'order_number': question.order_number,
+                'question': question.question.to_dict() if question.question else None
+            }
+            
+            # Add form info only to the first question
+            if i == 0:
+                question_dict['form'] = {
+                    "id": form.id,
+                    "title": form.title,
+                    "description": form.description,
+                    "creator": form._get_creator_dict() if hasattr(form, '_get_creator_dict') else None
+                }
+                
+            result.append(question_dict)
+            
+        return result
 
     @staticmethod
     def update_form_question(form_question_id, **kwargs):

@@ -336,20 +336,17 @@ class FormAnswerService:
     @staticmethod
     def delete_form_answer(form_answer_id: int) -> tuple[bool, Union[dict, str]]:
         """
-        Delete a form answer and associated data through cascade soft delete
+        Permanently delete a form answer and associated data
         
         Args:
             form_answer_id (int): ID of the form answer to delete
             
         Returns:
             tuple: (success: bool, result: Union[dict, str])
-                  result contains either deletion statistics or error message
+                result contains either deletion statistics or error message
         """
         try:
-            form_answer = FormAnswer.query.filter_by(
-                id=form_answer_id,
-                is_deleted=False
-            ).first()
+            form_answer = FormAnswer.query.get(form_answer_id)
             
             if not form_answer:
                 return False, "Form answer not found"
@@ -367,26 +364,14 @@ class FormAnswerService:
             db.session.begin_nested()
 
             deletion_stats = {
-                'answers_submitted': 0
+                'answers_submitted': len(form_answer.answers_submitted)
             }
 
-            # Soft delete any submitted answers (even if marked as deleted)
-            submitted_answers = AnswerSubmitted.query.filter_by(
-                form_answers_id=form_answer_id
-            ).all()
-
-            for submitted in submitted_answers:
-                if not submitted.is_deleted:
-                    submitted.soft_delete()
-                    deletion_stats['answers_submitted'] += 1
-
-            # Finally soft delete the form answer
-            form_answer.soft_delete()
-
-            # Commit all changes
+            # Perform hard delete - will cascade to related records
+            db.session.delete(form_answer)
             db.session.commit()
             
-            logger.info(f"Form answer {form_answer_id} and associated data soft deleted. Stats: {deletion_stats}")
+            logger.info(f"Form answer {form_answer_id} and associated data permanently deleted. Stats: {deletion_stats}")
             return True, deletion_stats
 
         except Exception as e:

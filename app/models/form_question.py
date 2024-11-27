@@ -20,9 +20,16 @@ class FormQuestion(TimestampMixin, SoftDeleteMixin, db.Model):
         return f'<FormQuestion {self.form_id}:{self.question_id}>'
 
     def to_dict(self):
+        form_dict = {
+            "id": self.form.id,
+            "title": self.form.title,
+            "description": self.form.description,
+            "creator": self.form._get_creator_dict() if hasattr(self.form, '_get_creator_dict') else None
+        } if self.form else None
+
         return {
             'id': self.id,
-            'form_id': self.form_id,
+            'form': form_dict,
             'question_id': self.question_id,
             'order_number': self.order_number,
             'question': self.question.to_dict() if self.question else None

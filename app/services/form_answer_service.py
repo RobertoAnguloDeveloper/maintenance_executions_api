@@ -21,8 +21,7 @@ class FormAnswerService:
     @staticmethod
     def create_form_answer(
         form_question_id: int,
-        answer_id: int,
-        current_user: User
+        answer_id: int
     ) -> Tuple[Optional[FormAnswer], Optional[str]]:
         """
         Create a new form answer with comprehensive validation.
@@ -48,11 +47,6 @@ class FormAnswerService:
             # Verify related form exists and is not deleted
             if form_question.form.is_deleted:
                 return None, "Cannot add answers to a deleted form"
-
-            # Authorization check
-            if not current_user.role.is_super_user:
-                if form_question.form.creator.environment_id != current_user.environment_id:
-                    return None, "Unauthorized: Form belongs to different environment"
 
             # Verify answer exists and is not deleted
             answer = Answer.query.filter_by(
@@ -102,8 +96,7 @@ class FormAnswerService:
 
     @staticmethod
     def bulk_create_form_answers(
-        form_answers_data: List[Dict[str, Any]],
-        current_user: User
+        form_answers_data: List[Dict[str, Any]]
     ) -> Tuple[Optional[List[FormAnswer]], Optional[str]]:
         """
         Bulk create form answers with transaction safety.
@@ -131,12 +124,6 @@ class FormAnswerService:
                 if not form_question:
                     db.session.rollback()
                     return None, f"Form question {data.get('form_question_id')} not found or deleted"
-
-                # Authorization check
-                if not current_user.role.is_super_user:
-                    if form_question.form.creator.environment_id != current_user.environment_id:
-                        db.session.rollback()
-                        return None, f"Unauthorized: Form question {data.get('form_question_id')} belongs to different environment"
 
                 answer = Answer.query.filter_by(
                     id=data.get('answer_id'),
@@ -343,7 +330,7 @@ class FormAnswerService:
             
         Returns:
             tuple: (success: bool, result: Union[dict, str])
-                result contains either deletion statistics or error message
+                    result contains either deletion statistics or error message
         """
         try:
             form_answer = FormAnswer.query.get(form_answer_id)
@@ -363,15 +350,18 @@ class FormAnswerService:
             # Start transaction
             db.session.begin_nested()
 
+            # Simple deletion stats since we're performing a permanent delete
             deletion_stats = {
-                'answers_submitted': len(form_answer.answers_submitted)
+                'form_answer_id': form_answer_id,
+                'answer_value': form_answer.answer.value if form_answer.answer else None,
+                'form_question': form_answer.form_question.question.text if form_answer.form_question and form_answer.form_question.question else None
             }
 
             # Perform hard delete - will cascade to related records
             db.session.delete(form_answer)
             db.session.commit()
             
-            logger.info(f"Form answer {form_answer_id} and associated data permanently deleted. Stats: {deletion_stats}")
+            logger.info(f"Form answer {form_answer_id} permanently deleted. Stats: {deletion_stats}")
             return True, deletion_stats
 
         except Exception as e:

@@ -101,11 +101,7 @@ def get_all_answers():
         current_user = get_jwt_identity()
         user = AuthService.get_current_user(current_user)
 
-        include_deleted = False
-        if user.role.is_super_user:
-            include_deleted = request.args.get('include_deleted', '').lower() == 'true'
-
-        answers = AnswerController.get_all_answers(include_deleted=include_deleted)
+        answers = AnswerController.get_all_answers()
         return jsonify([answer.to_dict() for answer in answers]), 200
 
     except Exception as e:

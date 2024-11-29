@@ -20,13 +20,14 @@ logger = logging.getLogger(__name__)
 
 class AnswerSubmittedService:
     @staticmethod
-    def create_answer_submitted(form_answers_id, form_submissions_id):
+    def create_answer_submitted(form_answers_id, form_submissions_id, text_answered=None):
         """Create a new submitted answer"""
         try:
             # Check if answer already submitted for this submission
             existing = AnswerSubmitted.query.filter_by(
                 form_answers_id=form_answers_id,
-                form_submissions_id=form_submissions_id
+                form_submissions_id=form_submissions_id,
+                is_deleted=False
             ).first()
             
             if existing:
@@ -34,7 +35,8 @@ class AnswerSubmittedService:
 
             answer_submitted = AnswerSubmitted(
                 form_answers_id=form_answers_id,
-                form_submissions_id=form_submissions_id
+                form_submissions_id=form_submissions_id,
+                text_answered=text_answered
             )
             db.session.add(answer_submitted)
             db.session.commit()

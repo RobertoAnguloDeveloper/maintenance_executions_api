@@ -61,14 +61,7 @@ def get_all_question_types():
         current_user = get_jwt_identity()
         user = AuthService.get_current_user(current_user)
 
-        # Admins can see deleted types if requested
-        include_deleted = False
-        if user.role.is_super_user:
-            include_deleted = request.args.get('include_deleted', '').lower() == 'true'
-
-        question_types = QuestionTypeController.get_all_question_types(
-            include_deleted=include_deleted
-        )
+        question_types = QuestionTypeController.get_all_question_types()
         
         return jsonify([qt.to_dict() for qt in question_types]), 200
 

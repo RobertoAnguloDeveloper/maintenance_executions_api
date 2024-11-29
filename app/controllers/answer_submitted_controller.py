@@ -8,11 +8,12 @@ logger = logging.getLogger(__name__)
 
 class AnswerSubmittedController:
     @staticmethod
-    def create_answer_submitted(form_answers_id, form_submissions_id):
+    def create_answer_submitted(form_answers_id, form_submissions_id, text_answered=None):
         """Create a new submitted answer"""
         return AnswerSubmittedService.create_answer_submitted(
             form_answers_id=form_answers_id,
-            form_submissions_id=form_submissions_id
+            form_submissions_id=form_submissions_id,
+            text_answered=text_answered
         )
         
     @staticmethod

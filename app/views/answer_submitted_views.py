@@ -46,7 +46,8 @@ def create_answer_submitted():
 
         new_answer_submitted, error = AnswerSubmittedController.create_answer_submitted(
             form_answers_id=data['form_answers_id'],
-            form_submissions_id=data['form_submissions_id']
+            form_submissions_id=data['form_submissions_id'],
+            text_answered=data.get('text_answered')  # Add the new field
         )
 
         if error:

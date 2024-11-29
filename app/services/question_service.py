@@ -20,8 +20,7 @@ class QuestionService:
     def create_question(
         text: str,
         question_type_id: int,
-        remarks: Optional[str],
-        current_user: User
+        remarks: Optional[str]
     ) -> Tuple[Optional[Question], Optional[str]]:
         """
         Create a new question with validation.
@@ -61,7 +60,7 @@ class QuestionService:
             db.session.commit()
 
             logger.info(
-                f"Question created by user {current_user.username}: {text[:50]}..."
+                f"Question created successfully"
             )
             return new_question, None
 

@@ -25,19 +25,23 @@ def create_submission():
         user = AuthService.get_current_user(current_user)
 
         data = request.get_json()
-        required_fields = ['form_id']
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+
+        required_fields = ['form_id', 'answers']
         if not all(field in data for field in required_fields):
             return jsonify({"error": "Missing required fields"}), 400
 
+        # Create submission
         submission, error = FormSubmissionController.create_submission(
             form_id=data['form_id'],
-            username=current_user
+            username=current_user,
+            answers=data['answers']
         )
 
         if error:
             return jsonify({"error": error}), 400
 
-        logger.info(f"Form {data['form_id']} submitted successfully by user {current_user}")
         return jsonify({
             "message": "Form submitted successfully",
             "submission": submission.to_dict()

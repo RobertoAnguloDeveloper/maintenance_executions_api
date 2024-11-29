@@ -10,6 +10,7 @@ class AnswerSubmitted(TimestampMixin, SoftDeleteMixin, db.Model):
     
     id = db.Column(db.Integer, primary_key=True)
     form_answers_id = db.Column(db.Integer, db.ForeignKey('form_answers.id'), nullable=False)  # Changed to match schema
+    text_answered = db.Column(db.Text)
     form_submissions_id = db.Column(db.Integer, db.ForeignKey('form_submissions.id'), nullable=False)  # Changed to match schema
 
     # Relationships
@@ -61,6 +62,7 @@ class AnswerSubmitted(TimestampMixin, SoftDeleteMixin, db.Model):
             return {
                 'id': self.id,
                 'form_answers_id': self.form_answers_id,
+                'text_answered': self.text_answered,
                 'form_submissions_id': self.form_submissions_id,
                 'form_answer': form_answer_data,
                 'form': form_data,

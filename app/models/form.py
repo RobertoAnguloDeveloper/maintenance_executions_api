@@ -81,6 +81,7 @@ class Form(TimestampMixin, SoftDeleteMixin, db.Model):
                 if form_answer.answer and form_answer.answer_id not in unique_answers:
                     unique_answers[form_answer.answer_id] = {
                         'id': form_answer.answer.id,
+                        'form_answer_id': form_answer.id,
                         'value': form_answer.answer.value
                     }
 

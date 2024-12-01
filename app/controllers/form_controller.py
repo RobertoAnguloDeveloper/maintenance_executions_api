@@ -21,12 +21,10 @@ class FormController:
 
     @staticmethod
     def get_form(form_id: int) -> tuple:
-        """Get a form by ID"""
+        """Get a specific form with relationships"""
         try:
-            form = FormService.get_form(form_id)
-            if not form:
-                return None, "Form not found"
-            return form, None
+            # Call the service layer
+            return FormService.get_form(form_id)
         except Exception as e:
             logger.error(f"Error in get_form controller: {str(e)}")
             return None, str(e)

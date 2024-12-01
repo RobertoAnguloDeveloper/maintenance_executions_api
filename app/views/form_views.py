@@ -52,12 +52,15 @@ def get_all_forms():
 @jwt_required()
 @PermissionManager.require_permission(action="view", entity_type=EntityType.FORMS)
 def get_form(form_id):
-    """Get a specific form with role-based access control"""
     try:
         current_user = get_jwt_identity()
         user = AuthService.get_current_user(current_user)
         
-        form = FormController.get_form(form_id)
+        # The issue is here - we need to unpack the tuple
+        form, error = FormController.get_form(form_id)  # Modified
+        if error:
+            return jsonify({"error": error}), 404
+            
         if not form:
             return jsonify({"error": "Form not found"}), 404
 

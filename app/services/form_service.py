@@ -66,20 +66,35 @@ class FormService(BaseService):
         return query.order_by(Form.created_at.desc()).all()
 
     @staticmethod
-    def get_form(form_id: int) -> Optional[Form]:
-        """Get non-deleted form with relationships"""
-        return (Form.query
-            .options(
+    def get_form(form_id: int) -> tuple[Optional[Form], Optional[str]]:
+        """
+        Get non-deleted form with relationships
+        
+        Args:
+            form_id (int): Form ID
+            
+        Returns:
+            tuple: (Form object or None, Error message or None)
+        """
+        try:
+            form = Form.query.options(
                 joinedload(Form.creator),
                 joinedload(Form.form_questions)
                     .joinedload(FormQuestion.question)
                     .joinedload(Question.question_type)
-            )
-            .filter_by(
+            ).filter_by(
                 id=form_id,
                 is_deleted=False
-            )
-            .first())
+            ).first()
+            
+            if not form:
+                return None, "Form not found"
+                
+            return form, None
+            
+        except Exception as e:
+            logger.error(f"Error getting form: {str(e)}")
+            return None, str(e)
 
     def get_form_with_relations(self, form_id):
         """Get form with all related data loaded"""

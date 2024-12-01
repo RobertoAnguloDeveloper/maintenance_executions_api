@@ -1,337 +1,125 @@
-# app/controllers/form_controller.py
-
-from app.models.form import Form
 from app.services.form_service import FormService
+from app.utils.permission_manager import PermissionManager, EntityType, RoleType
 import logging
 
 logger = logging.getLogger(__name__)
 
 class FormController:
     @staticmethod
-    def create_form(title, description, user_id, is_public=False):
-        """Create a new form with questions"""
-        return FormService.create_form(
-            title=title,
-            description=description,
-            user_id=user_id,
-            is_public=is_public
-        )
+    def create_form(title: str, description: str, user_id: int, is_public: bool = False) -> tuple:
+        """Create a new form"""
+        try:
+            return FormService.create_form(
+                title=title,
+                description=description,
+                user_id=user_id,
+                is_public=is_public
+            )
+        except Exception as e:
+            logger.error(f"Error in create_form controller: {str(e)}")
+            return None, str(e)
 
     @staticmethod
-    def get_form(form_id):
-        """
-        Get a form by ID with all relationships
-        
-        Args:
-            form_id (int): ID of the form
-            
-        Returns:
-            Form: Form object with loaded relationships or None if not found
-        """
-        return FormService.get_form(form_id)
+    def get_form(form_id: int) -> tuple:
+        """Get a form by ID"""
+        try:
+            form = FormService.get_form(form_id)
+            if not form:
+                return None, "Form not found"
+            return form, None
+        except Exception as e:
+            logger.error(f"Error in get_form controller: {str(e)}")
+            return None, str(e)
     
     @staticmethod
     def get_forms_by_environment(environment_id: int) -> list:
-        """Get forms by environment with serialized response"""
+        """Get forms by environment"""
         try:
-            forms = FormService.get_forms_by_environment(environment_id)
-            if forms is None:
-                return None
-
-            serialized_forms = []
-            for form in forms:
-                # Get submissions count
-                submissions_count = FormService.get_form_submissions_count(form.id)
-
-                # Format creator info
-                creator_info = None
-                if form.creator:
-                    creator_info = {
-                        'id': form.creator.id,
-                        'assigned_to': {
-                                        "user_id": form.creator.id,
-                                        "username": form.creator.username,
-                                        "role": {
-                                                "id": form.creator.role.id if form.creator.role else None,
-                                                "name": form.creator.role.name if form.creator.role else None,
-                                                "description": form.creator.role.description if form.creator.role else None
-                                                }
-                                        },
-                        'environment_id': form.creator.environment_id,
-                        'environment_name': form.creator.environment.name if form.creator.environment else None
-                    }
-
-                # Create form dictionary
-                form_dict = {
-                    'id': form.id,
-                    'title': form.title,
-                    'description': form.description,
-                    'is_public': form.is_public,
-                    'created_at': form.created_at.isoformat() if form.created_at else None,
-                    'updated_at': form.updated_at.isoformat() if form.updated_at else None,
-                    'creator': creator_info,
-                    'questions_count': len(form.form_questions),
-                    'submissions_count': submissions_count
-                }
-                serialized_forms.append(form_dict)
-
-            return serialized_forms
-
+            return FormService.get_forms_by_environment(environment_id)
         except Exception as e:
-            logger.error(f"Error formatting forms data: {str(e)}")
-            raise
+            logger.error(f"Error in get_forms_by_environment controller: {str(e)}")
+            return []
 
     @staticmethod
-    def get_forms_by_user(user_id):
-        """Get all forms created by a user"""
-        return FormService.get_forms_by_user(user_id)
+    def get_forms_by_user(user_id: int) -> list:
+        """Get forms created by a user"""
+        try:
+            return FormService.get_forms_by_user(user_id)
+        except Exception as e:
+            logger.error(f"Error in get_forms_by_user controller: {str(e)}")
+            return []
 
     @staticmethod
-    def get_forms_by_user_or_public(user_id, is_public=None):
-        """Get forms created by user or public forms"""
-        return FormService.get_forms_by_user_or_public(user_id, is_public)
-
-    @staticmethod
-    def get_forms_by_creator(username: str) -> dict:
-        """
-        Get all forms created by a specific username with formatted response
-        
-        Args:
-            username (str): Username of the creator
-            
-        Returns:
-            dict: Dictionary containing list of serialized forms or None if user not found
-        """
+    def get_forms_by_creator(username: str) -> tuple:
+        """Get forms by creator username"""
         try:
             forms = FormService.get_forms_by_creator(username)
             if forms is None:
-                return None
-
-            forms_data = []
-            for form in forms:
-                # Get submissions count
-                submissions_count = FormService.get_form_submissions_count(form.id)
-
-                # Format creator info
-                creator_info = None
-                if form.creator:
-                    creator_info = {
-                        'id': form.creator.id,
-                        'username': form.creator.username,
-                        'environment_id': form.creator.environment_id,
-                        'environment_name': form.creator.environment.name if form.creator.environment else None
-                    }
-
-                # Create form dictionary
-                form_dict = {
-                    'id': form.id,
-                    'title': form.title,
-                    'description': form.description,
-                    'is_public': form.is_public,
-                    'created_at': form.created_at.isoformat() if form.created_at else None,
-                    'updated_at': form.updated_at.isoformat() if form.updated_at else None,
-                    'creator': creator_info,
-                    'questions_count': len(form.form_questions),
-                    'submissions_count': submissions_count
-                }
-                forms_data.append(form_dict)
-
-            return {"forms": forms_data}
-
+                return None, "Creator not found"
+            return forms, None
         except Exception as e:
-            logger.error(f"Error formatting forms data: {str(e)}")
-            raise
+            logger.error(f"Error in get_forms_by_creator controller: {str(e)}")
+            return None, str(e)
 
     @staticmethod
-    def get_public_forms() -> dict:
-        """
-        Get all public forms with formatted response
-        
-        Returns:
-            dict: Dictionary containing list of serialized public forms
-        """
+    def get_public_forms() -> tuple:
+        """Get all public forms"""
         try:
-            forms = FormService.get_public_forms()
-            forms_data = []
-            
-            for form in forms:
-                # Get submissions count
-                submissions_count = FormService.get_form_submissions_count(form.id)
-
-                # Format creator info
-                creator_info = None
-                if form.creator:
-                    creator_info = {
-                        'id': form.creator.id,
-                        'username': form.creator.username,
-                        'environment_id': form.creator.environment_id,
-                        'environment_name': form.creator.environment.name if form.creator.environment else None
-                    }
-
-                # Create form dictionary
-                form_dict = {
-                    'id': form.id,
-                    'title': form.title,
-                    'description': form.description,
-                    'is_public': form.is_public,
-                    'created_at': form.created_at.isoformat() if form.created_at else None,
-                    'updated_at': form.updated_at.isoformat() if form.updated_at else None,
-                    'creator': creator_info,
-                    'questions_count': len(form.form_questions),
-                    'submissions_count': submissions_count
-                }
-                forms_data.append(form_dict)
-
-            return {"forms": forms_data}
-
+            return FormService.get_public_forms()
         except Exception as e:
-            logger.error(f"Error formatting public forms data: {str(e)}")
-            raise
-        
+            logger.error(f"Error in get_public_forms controller: {str(e)}")
+            return None, str(e)
 
     @staticmethod
-    def get_all_forms(is_public=None):
-        """Get all forms with optional public filter"""
-        return FormService.get_all_forms(is_public=is_public)
-    
-    @staticmethod
-    def get_forms_by_creator(username: str) -> dict:
-        """
-        Get all forms created by a specific username with formatted response
-        
-        Args:
-            username (str): Username of the creator
-            
-        Returns:
-            dict: Dictionary containing list of serialized forms or None if user not found
-        """
+    def get_all_forms(is_public: bool = None) -> list:
+        """Get all forms"""
         try:
-            forms = FormService.get_forms_by_creator(username)
-            if forms is None:
-                return None
-
-            forms_data = []
-            for form in forms:
-                # Get submissions count
-                submissions_count = FormService.get_form_submissions_count(form.id)
-
-                # Format creator info
-                creator_info = None
-                if form.creator:
-                    creator_info = {
-                        'id': form.creator.id,
-                        'username': form.creator.username,
-                        'first_name': form.creator.first_name,
-                        'last_name': form.creator.last_name,
-                        'email': form.creator.email,
-                        'fullname': f"{form.creator.first_name} {form.creator.last_name}",
-                        'environment': {
-                            'id': form.creator.environment_id,
-                            'name': form.creator.environment.name if form.creator.environment else None
-                        }
-                    }
-
-                # Create form dictionary to match general forms endpoint format
-                form_dict = {
-                    'id': form.id,
-                    'title': form.title,
-                    'description': form.description,
-                    'is_public': form.is_public,
-                    'created_at': form.created_at.isoformat() if form.created_at else None,
-                    'updated_at': form.updated_at.isoformat() if form.updated_at else None,
-                    'created_by': creator_info,
-                    'questions': [q.to_dict() for q in form.form_questions if not q.is_deleted],
-                    'submissions_count': submissions_count
-                }
-                forms_data.append(form_dict)
-
-            return forms_data
-
+            return FormService.get_all_forms(is_public)
         except Exception as e:
-            logger.error(f"Error formatting forms data: {str(e)}")
-            raise
+            logger.error(f"Error in get_all_forms controller: {str(e)}")
+            return []
 
     @staticmethod
-    def update_form(form_id: int, **kwargs) -> dict:
-        """
-        Update a form's details
-        
-        Args:
-            form_id (int): ID of the form to update
-            **kwargs: Fields to update (title, description, is_public)
-                
-        Returns:
-            dict: Response containing updated form data or error
-        """
+    def update_form(form_id: int, **kwargs) -> tuple:
+        """Update a form"""
         try:
-            form, error = FormService.update_form(form_id, **kwargs)
-            if error:
-                return {"error": error}
-
-            # Format creator info
-            creator_info = None
-            if form.creator:
-                creator_info = {
-                    'id': form.creator.id,
-                    'username': form.creator.username,
-                    'environment_id': form.creator.environment_id,
-                    'environment_name': form.creator.environment.name if form.creator.environment else None
-                }
-
-            # Get submissions count
-            submissions_count = FormService.get_form_submissions_count(form.id)
-
-            # Create form dictionary
-            return {
-                "message": "Form updated successfully",
-                "form": {
-                    'id': form.id,
-                    'title': form.title,
-                    'description': form.description,
-                    'is_public': form.is_public,
-                    'created_at': form.created_at.isoformat() if form.created_at else None,
-                    'updated_at': form.updated_at.isoformat() if form.updated_at else None,
-                    'creator': creator_info,
-                    'questions_count': len(form.form_questions),
-                    'submissions_count': submissions_count
-                }
-            }
-
+            return FormService.update_form(form_id, **kwargs)
         except Exception as e:
-            logger.error(f"Error formatting updated form data: {str(e)}")
-            raise
+            logger.error(f"Error in update_form controller: {str(e)}")
+            return None, str(e)
 
     @staticmethod
-    def delete_form(form_id):
+    def delete_form(form_id: int) -> tuple:
         """Delete a form"""
-        return FormService.delete_form(form_id)
+        try:
+            return FormService.delete_form(form_id)
+        except Exception as e:
+            logger.error(f"Error in delete_form controller: {str(e)}")
+            return False, str(e)
 
     @staticmethod
-    def add_questions_to_form(form_id, questions):
-        """Add new questions to an existing form"""
-        return FormService.add_questions_to_form(form_id, questions)
+    def submit_form(form_id: int, username: str, answers: list, attachments: list = None) -> tuple:
+        """Submit a form"""
+        try:
+            return FormService.submit_form(form_id, username, answers, attachments)
+        except Exception as e:
+            logger.error(f"Error in submit_form controller: {str(e)}")
+            return None, str(e)
 
     @staticmethod
-    def reorder_questions(form_id, question_order):
-        """Reorder questions in a form"""
-        return FormService.reorder_questions(form_id, question_order)
+    def get_form_submissions(form_id: int) -> tuple:
+        """Get form submissions"""
+        try:
+            return FormService.get_form_submissions(form_id)
+        except Exception as e:
+            logger.error(f"Error in get_form_submissions controller: {str(e)}")
+            return None, str(e)
 
     @staticmethod
-    def submit_form(form_id, username, answers, attachments=None):
-        """Submit a form with answers"""
-        return FormService.submit_form(form_id, username, answers, attachments)
-
-    @staticmethod
-    def get_form_submissions(form_id):
-        """Get all submissions for a form"""
-        return FormService.get_form_submissions(form_id)
-
-    @staticmethod
-    def get_form_statistics(form_id):
-        """Get statistics for a form"""
-        return FormService.get_form_statistics(form_id)
-
-    @staticmethod
-    def search_forms(query=None, user_id=None, is_public=None):
-        """Search forms based on criteria"""
-        return FormService.search_forms(query, user_id, is_public)
+    def get_form_statistics(form_id: int) -> tuple:
+        """Get form statistics"""
+        try:
+            return FormService.get_form_statistics(form_id)
+        except Exception as e:
+            logger.error(f"Error in get_form_statistics controller: {str(e)}")
+            return None, str(e)

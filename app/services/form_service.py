@@ -1,7 +1,5 @@
-# app/services/form_service.py
-
 from datetime import datetime
-from typing import Optional, Union
+from typing import Dict, List, Optional, Tuple, Union, Any
 from app.models.answers_submitted import AnswerSubmitted
 from app.models.attachment import Attachment
 from app.models.form_answer import FormAnswer
@@ -19,22 +17,42 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-
 class FormService(BaseService):
     def __init__(self):
         super().__init__(Form)
-        
+
+    @classmethod
+    def _get_base_query(cls):
+        """Base query with common joins and filters"""
+        return (Form.query
+            .options(
+                joinedload(Form.creator),
+                joinedload(Form.form_questions)
+                    .joinedload(FormQuestion.question)
+                    .joinedload(Question.question_type)
+            )
+            .filter_by(is_deleted=False))
+
+    @classmethod
+    def _handle_transaction(cls, operation: callable, *args, **kwargs) -> Tuple[Optional[Any], Optional[str]]:
+        """Generic transaction handler"""
+        try:
+            with db.session.begin_nested():
+                result = operation(*args, **kwargs)
+                db.session.commit()
+                return result, None
+        except IntegrityError as e:
+            db.session.rollback()
+            logger.error(f"Database integrity error: {str(e)}")
+            return None, "Database integrity error"
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"Operation error: {str(e)}")
+            return None, str(e)
+
     @staticmethod
     def get_all_forms(is_public=None):
-        """
-        Get all forms with optional public filter
-        
-        Args:
-            is_public (bool, optional): Filter by public status
-            
-        Returns:
-            list: List of Form objects
-        """
+        """Get all forms with optional public filter"""
         query = Form.query.options(
             joinedload(Form.creator),
             joinedload(Form.form_questions)
@@ -46,7 +64,7 @@ class FormService(BaseService):
             query = query.filter_by(is_public=is_public)
             
         return query.order_by(Form.created_at.desc()).all()
-    
+
     @staticmethod
     def get_form(form_id: int) -> Optional[Form]:
         """Get non-deleted form with relationships"""
@@ -91,7 +109,6 @@ class FormService(BaseService):
     def get_form_submissions_count(form_id: int) -> int:
         """Get number of submissions for a form"""
         try:
-            from app.models.form_submission import FormSubmission
             return FormSubmission.query.filter_by(
                 form_submitted=str(form_id)
             ).count()
@@ -117,7 +134,7 @@ class FormService(BaseService):
             query = query.filter(Form.is_public == is_public)
             
         return query.order_by(Form.created_at.desc()).all()
-    
+
     @staticmethod
     def get_public_forms() -> list[Form]:
         """Get non-deleted public forms"""
@@ -134,12 +151,10 @@ class FormService(BaseService):
             )
             .order_by(Form.created_at.desc())
             .all())
-    
+
     @staticmethod
-    def get_forms_by_creator(username: str):
-        """
-        Get all forms created by a specific user
-        """
+    def get_forms_by_creator(username: str) -> Optional[List[Form]]:
+        """Get all forms created by a specific user"""
         try:
             user = User.query.filter_by(
                 username=username,
@@ -168,14 +183,14 @@ class FormService(BaseService):
                     .filter(User.is_deleted == False)
                     .order_by(Form.created_at.desc())
                     .all())
-
         except Exception as e:
             logger.error(f"Error getting forms by creator: {str(e)}")
             raise
 
-    def create_form(title, description, user_id, is_public=False):
-        """Create a new form with questions"""
-        try:
+    @classmethod
+    def create_form(cls, title: str, description: str, user_id: int, is_public: bool = False) -> Tuple[Optional[Form], Optional[str]]:
+        """Create a new form"""
+        def _create():
             form = Form(
                 title=title,
                 description=description,
@@ -183,69 +198,38 @@ class FormService(BaseService):
                 is_public=is_public
             )
             db.session.add(form)
-            
-            db.session.commit()
-            return form, None
-        except IntegrityError:
-            db.session.rollback()
-            return None, "Invalid user_id or question_id provided"
-        except Exception as e:
-            db.session.rollback()
-            return None, str(e)
-        
-    @staticmethod
-    def update_form(form_id, **kwargs):
-        """
-        Update a form's details
-        
-        Args:
-            form_id (int): ID of the form to update
-            **kwargs: Fields to update (title, description, is_public, user_id)
-                
-        Returns:
-            tuple: (Updated Form object, error message or None)
-        """
-        try:
+            return form
+
+        return cls._handle_transaction(_create)
+
+    @classmethod
+    def update_form(cls, form_id: int, **kwargs) -> Tuple[Optional[Form], Optional[str]]:
+        """Update a form's details"""
+        def _update():
             form = Form.query.get(form_id)
             if not form:
-                return None, "Form not found"
+                raise ValueError("Form not found")
                 
             for key, value in kwargs.items():
                 if hasattr(form, key):
                     setattr(form, key, value)
             
             form.updated_at = datetime.utcnow()
-            db.session.commit()
-            return form, None
-            
-        except IntegrityError:
-            db.session.rollback()
-            return None, "Database integrity error. Please check if the user_id is valid."
-        except Exception as e:
-            db.session.rollback()
-            return None, str(e)
-        
-    def add_questions_to_form(self, form_id, questions):
-        """
-        Add new questions to an existing form
-        
-        Args:
-            form_id (int): ID of the form
-            questions (list): List of question dictionaries with question_id and order_number
-            
-        Returns:
-            tuple: (Form object, error message)
-        """
-        try:
+            return form
+
+        return cls._handle_transaction(_update)
+
+    @classmethod
+    def add_questions_to_form(cls, form_id: int, questions: List[Dict]) -> Tuple[Optional[Form], Optional[str]]:
+        """Add new questions to an existing form"""
+        def _add_questions():
             form = Form.query.get(form_id)
             if not form:
-                return None, "Form not found"
-                
-            # Get current max order number
+                raise ValueError("Form not found")
+
             max_order = db.session.query(db.func.max(FormQuestion.order_number))\
                 .filter_by(form_id=form_id).scalar() or 0
-                
-            # Add new questions
+
             for i, question in enumerate(questions, start=1):
                 form_question = FormQuestion(
                     form_id=form_id,
@@ -253,63 +237,32 @@ class FormService(BaseService):
                     order_number=question.get('order_number', max_order + i)
                 )
                 db.session.add(form_question)
-                
-            db.session.commit()
-            return form, None
-        except IntegrityError:
-            db.session.rollback()
-            return None, "Invalid question_id provided"
-        except Exception as e:
-            db.session.rollback()
-            return None, str(e)
-        
-    def reorder_questions(self, form_id, question_order):
-        """
-        Reorder questions in a form
-        
-        Args:
-            form_id (int): ID of the form
-            question_order (list): List of tuples (form_question_id, new_order)
-            
-        Returns:
-            tuple: (Form object, error message)
-        """
-        try:
+
+            return form
+
+        return cls._handle_transaction(_add_questions)
+
+    @classmethod
+    def reorder_questions(cls, form_id: int, question_order: List[Tuple[int, int]]) -> Tuple[Optional[Form], Optional[str]]:
+        """Reorder questions in a form"""
+        def _reorder():
             form = Form.query.get(form_id)
             if not form:
-                return None, "Form not found"
-                
-            # Update order numbers
+                raise ValueError("Form not found")
+
             for form_question_id, new_order in question_order:
                 form_question = FormQuestion.query.get(form_question_id)
                 if form_question and form_question.form_id == form_id:
                     form_question.order_number = new_order
-                
-            db.session.commit()
-            return form, None
-        except Exception as e:
-            db.session.rollback()
-            return None, str(e)
-        
-    def submit_form(self, form_id, username, answers, attachments=None):
-        """
-        Submit a form with answers and optional attachments
-        
-        Args:
-            form_id (int): ID of the form
-            username (str): Username of the submitter
-            answers (list): List of answer dictionaries
-            attachments (list, optional): List of attachment dictionaries
-            
-        Returns:
-            tuple: (FormSubmission object, error message)
-        """
-        try:
-            form = Form.query.get(form_id)
-            if not form:
-                return None, "Form not found"
-                
-            # Create submission
+
+            return form
+
+        return cls._handle_transaction(_reorder)
+
+    @classmethod
+    def submit_form(cls, form_id: int, username: str, answers: List[Dict]) -> Tuple[Optional[FormSubmission], Optional[str]]:
+        """Submit form with answers"""
+        def _submit():
             submission = FormSubmission(
                 form_id=form_id,
                 submitted_by=username,
@@ -317,68 +270,26 @@ class FormService(BaseService):
             )
             db.session.add(submission)
             db.session.flush()
-            
-            # Process answers
+
             for answer_data in answers:
-                # Get the form question
-                form_question = FormQuestion.query.filter_by(
-                    form_id=form_id,
-                    question_id=answer_data['question_id']
-                ).first()
-                
-                if not form_question:
-                    db.session.rollback()
-                    return None, f"Invalid question_id: {answer_data['question_id']}"
-                
-                # Create form answer
-                form_answer = FormAnswer(
-                    form_question_id=form_question.id,
-                    answer_id=answer_data['answer_id'],
-                    remarks=answer_data.get('remarks')
-                )
-                db.session.add(form_answer)
-                db.session.flush()
-                
-                # Link answer to submission
+                form_answer = FormAnswer.query.get(answer_data['form_answer_id'])
+                if not form_answer:
+                    raise ValueError(f"Invalid form answer ID: {answer_data['form_answer_id']}")
+
                 answer_submitted = AnswerSubmitted(
-                    form_answer_id=form_answer.id,
-                    form_submission_id=submission.id
+                    form_answers_id=form_answer.id,
+                    form_submissions_id=submission.id,
+                    text_answered=answer_data.get('text_answered') if form_answer.requires_text_answer() else None
                 )
                 db.session.add(answer_submitted)
-            
-            # Process attachments if any
-            if attachments:
-                for attachment_data in attachments:
-                    attachment = Attachment(
-                        form_submission_id=submission.id,
-                        file_type=attachment_data['file_type'],
-                        file_path=attachment_data['file_path'],
-                        file_name=attachment_data['file_name'],
-                        file_size=attachment_data['file_size'],
-                        is_signature=attachment_data.get('is_signature', False)
-                    )
-                    db.session.add(attachment)
-            
-            db.session.commit()
-            return submission, None
-            
-        except IntegrityError:
-            db.session.rollback()
-            return None, "Database integrity error"
-        except Exception as e:
-            db.session.rollback()
-            return None, str(e)
-        
-    def get_form_submissions(self, form_id):
-        """
-        Get all submissions for a form
-        
-        Args:
-            form_id (int): ID of the form
-            
-        Returns:
-            list: List of FormSubmission objects
-        """
+
+            return submission
+
+        return cls._handle_transaction(_submit)
+
+    @staticmethod
+    def get_form_submissions(form_id: int) -> List[FormSubmission]:
+        """Get all submissions for a form"""
         return (FormSubmission.query
                 .filter_by(form_id=form_id)
                 .options(
@@ -390,53 +301,10 @@ class FormService(BaseService):
                 )
                 .order_by(FormSubmission.submitted_at.desc())
                 .all())
-        
-    @staticmethod
-    def get_forms_by_creator(username: str):
-        """
-        Get all forms created by a specific username.
-        
-        Args:
-            username (str): Username of the creator
-            
-        Returns:
-            list: List of Form objects or None if user not found
-        """
-        try:
-            # First verify user exists and is not deleted
-            user = User.query.filter_by(
-                username=username,
-                is_deleted=False
-            ).first()
-            
-            if not user:
-                return None
 
-            # Get active forms for the user with all necessary relationships
-            return (Form.query
-                    .filter(Form.user_id == user.id)
-                    .filter(Form.is_deleted == False)
-                    .options(
-                        joinedload(Form.creator).joinedload(User.environment),
-                        joinedload(Form.form_questions)
-                    )
-                    .order_by(Form.created_at.desc())
-                    .all())
-
-        except Exception as e:
-            logger.error(f"Error getting forms by creator: {str(e)}")
-            raise
-        
-    def get_form_statistics(form_id):
-        """
-        Get statistics for a form
-        
-        Args:
-            form_id (int): ID of the form
-            
-        Returns:
-            dict: Statistics dictionary containing counts and temporal data
-        """
+    @classmethod
+    def get_form_statistics(cls, form_id: int) -> Optional[Dict]:
+        """Get statistics for a form"""
         try:
             form = Form.query.filter_by(
                 id=form_id,
@@ -449,7 +317,6 @@ class FormService(BaseService):
             submissions = [s for s in form.submissions if not s.is_deleted]
             total_submissions = len(submissions)
             
-            # Initialize statistics
             stats = {
                 'total_submissions': total_submissions,
                 'submissions_by_date': {},
@@ -461,160 +328,202 @@ class FormService(BaseService):
                     'monthly': {}
                 }
             }
-            
+
             if total_submissions > 0:
-                # Calculate submission trends
-                for submission in submissions:
-                    date = submission.submitted_at.date()
-                    week = submission.submitted_at.isocalendar()[1]
-                    month = submission.submitted_at.strftime('%Y-%m')
-                    
-                    # Daily stats
-                    stats['submissions_by_date'][str(date)] = \
-                        stats['submissions_by_date'].get(str(date), 0) + 1
-                        
-                    # Weekly stats
-                    stats['submission_trends']['weekly'][str(week)] = \
-                        stats['submission_trends']['weekly'].get(str(week), 0) + 1
-                        
-                    # Monthly stats
-                    stats['submission_trends']['monthly'][month] = \
-                        stats['submission_trends']['monthly'].get(month, 0) + 1
-                
-                # Calculate question statistics
-                for form_question in form.form_questions:
-                    question_id = form_question.question_id
-                    answers = FormAnswer.query\
-                        .join(AnswerSubmitted)\
-                        .filter(FormAnswer.form_question_id == form_question.id)\
-                        .all()
-                        
-                    stats['questions_stats'][question_id] = {
-                        'total_answers': len(answers),
-                        'remarks': len([a for a in answers if a.remarks]),
-                    }
+                stats.update(cls._calculate_submission_trends(submissions))
+                stats.update(cls._calculate_question_statistics(form))
             
             return stats
             
         except Exception as e:
             logger.error(f"Error getting form statistics: {str(e)}")
             return None
-        
+
     @staticmethod
-    def search_forms(query=None, user_id=None, is_public=None):
-        """Search non-deleted forms"""
-        search_query = Form.query.filter_by(is_deleted=False)
+    def _calculate_submission_trends(submissions: List[FormSubmission]) -> Dict:
+        """Calculate submission trends"""
+        trends = {
+            'submissions_by_date': {},
+            'submission_trends': {
+                'daily': {},
+                'weekly': {},
+                'monthly': {}
+            }
+        }
         
-        if query:
-            search_query = search_query.filter(
+        for submission in submissions:
+            date = submission.submitted_at.date()
+            week = submission.submitted_at.isocalendar()[1]
+            month = submission.submitted_at.strftime('%Y-%m')
+            
+            trends['submissions_by_date'][str(date)] = \
+                trends['submissions_by_date'].get(str(date), 0) + 1
+            trends['submission_trends']['weekly'][str(week)] = \
+                trends['submission_trends']['weekly'].get(str(week), 0) + 1
+            trends['submission_trends']['monthly'][month] = \
+                trends['submission_trends']['monthly'].get(month, 0) + 1
+                
+        return trends
+
+    @staticmethod
+    def _calculate_question_statistics(form: Form) -> Dict:
+        """Calculate question statistics"""
+        stats = {'questions_stats': {}}
+        
+        for form_question in form.form_questions:
+            if form_question.is_deleted:
+                continue
+                
+            answers = (FormAnswer.query
+                .join(AnswerSubmitted)
+                .filter(
+                    FormAnswer.form_question_id == form_question.id,
+                    FormAnswer.is_deleted == False
+                ).all())
+
+            stats['questions_stats'][form_question.question_id] = {
+                'total_answers': len(answers),
+                'remarks': len([a for a in answers if a.remarks])
+            }
+            
+        return stats
+
+    @classmethod
+    def delete_form(cls, form_id: int) -> Tuple[bool, Union[Dict, str]]:
+        """Delete form and related data"""
+        try:
+            def _delete():
+                form = cls.get_form(form_id)
+                if not form:
+                    raise ValueError("Form not found")
+
+                deletion_stats = cls._perform_cascading_delete(form)
+                form.soft_delete()
+                return deletion_stats
+
+            result = cls._handle_transaction(_delete)
+            return (True, result[0]) if result[0] else (False, result[1])
+
+        except Exception as e:
+            logger.error(f"Error deleting form: {str(e)}")
+            return False, str(e)
+
+    @staticmethod
+    def _perform_cascading_delete(form: Form) -> Dict:
+        """Perform cascading soft delete of form-related data"""
+        stats = {
+            'form_questions': 0,
+            'form_answers': 0,
+            'form_submissions': 0,
+            'answers_submitted': 0,
+            'attachments': 0
+        }
+
+        # Soft delete form questions and related data
+        for form_question in FormQuestion.query.filter_by(
+            form_id=form.id,
+            is_deleted=False
+        ).all():
+            form_question.soft_delete()
+            stats['form_questions'] += 1
+
+            # Soft delete form answers
+            for form_answer in FormAnswer.query.filter_by(
+                form_question_id=form_question.id,
+                is_deleted=False
+            ).all():
+                form_answer.soft_delete()
+                stats['form_answers'] += 1
+
+        # Soft delete submissions and related data
+        for submission in FormSubmission.query.filter_by(
+            form_id=form.id,
+            is_deleted=False
+            ).all():
+            submission.soft_delete()
+            stats['form_submissions'] += 1
+
+            # Soft delete attachments
+            for attachment in Attachment.query.filter_by(
+                form_submission_id=submission.id,
+                is_deleted=False
+            ).all():
+                attachment.soft_delete()
+                stats['attachments'] += 1
+
+            # Soft delete submitted answers
+            submitted_answers = (AnswerSubmitted.query
+                .join(FormAnswer)
+                .join(FormQuestion)
+                .filter(
+                    FormQuestion.form_id == form.id,
+                    AnswerSubmitted.is_deleted == False
+                ).all())
+
+            for submitted in submitted_answers:
+                submitted.soft_delete()
+                stats['answers_submitted'] += 1
+
+        return stats
+
+    @staticmethod
+    def search_forms(
+        search_text: Optional[str] = None,
+        user_id: Optional[int] = None,
+        is_public: Optional[bool] = None
+    ) -> List[Form]:
+        """
+        Search forms with filters
+        
+        Args:
+            search_text: Optional text to search in title and description
+            user_id: Optional user ID to filter by creator
+            is_public: Optional filter for public forms
+            
+        Returns:
+            List of matching Form objects
+        """
+        query = Form.query.filter_by(is_deleted=False)
+        
+        if search_text:
+            query = query.filter(
                 db.or_(
-                    Form.title.ilike(f'%{query}%'),
-                    Form.description.ilike(f'%{query}%')
+                    Form.title.ilike(f'%{search_text}%'),
+                    Form.description.ilike(f'%{search_text}%')
                 )
             )
         if user_id is not None:
-            search_query = search_query.filter_by(user_id=user_id)
+            query = query.filter_by(user_id=user_id)
         if is_public is not None:
-            search_query = search_query.filter_by(is_public=is_public)
+            query = query.filter_by(is_public=is_public)
             
-        return search_query.order_by(Form.created_at.desc()).all()
-    
-    @staticmethod
-    def delete_form(form_id: int) -> tuple[bool, Union[dict, str]]:
+        return query.order_by(Form.created_at.desc()).all()
+
+    @classmethod
+    def get_user_submission_statistics(cls, username: str, form_id: Optional[int] = None) -> Dict:
         """
-        Delete a form and all associated data through cascade soft delete
+        Get submission statistics for a specific user
         
         Args:
-            form_id (int): ID of the form to delete
+            username: Username to get statistics for
+            form_id: Optional form ID to filter statistics
             
         Returns:
-            tuple: (success: bool, result: Union[dict, str])
-                  result contains either deletion statistics or error message
+            Dictionary containing submission statistics
         """
-        try:
-            form = Form.query.filter_by(
-                id=form_id,
-                is_deleted=False
-            ).first()
+        query = FormSubmission.query.filter_by(
+            submitted_by=username,
+            is_deleted=False
+        )
+        
+        if form_id:
+            query = query.filter_by(form_id=form_id)
             
-            if not form:
-                return False, "Form not found"
-
-            # Start transaction
-            db.session.begin_nested()
-
-            deletion_stats = {
-                'form_questions': 0,
-                'form_answers': 0,
-                'form_submissions': 0,
-                'answers_submitted': 0,
-                'attachments': 0
-            }
-
-            # 1. Soft delete form questions
-            form_questions = FormQuestion.query.filter_by(
-                form_id=form_id,
-                is_deleted=False
-            ).all()
-
-            for fq in form_questions:
-                fq.soft_delete()
-                deletion_stats['form_questions'] += 1
-
-                # 2. Soft delete form answers
-                form_answers = FormAnswer.query.filter_by(
-                    form_question_id=fq.id,
-                    is_deleted=False
-                ).all()
-
-                for fa in form_answers:
-                    fa.soft_delete()
-                    deletion_stats['form_answers'] += 1
-
-            # 3. Soft delete form submissions and related data
-            submissions = FormSubmission.query.filter_by(
-                form_id=form_id,
-                is_deleted=False
-            ).all()
-
-            for submission in submissions:
-                submission.soft_delete()
-                deletion_stats['form_submissions'] += 1
-
-                # 4. Soft delete attachments
-                attachments = Attachment.query.filter_by(
-                    form_submission_id=submission.id,
-                    is_deleted=False
-                ).all()
-
-                for attachment in attachments:
-                    attachment.soft_delete()
-                    deletion_stats['attachments'] += 1
-
-                # 5. Soft delete submitted answers
-                submitted_answers = (AnswerSubmitted.query
-                    .join(FormAnswer)
-                    .join(FormQuestion)
-                    .filter(
-                        FormQuestion.form_id == form_id,
-                        AnswerSubmitted.is_deleted == False
-                    ).all())
-
-                for submitted in submitted_answers:
-                    submitted.soft_delete()
-                    deletion_stats['answers_submitted'] += 1
-
-            # Finally soft delete the form
-            form.soft_delete()
-
-            # Commit all changes
-            db.session.commit()
-            
-            logger.info(f"Form {form_id} and associated data soft deleted. Stats: {deletion_stats}")
-            return True, deletion_stats
-
-        except Exception as e:
-            db.session.rollback()
-            error_msg = f"Error deleting form: {str(e)}"
-            logger.error(error_msg)
-            return False, error_msg
+        submissions = query.order_by(FormSubmission.submitted_at.desc()).all()
+        
+        return {
+            'total_submissions': len(submissions),
+            'submission_trends': cls._calculate_submission_trends(submissions)['submission_trends'],
+            'latest_submission': submissions[0].submitted_at.isoformat() if submissions else None,
+            'forms_submitted': len(set(s.form_id for s in submissions))
+        }

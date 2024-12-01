@@ -70,16 +70,22 @@ class FormSubmission(TimestampMixin, SoftDeleteMixin, db.Model):
             'is_signature': attachment.is_signature
         } for attachment in self.attachments]
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self):
         """Convert form submission to dictionary representation."""
         return {
             'id': self.id,
-            'form': self._get_form_info(),  # Changed from form_submitted
+            'form': self._get_form_info(),
             'submitted_by': self.submitted_by,
             'submitted_at': self.submitted_at.isoformat() if self.submitted_at else None,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
-            'answers': self._get_answers_list(),
+            'answers': [{
+                'question': answer.form_answer.form_question.question.text,
+                'question_type': answer.form_answer.get_question_type(),
+                'value': answer.form_answer.answer.value if not answer.form_answer.requires_text_answer() else None,
+                'text_answered': answer.text_answered if answer.form_answer.requires_text_answer() else None,
+                'remarks': answer.form_answer.answer.remarks
+            } for answer in self.answers_submitted],
             'attachments': self._get_attachments_list()
         }
 

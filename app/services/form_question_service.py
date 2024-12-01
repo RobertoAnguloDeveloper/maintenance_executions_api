@@ -142,44 +142,30 @@ class FormQuestionService:
             .first())
 
     @staticmethod
-    def get_questions_by_form(form_id: int) -> Tuple[Optional[Dict], List[FormQuestion]]:
-        """
-        Get all non-deleted questions for a specific form
+    def get_questions_by_form(form_id: int) -> List[Dict]:
+        """Get all questions for a specific form"""
+        form, questions = FormQuestionService.get_questions_by_form(form_id)
         
-        Args:
-            form_id: ID of the form
+        if not form:
+            return []
             
-        Returns:
-            Tuple containing form info and list of form questions
-        """
-        try:
-            # Get form details first
-            form = (FormQuestion.query
-                .filter_by(form_id=form_id, is_deleted=False)
-                .options(joinedload(FormQuestion.form))
-                .first())
-            
-            if not form:
-                return None, []
+        result = []
+        
+        for question in questions:
+            question_dict = {
+                'id': question.id,
+                'question_id': question.question_id,
+                'order_number': question.order_number,
+                'question': {
+                    'text': question.question.text,
+                    'type': question.question.question_type.type,
+                    'requires_text_answer': question.question.question_type.type in ['text', 'date', 'datetime'],
+                    'remarks': question.question.remarks
+                } if question.question else None
+            }
+            result.append(question_dict)
                 
-            # Get form questions
-            questions = (FormQuestion.query
-                .filter_by(
-                    form_id=form_id,
-                    is_deleted=False
-                )
-                .options(
-                    joinedload(FormQuestion.question)
-                        .joinedload(Question.question_type)
-                )
-                .order_by(FormQuestion.order_number)
-                .all())
-                
-            return form.form, questions
-                
-        except Exception as e:
-            logger.error(f"Error fetching form questions: {str(e)}")
-            raise
+        return result
         
     @staticmethod
     def reorder_questions(

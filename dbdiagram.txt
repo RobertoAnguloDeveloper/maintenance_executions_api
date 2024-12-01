@@ -1,0 +1,188 @@
+//Tabla: environments
+Table environments {
+  id integer [primary key]
+  name varchar(50) [not null, unique]
+  description text
+  created_at timestamp [not null]
+  updated_at timestamp [not null]
+  is_deleted boolean [not null]
+  deleted_at timestamp [null]
+}
+
+//Tabla: roles
+Table roles {
+  id integer [primary key]
+  name varchar(50) [not null, unique]
+  description text
+  is_super_user boolean [not null]
+  created_at timestamp [not null]
+  updated_at timestamp [not null]
+  is_deleted boolean [not null]
+  deleted_at timestamp [null]
+}
+
+//Tabla: permissions
+Table permissions {
+  id integer [primary key]
+  name varchar(50) [not null, unique]
+  description text
+  created_at timestamp [not null]
+  updated_at timestamp [not null]
+  is_deleted boolean [not null]
+  deleted_at timestamp [null]
+}
+
+//Tabla: role_permissions
+Table role_permissions {
+  id integer [primary key]
+  role_id integer [not null]
+  permission_id integer [not null]
+  created_at timestamp [not null]
+  updated_at timestamp [not null]
+  is_deleted boolean [not null]
+  deleted_at timestamp [null]
+}
+
+//Tabla: users
+Table users {
+  id integer [primary key]
+  first_name varchar(255) [not null]
+  last_name varchar(255) [not null]
+  email varchar(255) [not null]
+  contact_number varchar(100) [not null]
+  username varchar(50) [not null, unique]
+  password_hash varchar(255) [not null]
+  role_id integer
+  environment_id integer
+  created_at timestamp [not null]
+  updated_at timestamp [not null]
+  is_deleted boolean [not null]
+  deleted_at timestamp [null]
+}
+
+//Tabla: question_types
+Table question_types {
+  id integer [primary key]
+  type varchar(255) [not null]
+  created_at timestamp [not null]
+  updated_at timestamp [not null]
+  is_deleted boolean [not null]
+  deleted_at timestamp [null]
+}
+
+//Tabla: questions
+Table questions {
+  id integer [primary key]
+  text varchar(255) [not null]
+  question_type_id integer [not null]
+  remarks text
+  created_at timestamp [not null]
+  updated_at timestamp [not null]
+  is_deleted boolean [not null]
+  deleted_at timestamp [null]
+}
+
+//Tabla: answers
+Table answers {
+  id integer [primary key]
+  value text
+  remarks text
+  created_at timestamp [not null]
+  updated_at timestamp [not null]
+  is_deleted boolean [not null]
+  deleted_at timestamp [null]
+}
+
+//Tabla: forms
+Table forms {
+  id integer [primary key]
+  title varchar(255) [not null]
+  description text
+  user_id integer [not null]
+  is_public boolean [not null]
+  created_at timestamp [not null]
+  updated_at timestamp [not null]
+  is_deleted boolean [not null]
+  deleted_at timestamp [null]
+}
+
+//Tabla: form_questions
+Table form_questions {
+  id integer [primary key]
+  form_id integer [not null]
+  question_id integer [not null]
+  order_number integer
+  created_at timestamp [not null]
+  updated_at timestamp [not null]
+  is_deleted boolean [not null]
+  deleted_at timestamp [null]
+}
+
+//Tabla: form_responses
+Table form_submissions {
+  id integer [primary key]
+  form_id integer [not null]
+  submitted_by varchar(50) [not null]
+  submitted_at timestamp
+  created_at timestamp [not null]
+  updated_at timestamp [not null]
+  is_deleted boolean [not null]
+  deleted_at timestamp [null]
+}
+
+//Tabla: form_answers
+Table form_answers {
+  id integer [primary key]
+  form_question_id integer [not null]
+  answer_id integer [not null]
+  created_at timestamp [not null]
+  updated_at timestamp [not null]
+  is_deleted boolean [not null]
+  deleted_at timestamp [null]
+}
+
+//Tabla: form_responses
+Table answers_submitted {
+  id integer [primary key]
+  form_answers_id integer [not null]
+  text_answer text [null]
+  form_submissions_id integer [not null]
+  created_at timestamp [not null]
+  updated_at timestamp [not null]
+  is_deleted boolean [not null]
+  deleted_at timestamp [null]
+}
+
+//Tabla: attachments
+Table attachments {
+  id integer [primary key]
+  form_submission_id integer [not null]
+  file_type varchar(50) [not null]
+  file_path varchar(255) [not null]
+  is_signature boolean [not null]
+  created_at timestamp [not null]
+  updated_at timestamp [not null]
+  is_deleted boolean [not null]
+  deleted_at timestamp [null]
+}
+
+//Relaciones
+// Gestión de usuarios y permisos
+Ref: users.role_id > roles.id
+Ref: users.environment_id > environments.id
+Ref: role_permissions.role_id > roles.id
+Ref: role_permissions.permission_id > permissions.id
+
+// Estructura de preguntas y formularios
+Ref: questions.question_type_id > question_types.id
+Ref: form_questions.form_id > forms.id
+Ref: form_questions.question_id > questions.id
+Ref: forms.user_id > users.id
+
+// Respuestas y submissions
+Ref: form_answers.form_question_id > form_questions.id
+Ref: answers_submitted.form_answers_id > form_answers.id
+Ref: answers_submitted.form_submissions_id > form_submissions.id
+Ref: form_answers.answer_id > answers.id
+Ref: attachments.form_submission_id > form_submissions.id
+Ref: form_submissions.form_id > forms.id

@@ -9,9 +9,9 @@ class AnswerSubmitted(TimestampMixin, SoftDeleteMixin, db.Model):
     __tablename__ = 'answers_submitted'
     
     id = db.Column(db.Integer, primary_key=True)
-    form_answers_id = db.Column(db.Integer, db.ForeignKey('form_answers.id'), nullable=False)  # Changed to match schema
+    form_answers_id = db.Column(db.Integer, db.ForeignKey('form_answers.id'), nullable=False)
     text_answered = db.Column(db.Text)
-    form_submissions_id = db.Column(db.Integer, db.ForeignKey('form_submissions.id'), nullable=False)  # Changed to match schema
+    form_submissions_id = db.Column(db.Integer, db.ForeignKey('form_submissions.id'), nullable=False)
 
     # Relationships
     form_answer = db.relationship('FormAnswer', back_populates='submissions')
@@ -19,6 +19,13 @@ class AnswerSubmitted(TimestampMixin, SoftDeleteMixin, db.Model):
 
     def __repr__(self):
         return f'<AnswerSubmitted {self.id}>'
+
+    def requires_text_answer(self):
+        """Check if this submission requires a text answer based on question type"""
+        if self.form_answer and self.form_answer.form_question.question:
+            question_type = self.form_answer.form_question.question.question_type.type
+            return question_type in ['text', 'date', 'datetime']
+        return False
 
     def to_dict(self):
         """Convert answer submitted to dictionary representation with related data."""
@@ -41,35 +48,12 @@ class AnswerSubmitted(TimestampMixin, SoftDeleteMixin, db.Model):
                     } if self.form_answer.answer else None
                 }
 
-            # Get form submission and form data
-            form_data = None
-            if self.form_submission and self.form_submission.form:
-                form_data = {
-                    'id': self.form_submission.form.id,
-                    'title': self.form_submission.form.title,
-                    'description': self.form_submission.form.description,
-                    'is_public': self.form_submission.form.is_public,
-                    'creator': {
-                        'id': self.form_submission.form.creator.id,
-                        'username': self.form_submission.form.creator.username,
-                        'environment': {
-                            'id': self.form_submission.form.creator.environment_id,
-                            'name': self.form_submission.form.creator.environment.name if self.form_submission.form.creator.environment else None
-                        }
-                    } if self.form_submission.form.creator else None
-                }
-
             return {
                 'id': self.id,
                 'form_answers_id': self.form_answers_id,
                 'text_answered': self.text_answered,
                 'form_submissions_id': self.form_submissions_id,
                 'form_answer': form_answer_data,
-                'form': form_data,
-                'submission': {
-                    'submitted_by': self.form_submission.submitted_by,
-                    'submitted_at': self.form_submission.submitted_at.isoformat() if self.form_submission.submitted_at else None
-                } if self.form_submission else None,
                 'created_at': self.created_at.isoformat() if self.created_at else None,
                 'updated_at': self.updated_at.isoformat() if self.updated_at else None
             }

@@ -101,6 +101,7 @@ class Form(TimestampMixin, SoftDeleteMixin, db.Model):
         # Base question data
         formatted_question = {
             'id': question.id,
+            'form_question_id': form_question.id,
             'text': question.text,
             'type': question_type,
             'order_number': form_question.order_number,

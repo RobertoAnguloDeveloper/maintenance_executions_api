@@ -29,20 +29,18 @@ def get_all_forms():
         current_user = get_jwt_identity()
         user = AuthService.get_current_user(current_user)
         
-        is_public = request.args.get('is_public', type=bool)
+        forms = FormController.get_all_forms(user)
         
-        # Role-based access control
-        if user.role.name == RoleType.TECHNICIAN:
-            # Technicians can only see public forms
-            forms = FormController.get_public_forms()
-        elif user.role.name in [RoleType.SUPERVISOR, RoleType.SITE_MANAGER]:
-            # Supervisors and Site Managers see forms in their environment
-            forms = FormController.get_forms_by_environment(user.environment_id)
-        else:
-            # Admins see all forms
-            forms = FormController.get_all_forms(is_public=is_public)
-        
-        return jsonify([form.to_dict() for form in forms]), 200
+        response_data = []
+        for form in forms:
+            try:
+                form_dict = form.to_dict()
+                response_data.append(form_dict)
+            except Exception as e:
+                logger.error(f"Error converting form {form.id} to dict: {str(e)}")
+                continue
+
+        return jsonify(response_data), 200
         
     except Exception as e:
         logger.error(f"Error getting forms: {str(e)}")

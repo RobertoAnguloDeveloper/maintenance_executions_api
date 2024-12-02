@@ -63,10 +63,10 @@ class FormController:
             return None, str(e)
 
     @staticmethod
-    def get_all_forms(is_public: bool = None) -> list:
-        """Get all forms"""
+    def get_all_forms(user) -> list:
+        """Get all forms with role-based access"""
         try:
-            return FormService.get_all_forms(is_public)
+            return FormService.get_all_forms(user)
         except Exception as e:
             logger.error(f"Error in get_all_forms controller: {str(e)}")
             return []

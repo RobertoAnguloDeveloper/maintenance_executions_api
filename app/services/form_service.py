@@ -15,6 +15,8 @@ from sqlalchemy.orm import joinedload
 from sqlalchemy.exc import IntegrityError
 import logging
 
+from app.utils.permission_manager import RoleType
+
 logger = logging.getLogger(__name__)
 
 class FormService(BaseService):
@@ -51,19 +53,41 @@ class FormService(BaseService):
             return None, str(e)
 
     @staticmethod
-    def get_all_forms(is_public=None):
-        """Get all forms with optional public filter"""
-        query = Form.query.options(
-            joinedload(Form.creator),
-            joinedload(Form.form_questions)
-                .joinedload(FormQuestion.question)
-                .joinedload(Question.question_type),
-        ).filter_by(is_deleted=False)
+    def get_all_forms(user, is_public=None):
+        """Get all forms with role-based filtering and public forms"""
+        try:
+            query = Form.query.options(
+                joinedload(Form.creator),
+                joinedload(Form.form_questions)
+                    .joinedload(FormQuestion.question)
+                    .joinedload(Question.question_type),
+            ).filter_by(is_deleted=False)
 
-        if is_public is not None:
-            query = query.filter_by(is_public=is_public)
+            # Base query for public forms
+            public_forms = query.filter_by(is_public=True)
+
+            # If user is admin, they see all forms
+            if user.role.is_super_user:
+                return query.order_by(Form.created_at.desc()).all()
             
-        return query.order_by(Form.created_at.desc()).all()
+            # For supervisors and site managers, see forms in their environment plus public forms
+            elif user.role.name in [RoleType.SUPERVISOR, RoleType.SITE_MANAGER]:
+                return (query.filter(
+                    db.or_(
+                        Form.is_public == True,
+                        db.and_(
+                            Form.creator.has(User.environment_id == user.environment_id)
+                        )
+                    )
+                ).order_by(Form.created_at.desc()).all())
+                
+            # For technicians, see public forms only
+            else:
+                return public_forms.order_by(Form.created_at.desc()).all()
+
+        except Exception as e:
+            logger.error(f"Error in get_all_forms: {str(e)}")
+            raise
 
     @staticmethod
     def get_form(form_id: int) -> Optional[Form]:

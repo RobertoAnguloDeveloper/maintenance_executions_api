@@ -1,3 +1,5 @@
+from typing import Optional
+from app.models.form import Form
 from app.services.form_service import FormService
 from app.utils.permission_manager import PermissionManager, EntityType, RoleType
 import logging
@@ -20,14 +22,9 @@ class FormController:
             return None, str(e)
 
     @staticmethod
-    def get_form(form_id: int) -> tuple:
-        """Get a specific form with relationships"""
-        try:
-            # Call the service layer
-            return FormService.get_form(form_id)
-        except Exception as e:
-            logger.error(f"Error in get_form controller: {str(e)}")
-            return None, str(e)
+    def get_form(form_id: int) -> Optional[Form]:
+        """Get a specific form"""
+        return FormService.get_form(form_id)
     
     @staticmethod
     def get_forms_by_environment(environment_id: int) -> list:

@@ -66,18 +66,10 @@ class FormService(BaseService):
         return query.order_by(Form.created_at.desc()).all()
 
     @staticmethod
-    def get_form(form_id: int) -> tuple[Optional[Form], Optional[str]]:
-        """
-        Get non-deleted form with relationships
-        
-        Args:
-            form_id (int): Form ID
-            
-        Returns:
-            tuple: (Form object or None, Error message or None)
-        """
+    def get_form(form_id: int) -> Optional[Form]:
+        """Get non-deleted form with relationships"""
         try:
-            form = Form.query.options(
+            return Form.query.options(
                 joinedload(Form.creator),
                 joinedload(Form.form_questions)
                     .joinedload(FormQuestion.question)
@@ -86,15 +78,9 @@ class FormService(BaseService):
                 id=form_id,
                 is_deleted=False
             ).first()
-            
-            if not form:
-                return None, "Form not found"
-                
-            return form, None
-            
         except Exception as e:
-            logger.error(f"Error getting form: {str(e)}")
-            return None, str(e)
+            logger.error(f"Error getting form {form_id}: {str(e)}")
+            raise
 
     def get_form_with_relations(self, form_id):
         """Get form with all related data loaded"""
@@ -407,21 +393,26 @@ class FormService(BaseService):
     def delete_form(cls, form_id: int) -> Tuple[bool, Union[Dict, str]]:
         """Delete form and related data"""
         try:
-            def _delete():
-                form = cls.get_form(form_id)
-                if not form:
-                    raise ValueError("Form not found")
+            # Get the form with is_deleted=False check
+            form = cls.get_form(form_id)
+            if not form:
+                return False, "Form not found"
 
-                deletion_stats = cls._perform_cascading_delete(form)
-                form.soft_delete()
-                return deletion_stats
-
-            result = cls._handle_transaction(_delete)
-            return (True, result[0]) if result[0] else (False, result[1])
+            # Perform cascading soft delete
+            deletion_stats = cls._perform_cascading_delete(form)
+            
+            # Finally soft delete the form itself
+            form.soft_delete()
+            db.session.commit()
+            
+            logger.info(f"Form {form_id} and associated data deleted successfully")
+            return True, deletion_stats
 
         except Exception as e:
-            logger.error(f"Error deleting form: {str(e)}")
-            return False, str(e)
+            db.session.rollback()
+            error_msg = f"Error deleting form: {str(e)}"
+            logger.error(error_msg)
+            return False, error_msg
 
     @staticmethod
     def _perform_cascading_delete(form: Form) -> Dict:

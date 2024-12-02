@@ -56,11 +56,8 @@ def get_form(form_id):
         current_user = get_jwt_identity()
         user = AuthService.get_current_user(current_user)
         
-        # The issue is here - we need to unpack the tuple
-        form, error = FormController.get_form(form_id)  # Modified
-        if error:
-            return jsonify({"error": error}), 404
-            
+        # Get the form
+        form = FormController.get_form(form_id)  # This should return a Form object
         if not form:
             return jsonify({"error": "Form not found"}), 404
 

@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Any, Dict, List, Optional
 from app.models.form import Form
 from app.services.form_service import FormService
 from app.utils.permission_manager import PermissionManager, EntityType, RoleType
@@ -45,16 +45,13 @@ class FormController:
             return []
 
     @staticmethod
-    def get_forms_by_creator(username: str) -> tuple:
+    def get_forms_by_creator(username: str) -> List[Form]:
         """Get forms by creator username"""
         try:
-            forms = FormService.get_forms_by_creator(username)
-            if forms is None:
-                return None, "Creator not found"
-            return forms, None
+            return FormService.get_forms_by_creator(username)
         except Exception as e:
             logger.error(f"Error in get_forms_by_creator controller: {str(e)}")
-            return None, str(e)
+            return None
 
     @staticmethod
     def get_public_forms() -> tuple:
@@ -75,13 +72,25 @@ class FormController:
             return []
 
     @staticmethod
-    def update_form(form_id: int, **kwargs) -> tuple:
+    def update_form(form_id: int, **kwargs) -> Dict[str, Any]:
         """Update a form"""
         try:
-            return FormService.update_form(form_id, **kwargs)
+            form, error = FormService.update_form(form_id, **kwargs)
+            
+            if error:
+                return {"error": error}
+                
+            if not form:
+                return {"error": "Form not found"}
+                
+            return {
+                "message": "Form updated successfully",
+                "form": form.to_dict()
+            }
+
         except Exception as e:
             logger.error(f"Error in update_form controller: {str(e)}")
-            return None, str(e)
+            return {"error": str(e)}
 
     @staticmethod
     def delete_form(form_id: int) -> tuple:

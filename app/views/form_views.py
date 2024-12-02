@@ -81,25 +81,28 @@ def get_form(form_id):
 def get_forms_by_environment(environment_id):
     """Get all forms associated with an environment"""
     try:
-        print(f"Accessing forms for environment ID: {environment_id}")  # Debug log
+        logger.info(f"Accessing forms for environment ID: {environment_id}")
         
         current_user = get_jwt_identity()
         user = AuthService.get_current_user(current_user)
-        print(f"Current user: {user.username}, Environment: {user.environment_id}")  # Debug log
+        logger.info(f"Current user: {user.username}, Environment: {user.environment_id}")
 
         # If user is not admin, they can only see forms from their environment
         if not user.role.is_super_user and user.environment_id != environment_id:
-            print(f"Unauthorized access attempt by {user.username}")  # Debug log
+            logger.warning(f"Unauthorized access attempt by {user.username}")
             return jsonify({"error": "Unauthorized access"}), 403
 
-        result = FormController.get_forms_by_environment(environment_id)
+        forms = FormController.get_forms_by_environment(environment_id)
         
-        if result is None:
-            print(f"Environment {environment_id} not found")  # Debug log
+        if forms is None:
+            logger.info(f"Environment {environment_id} not found")
             return jsonify({"error": "Environment not found"}), 404
 
-        print(f"Found {len(result)} forms for environment {environment_id}")  # Debug log
-        return jsonify({"forms": result}), 200
+        # Convert forms to dict representation
+        forms_data = [form.to_dict() for form in forms if hasattr(form, 'to_dict')]
+        logger.info(f"Found {len(forms_data)} forms for environment {environment_id}")
+        
+        return jsonify({"forms": forms_data}), 200
 
     except Exception as e:
         logger.error(f"Error getting forms by environment: {str(e)}")
@@ -110,8 +113,13 @@ def get_forms_by_environment(environment_id):
 def get_public_forms():
     """Get all public forms"""
     try:
-        result = FormController.get_public_forms()
-        return jsonify(result), 200
+        forms = FormController.get_public_forms()
+        if forms is None:
+            return jsonify([]), 200
+            
+        # Convert forms to dict representation
+        forms_data = [form.to_dict() for form in forms if hasattr(form, 'to_dict')]
+        return jsonify(forms_data), 200
 
     except Exception as e:
         logger.error(f"Error getting public forms: {str(e)}")
@@ -121,34 +129,34 @@ def get_public_forms():
 @jwt_required()
 @PermissionManager.require_permission(action="view", entity_type=EntityType.FORMS)
 def get_forms_by_creator(username: str):
-    """
-    Get all forms created by a specific username with proper authorization
-    """
+    """Get all forms created by a specific username with proper authorization"""
     try:
         current_user = get_jwt_identity()
         user = AuthService.get_current_user(current_user)
 
-        # Get the forms through controller
         forms = FormController.get_forms_by_creator(username)
         
         if forms is None:
-            return jsonify({
-                "error": "Creator not found or has been deleted"
-            }), 404
+            return jsonify({"error": "Creator not found or error retrieving forms"}), 404
 
-        # For non-admin users, filter based on role
-        if not user.role.is_super_user:
-            if user.role.name == RoleType.TECHNICIAN:
-                # Technicians can only see public forms
-                forms = [form for form in forms if form['is_public']]
-            elif user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                # Site Managers and Supervisors can only see forms in their environment
-                forms = [
-                    form for form in forms 
-                    if form['created_by']['environment']['id'] == user.environment_id
-                ]
+        # Convert forms to list of dictionaries
+        forms_data = []
+        try:
+            for form in forms:
+                form_dict = form.to_dict()
+                # Filter based on role
+                if not user.role.is_super_user:
+                    if user.role.name == RoleType.TECHNICIAN and not form_dict['is_public']:
+                        continue
+                    elif user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
+                        if form_dict['created_by']['environment']['id'] != user.environment_id:
+                            continue
+                forms_data.append(form_dict)
+        except Exception as e:
+            logger.error(f"Error processing forms data: {str(e)}")
+            return jsonify({"error": "Error processing forms data"}), 500
 
-        return jsonify(forms), 200
+        return jsonify(forms_data), 200
 
     except Exception as e:
         logger.error(f"Error getting forms by creator {username}: {str(e)}")
@@ -407,7 +415,7 @@ def update_form(form_id):
 
         result = FormController.update_form(form_id, **update_data)
         
-        if result.get("error"):
+        if "error" in result:
             return jsonify({"error": result["error"]}), 400
             
         logger.info(f"Form {form_id} updated successfully by user {user.username}")

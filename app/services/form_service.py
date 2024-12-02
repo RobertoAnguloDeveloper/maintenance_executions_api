@@ -92,19 +92,24 @@ class FormService(BaseService):
     @staticmethod
     def get_forms_by_environment(environment_id: int) -> list[Form]:
         """Get non-deleted forms for an environment"""
-        return (Form.query
-            .join(Form.creator)
-            .filter(
-                Form.is_deleted == False,
-                User.environment_id == environment_id,
-                User.is_deleted == False
-            )
-            .options(
-                joinedload(Form.creator).joinedload(User.environment),
-                joinedload(Form.form_questions)
-            ).filter_by(is_deleted=False)
-            .order_by(Form.created_at.desc())
-            .all())
+        try:
+            forms = (Form.query
+                .join(Form.creator)
+                .filter(
+                    Form.is_deleted == False,
+                    User.environment_id == environment_id,
+                    User.is_deleted == False
+                )
+                .options(
+                    joinedload(Form.creator).joinedload(User.environment),
+                    joinedload(Form.form_questions).joinedload(FormQuestion.question)
+                )
+                .order_by(Form.created_at.desc())
+                .all())
+            return forms
+        except Exception as e:
+            logger.error(f"Error in get_forms_by_environment: {str(e)}")
+            return []
 
     @staticmethod
     def get_form_submissions_count(form_id: int) -> int:
@@ -137,21 +142,24 @@ class FormService(BaseService):
         return query.order_by(Form.created_at.desc()).all()
 
     @staticmethod
-    def get_public_forms() -> list[Form]:
+    def get_public_forms() -> List[Form]:
         """Get non-deleted public forms"""
-        return (Form.query
-            .filter_by(
-                is_public=True,
-                is_deleted=False
-            )
-            .options(
-                joinedload(Form.creator).joinedload(User.environment),
-                joinedload(Form.form_questions)
-                    .joinedload(FormQuestion.question)
-                    .joinedload(Question.question_type)
-            )
-            .order_by(Form.created_at.desc())
-            .all())
+        try:
+            forms = (Form.query
+                .filter_by(
+                    is_public=True,
+                    is_deleted=False
+                )
+                .options(
+                    joinedload(Form.creator).joinedload(User.environment),
+                    joinedload(Form.form_questions).joinedload(FormQuestion.question)
+                )
+                .order_by(Form.created_at.desc())
+                .all())
+            return forms
+        except Exception as e:
+            logger.error(f"Error in get_public_forms: {str(e)}")
+            return None
 
     @staticmethod
     def get_forms_by_creator(username: str) -> Optional[List[Form]]:
@@ -170,23 +178,19 @@ class FormService(BaseService):
                         user_id=user.id,
                         is_deleted=False
                     )
-                    .join(User, User.id == Form.user_id)
+                    .join(User)
                     .options(
-                        joinedload(Form.creator)
-                            .joinedload(User.environment),
+                        joinedload(Form.creator).joinedload(User.environment),
                         joinedload(Form.form_questions)
-                            .filter(FormQuestion.is_deleted == False)
                             .joinedload(FormQuestion.question)
-                            .filter(Question.is_deleted == False)
                             .joinedload(Question.question_type)
-                            .filter(QuestionType.is_deleted == False)
                     )
                     .filter(User.is_deleted == False)
                     .order_by(Form.created_at.desc())
                     .all())
         except Exception as e:
-            logger.error(f"Error getting forms by creator: {str(e)}")
-            raise
+            logger.error(f"Error in get_forms_by_creator: {str(e)}")
+            return None
 
     @classmethod
     def create_form(cls, title: str, description: str, user_id: int, is_public: bool = False) -> Tuple[Optional[Form], Optional[str]]:
@@ -203,22 +207,37 @@ class FormService(BaseService):
 
         return cls._handle_transaction(_create)
 
-    @classmethod
-    def update_form(cls, form_id: int, **kwargs) -> Tuple[Optional[Form], Optional[str]]:
+    @staticmethod
+    def update_form(form_id: int, **kwargs) -> Tuple[Optional[Form], Optional[str]]:
         """Update a form's details"""
-        def _update():
-            form = Form.query.get(form_id)
+        try:
+            # Get form with is_deleted=False check
+            form = Form.query.filter_by(id=form_id, is_deleted=False).first()
             if not form:
-                raise ValueError("Form not found")
-                
+                return None, "Form not found"
+
+            # Update allowed fields
             for key, value in kwargs.items():
                 if hasattr(form, key):
                     setattr(form, key, value)
             
             form.updated_at = datetime.utcnow()
-            return form
+            
+            try:
+                db.session.commit()
+                return form, None
+            except IntegrityError as e:
+                db.session.rollback()
+                logger.error(f"Database integrity error: {str(e)}")
+                return None, "Database integrity error"
+            except Exception as e:
+                db.session.rollback()
+                logger.error(f"Error committing changes: {str(e)}")
+                return None, str(e)
 
-        return cls._handle_transaction(_update)
+        except Exception as e:
+            logger.error(f"Error updating form: {str(e)}")
+            return None, str(e)
 
     @classmethod
     def add_questions_to_form(cls, form_id: int, questions: List[Dict]) -> Tuple[Optional[Form], Optional[str]]:

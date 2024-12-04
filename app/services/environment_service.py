@@ -58,12 +58,17 @@ class EnvironmentService(BaseService):
     def get_all_environments(include_deleted=False):
         """Get all environments with optional inclusion of deleted records"""
         try:
-            query = Environment.query
+            query = Environment.query.options(
+                joinedload(Environment.users),  # Assuming there's a users relationship
+                joinedload(Environment.forms)   # Assuming there's a forms relationship
+            )
+            
             if not include_deleted:
                 query = query.filter(Environment.is_deleted == False)
+                
             return query.order_by(Environment.id).all()
         except Exception as e:
-            logger.error(f"Error getting environments: {str(e)}")
+            logger.error(f"Database error getting environments: {str(e)}", exc_info=True)
             raise
 
     @staticmethod

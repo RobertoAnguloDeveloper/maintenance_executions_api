@@ -17,8 +17,9 @@ class EnvironmentController:
         return EnvironmentService.get_environment_by_name(name)
 
     @staticmethod
-    def get_all_environments():
-        return EnvironmentService.get_all_environments()
+    def get_all_environments(include_deleted=False):
+        """Get all environments with optional inclusion of deleted records"""
+        return EnvironmentService.get_all_environments_with_relations(include_deleted=include_deleted)
 
     @staticmethod
     def update_environment(environment_id, **kwargs):

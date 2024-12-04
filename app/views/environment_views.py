@@ -42,18 +42,34 @@ def get_all_environments():
     """Get all environments with role-based filtering"""
     try:
         current_user = get_jwt_identity()
-        user = AuthService.get_current_user(current_user)
+        current_user_obj = AuthService.get_current_user(current_user)
+        
+        if not current_user_obj:
+            return jsonify({"error": "User not found"}), 404
 
-        if user.role.is_super_user:
-            # Admins see all environments
-            environments = EnvironmentController.get_all_environments()
-        else:
-            # Other roles only see their own environment
-            environments = [EnvironmentController.get_environment(user.environment_id)] if user.environment_id else []
+        # Only admins can see deleted environments
+        include_deleted = (current_user_obj.role.is_super_user and 
+                         request.args.get('include_deleted', '').lower() == 'true')
 
-        return jsonify([env.to_dict() for env in environments if env]), 200
+        try:
+            if current_user_obj.role.is_super_user:
+                environments = EnvironmentController.get_all_environments(include_deleted=include_deleted)
+            else:
+                # Non-admin users only see their own active environment
+                environments = [EnvironmentController.get_environment(current_user_obj.environment_id)] if current_user_obj.environment_id else []
+
+            return jsonify([
+                env.to_dict(
+                    include_deleted=current_user_obj.role.is_super_user
+                ) for env in environments if env
+            ]), 200
+
+        except Exception as e:
+            logger.error(f"Database error while fetching environments: {str(e)}")
+            return jsonify({"error": f"Database error: {str(e)}"}), 500
+
     except Exception as e:
-        logger.error(f"Error getting environments: {str(e)}")
+        logger.error(f"Error in get_all_environments: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
 
 @environment_bp.route('/<int:environment_id>', methods=['GET'])

@@ -59,8 +59,7 @@ class EnvironmentService(BaseService):
         """Get all environments with optional inclusion of deleted records"""
         try:
             query = Environment.query.options(
-                joinedload(Environment.users),  # Assuming there's a users relationship
-                joinedload(Environment.forms)   # Assuming there's a forms relationship
+                joinedload(Environment.users)   # Assuming there's a forms relationship
             )
             
             if not include_deleted:

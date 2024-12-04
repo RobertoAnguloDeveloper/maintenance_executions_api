@@ -12,8 +12,9 @@ from sqlalchemy.orm import joinedload
 from sqlalchemy.exc import IntegrityError
 from datetime import datetime
 from app.services.base_service import BaseService
-import helpers
 import logging
+from app.utils.helpers import validate_email
+
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,7 @@ class UserService(BaseService):
             if User.query.filter_by(username=username).first():
                 db.session.rollback()
                 return None, "Username already exists"
-            if helpers.validate_email(email):
+            if validate_email(email):
                 db.session.rollback()
                 return None, "Please enter a valid email address xxx@xxx.xxx.xxx etc..."
             new_user = User(

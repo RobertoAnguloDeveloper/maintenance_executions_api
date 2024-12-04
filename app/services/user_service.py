@@ -29,9 +29,9 @@ class UserService(BaseService):
             if User.query.filter_by(username=username).first():
                 db.session.rollback()
                 return None, "Username already exists"
-            if validate_email(email):
+            if not validate_email(email):
                 db.session.rollback()
-                return None, "Please enter a valid email address xxx@xxx.xxx.xxx etc..."
+                return None, "Please enter a valid email address (e.g., user@domain.com)"
             new_user = User(
                 first_name=first_name, 
                 last_name=last_name, 
@@ -122,13 +122,13 @@ class UserService(BaseService):
         user = User.query.get(user_id)
         print(kwargs.items())
         if user:
-            for key, value in kwargs.items():
-                if key == 'email':
-                    if validate_email(value):
-                        db.session.rollback()
-                        return None, "Please enter a valid email address xxx@xxx.xxx.xxx etc..."         
+            for key, value in kwargs.items():      
                 if key == 'password':
                     user.set_password(value)
+                elif key == 'email':
+                    if not validate_email(value):
+                        return None, "Please enter a valid email address (e.g., user@domain.com)"
+                    setattr(user, key, value)
                 if key == 'environment_id':
                     if Environment.query.filter_by(id=value, is_deleted=False).first():
                         setattr(user, key, value)

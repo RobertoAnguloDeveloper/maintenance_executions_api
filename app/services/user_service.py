@@ -123,8 +123,10 @@ class UserService(BaseService):
         print(kwargs.items())
         if user:
             for key, value in kwargs.items():
-                print("ENTRO")
-                
+                if key == 'email':
+                    if validate_email(value):
+                        db.session.rollback()
+                        return None, "Please enter a valid email address xxx@xxx.xxx.xxx etc..."         
                 if key == 'password':
                     user.set_password(value)
                 if key == 'environment_id':

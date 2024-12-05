@@ -74,12 +74,8 @@ def create_app(config_class=None):
     """Create and configure the Flask application."""
     app = Flask(__name__)
     CORS(app, resources={
-        r"/*": {
-            "origins": ["http://localhost:5000",
-                        "http://localhost:3000",
-                        "http://127.0.0.1:5000",
-                        "http://3.129.92.139",
-                        "*"],
+        r"/api/*": {
+            "origins": ["*"],
             "methods": ["OPTIONS", "GET", "POST", "PUT", "DELETE"],
             "allow_headers": [
             "Content-Type", 

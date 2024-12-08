@@ -15,6 +15,7 @@ from .role_permission_views import role_permission_bp
 from .form_question_views import form_question_bp
 from .form_answer_views import form_answer_bp
 from .frontend_views import frontend_bp
+from .export_views import export_bp
 
 def register_blueprints(app):
     blueprints = [
@@ -32,6 +33,7 @@ def register_blueprints(app):
         (role_permission_bp, '/api/role-permissions'),
         (form_question_bp, '/api/form-questions'),
         (form_answer_bp, '/api/form-answers'),
+        (export_bp, '/api/export'),
         (frontend_bp, ''),
     ]
 

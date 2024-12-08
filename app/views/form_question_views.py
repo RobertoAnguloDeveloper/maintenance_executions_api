@@ -75,47 +75,46 @@ def create_form_question():
 def get_all_form_questions():
     """Get all form questions with filtering"""
     try:
-        current_user = get_jwt_identity()
-        user = AuthService.get_current_user(current_user)
-
         # Get query parameters
         page = request.args.get('page', type=int, default=1)
         per_page = request.args.get('per_page', type=int, default=50)
         form_id = request.args.get('form_id', type=int)
-        question_type_id = request.args.get('question_type_id', type=int)
-        include_answers = request.args.get('include_answers', type=lambda v: v.lower() == 'true', default=False)
-
-        # Determine environment filtering based on user role
-        environment_id = None if user.role.is_super_user else user.environment_id
-
-        form_questions = FormQuestionController.get_all_form_questions(
-            environment_id=environment_id,
+        
+        # Get all form questions
+        questions = FormQuestionController.get_all_form_questions(
             include_relations=True
         )
 
-        if form_questions is None:
-            return jsonify({"error": "Error retrieving form questions"}), 500
-
-        # Apply additional filters
+        # Apply form_id filter if provided
         if form_id:
-            form_questions = [fq for fq in form_questions if fq.form_id == form_id]
+            questions = [q for q in questions if q.get('form_id') == form_id]
+
+        # Calculate pagination
+        total_items = len(questions)
+        start_idx = (page - 1) * per_page
+        end_idx = start_idx + per_page
         
-        if question_type_id:
-            form_questions = [fq for fq in form_questions 
-                            if fq.question.question_type_id == question_type_id]
+        # Ensure we don't exceed list bounds
+        start_idx = min(start_idx, total_items)
+        end_idx = min(end_idx, total_items)
+        
+        paginated_questions = questions[start_idx:end_idx]
 
         return jsonify({
             "metadata": {
-                "total_items": len(form_questions),
+                "total_items": total_items,
                 "current_page": page,
                 "per_page": per_page,
             },
-            "items": [fq.to_dict() for fq in form_questions]
+            "items": paginated_questions
         }), 200
 
     except Exception as e:
         logger.error(f"Error getting form questions: {str(e)}")
-        return jsonify({"error": "Internal server error"}), 500
+        return jsonify({
+            "error": "Internal server error",
+            "details": str(e)
+        }), 500
 
 @form_question_bp.route('/form/<int:form_id>', methods=['GET'])
 @jwt_required()
@@ -133,7 +132,11 @@ def get_form_questions(form_id):
                 return jsonify({"error": "Unauthorized access to form"}), 403
 
         questions = FormQuestionController.get_questions_by_form(form_id)
-        return jsonify(questions), 200
+        
+        return jsonify({
+            "total_questions": len(questions),
+            "questions": questions
+        }), 200
 
     except Exception as e:
         logger.error(f"Error getting form questions: {str(e)}")

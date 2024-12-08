@@ -71,33 +71,39 @@ class FormQuestionService:
             return None, str(e)
         
     @staticmethod
-    def get_all_form_questions(
-        environment_id: Optional[int] = None,
-        include_relations: bool = True
-    ) -> list[FormQuestion]:
-        """Get all form questions with optional filtering"""
-        query = FormQuestion.query.filter_by(is_deleted=False)
+    def get_all_form_questions(environment_id=None, include_relations=True):
+        """Get all form questions with proper relationship loading"""
+        try:
+            # Base query with proper joins and filtering
+            query = (db.session.query(FormQuestion)
+                    .filter(FormQuestion.is_deleted == False)
+                    .join(Form, Form.id == FormQuestion.form_id)
+                    .filter(Form.is_deleted == False)
+                    .join(Question, Question.id == FormQuestion.question_id)
+                    .filter(Question.is_deleted == False))
 
-        if include_relations:
-            query = query.options(
-                joinedload(FormQuestion.form),
-                joinedload(FormQuestion.question)
-                    .joinedload(Question.question_type)
-            )
+            if include_relations:
+                query = query.options(
+                    joinedload(FormQuestion.form).joinedload(Form.creator),
+                    joinedload(FormQuestion.question).joinedload(Question.question_type),
+                    joinedload(FormQuestion.form_answers).joinedload(FormAnswer.answer)
+                )
 
-        if environment_id:
-            query = query.join(
-                Form,
-                User
-            ).filter(
-                User.environment_id == environment_id,
-                User.is_deleted == False
-            )
+            if environment_id:
+                query = (query.join(User, User.id == Form.user_id)
+                        .filter(User.environment_id == environment_id))
 
-        return query.order_by(
-            FormQuestion.form_id,
-            FormQuestion.order_number.nullslast()
-        ).all()
+            # Order by form and question order
+            questions = (query.order_by(
+                FormQuestion.form_id,
+                FormQuestion.order_number.nullslast()
+            ).all())
+
+            return questions
+
+        except Exception as e:
+            logger.error(f"Error in get_all_form_questions: {str(e)}")
+            return None
         
     @staticmethod
     def get_form_question_with_relations(form_question_id: int) -> Optional[FormQuestion]:
@@ -142,30 +148,36 @@ class FormQuestionService:
             .first())
 
     @staticmethod
-    def get_questions_by_form(form_id: int) -> List[Dict]:
-        """Get all questions for a specific form"""
-        form, questions = FormQuestionService.get_questions_by_form(form_id)
+    def get_questions_by_form(form_id: int) -> Tuple[Optional[Form], List[FormQuestion]]:
+        """
+        Get all questions for a specific form with optimized loading
         
-        if not form:
-            return []
+        Args:
+            form_id: ID of the form
             
-        result = []
-        
-        for question in questions:
-            question_dict = {
-                'id': question.id,
-                'question_id': question.question_id,
-                'order_number': question.order_number,
-                'question': {
-                    'text': question.question.text,
-                    'type': question.question.question_type.type,
-                    'requires_text_answer': question.question.question_type.type in ['text', 'date', 'datetime'],
-                    'remarks': question.question.remarks
-                } if question.question else None
-            }
-            result.append(question_dict)
-                
-        return result
+        Returns:
+            Tuple containing the form and its questions
+        """
+        try:
+            form = Form.query.options(
+                joinedload(Form.creator)
+            ).get(form_id)
+            
+            if not form:
+                return None, []
+
+            questions = FormQuestion.query.options(
+                joinedload(FormQuestion.question).joinedload(Question.question_type)
+            ).filter_by(
+                form_id=form_id,
+                is_deleted=False
+            ).order_by(FormQuestion.order_number).all()
+
+            return form, questions
+
+        except Exception as e:
+            logger.error(f"Error getting questions for form {form_id}: {str(e)}")
+            return None, []
         
     @staticmethod
     def reorder_questions(

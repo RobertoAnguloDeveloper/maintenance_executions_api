@@ -1,7 +1,9 @@
 # app/controllers/form_question_controller.py
 
+from flask_jwt_extended import get_jwt_identity
 from app.models.form import Form
 from app.models.form_question import FormQuestion
+from app.services.auth_service import AuthService
 from app.services.form_question_service import FormQuestionService
 from sqlalchemy.exc import SQLAlchemyError
 from typing import Dict, List, Optional
@@ -20,28 +22,31 @@ class FormQuestionController:
         )
         
     @staticmethod
-    def get_all_form_questions(environment_id=None, include_relations=True):
-        """
-        Get all form questions with optional filtering
-        
-        Args:
-            environment_id (int, optional): Filter by environment ID
-            include_relations (bool): Whether to include related data
-            
-        Returns:
-            list: List of FormQuestion objects or None if error occurs
-        """
+    def get_all_form_questions(include_relations=True):
+        """Get all form questions with proper environment filtering"""
         try:
-            return FormQuestionService.get_all_form_questions(
-                environment_id=environment_id,
+            questions = FormQuestionService.get_all_form_questions(
                 include_relations=include_relations
             )
-        except SQLAlchemyError as e:
-            logger.error(f"Database error in controller getting form questions: {str(e)}")
-            return None
+            
+            if questions is None:
+                return []
+                
+            # Convert to dictionary representation
+            questions_data = []
+            for question in questions:
+                try:
+                    question_dict = question.to_dict()
+                    questions_data.append(question_dict)
+                except Exception as e:
+                    logger.error(f"Error converting question {question.id} to dict: {str(e)}")
+                    continue
+                    
+            return questions_data
+            
         except Exception as e:
-            logger.error(f"Unexpected error in controller getting form questions: {str(e)}")
-            return None
+            logger.error(f"Error in get_all_form_questions controller: {str(e)}")
+            return []
 
     @staticmethod
     def get_form_question(form_question_id):
@@ -75,37 +80,54 @@ class FormQuestionController:
         
         Args:
             form_id: ID of the form
-            
+                
         Returns:
             List of dictionaries containing form questions
         """
-        form, questions = FormQuestionService.get_questions_by_form(form_id)
-        
-        if not form:
-            return []
+        try:
+            form, questions = FormQuestionService.get_questions_by_form(form_id)
             
-        result = []
-        
-        for i, question in enumerate(questions):
-            question_dict = {
-                'id': question.id,
-                'question_id': question.question_id,
-                'order_number': question.order_number,
-                'question': question.question.to_dict() if question.question else None
+            if not form:
+                return []
+                
+            result = []
+            
+            # Create basic form info once
+            form_info = {
+                "id": form.id,
+                "title": form.title,
+                "description": form.description,
+                "creator": {
+                    "id": form.creator.id,
+                    "username": form.creator.username,
+                    "environment_id": form.creator.environment_id
+                } if form.creator else None
             }
             
-            # Add form info only to the first question
-            if i == 0:
-                question_dict['form'] = {
-                    "id": form.id,
-                    "title": form.title,
-                    "description": form.description,
-                    "creator": form._get_creator_dict() if hasattr(form, '_get_creator_dict') else None
+            # Add questions with minimal form info
+            for question in questions:
+                question_dict = {
+                    'id': question.id,
+                    'question_id': question.question.id if question.question else None,
+                    'order_number': question.order_number,
+                    'question': {
+                        'text': question.question.text,
+                        'type': question.question.question_type.type,
+                        'remarks': question.question.remarks
+                    } if question.question else None
                 }
                 
-            result.append(question_dict)
+                # Add form info only to first question
+                if not result:
+                    question_dict['form'] = form_info
+                    
+                result.append(question_dict)
+                
+            return result
             
-        return result
+        except Exception as e:
+            logger.error(f"Error getting form questions: {str(e)}")
+            return []
 
     @staticmethod
     def update_form_question(form_question_id, **kwargs):

@@ -1,4 +1,4 @@
-# services/export_service.py
+# app/services/export_service.py
 
 from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
@@ -6,123 +6,242 @@ import os
 import logging
 from datetime import datetime
 from typing import Optional, List, Dict, Any
-from weasyprint import HTML, CSS
-import pandas as pd
-import json
-from reportlab.pdfgen import canvas
+from docx import Document
+from docx.shared import Inches, Pt, RGBColor
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
+from docx.enum.style import WD_STYLE_TYPE
 from reportlab.lib import colors
-from reportlab.lib.pagesizes import letter, A4
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
-from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from werkzeug.exceptions import BadRequest
 
 logger = logging.getLogger(__name__)
 
 class ExportService:
     def __init__(self):
-        self.supported_formats = ['PNG', 'JPG', 'PDF', 'CSV', 'XLSX']
-        self.font_path = os.path.join(os.path.dirname(__file__), '../static/fonts/Arial.ttf')
-        self.form_width = 1200
-        self.form_height = 1600
+        self.supported_formats = ['PDF', 'DOCX']
         self.margin = 40
-        
-    def export_as_image(self, form_data: Dict[str, Any], format: str = 'PNG') -> bytes:
+
+    def export_as_pdf(self, form_data: Dict[str, Any]) -> bytes:
         """
-        Export form as image
-        
-        Args:
-            form_data: Dictionary containing form data including:
-                - title: Form title
-                - questions: List of questions
-                - answers: List of answers (optional)
-                - signature: Base64 encoded signature image (optional)
-            format: Output format ('PNG' or 'JPG')
-            
-        Returns:
-            bytes: Image data in specified format
+        Export form as fillable PDF
         """
         try:
-            if format not in ['PNG', 'JPG']:
-                raise ValueError(f"Unsupported image format: {format}")
+            self._validate_form_data(form_data)
+            buffer = BytesIO()
+            doc = SimpleDocTemplate(
+                buffer,
+                pagesize=letter,
+                rightMargin=50,
+                leftMargin=50,
+                topMargin=50,
+                bottomMargin=50
+            )
 
-            # Create blank image with white background
-            img = Image.new('RGB', (self.form_width, self.form_height), 'white')
-            draw = ImageDraw.Draw(img)
+            # Prepare styles
+            styles = getSampleStyleSheet()
+            styles.add(ParagraphStyle(
+                name='FormTitle',
+                parent=styles['Heading1'],
+                fontSize=16,
+                spaceAfter=20,
+                alignment=1  # Center
+            ))
+            styles.add(ParagraphStyle(
+                name='FormField',
+                parent=styles['Normal'],
+                fontSize=12,
+                spaceAfter=20,
+                leading=16
+            ))
+            styles.add(ParagraphStyle(
+                name='Answer',
+                parent=styles['Normal'],
+                fontSize=12,
+                leftIndent=20,
+                spaceAfter=15
+            ))
 
-            # Load font
-            title_font = ImageFont.truetype(self.font_path, 36)
-            normal_font = ImageFont.truetype(self.font_path, 24)
+            # Build content
+            story = []
 
-            # Draw form title
-            title = form_data.get('title', 'Untitled Form')
-            draw.text((self.margin, self.margin), title, font=title_font, fill='black')
+            # Header
+            story.append(Paragraph(form_data['title'], styles['FormTitle']))
+            if form_data.get('description'):
+                story.append(Paragraph(form_data['description'], styles['Normal']))
+            story.append(Spacer(1, 20))
 
-            y_position = self.margin + 80
-            questions = form_data.get('questions', [])
-            answers = form_data.get('answers', {})
+            # Form Information
+            story.append(Paragraph("Form Information:", styles['Heading2']))
+            story.append(Paragraph(f"Environment: {form_data['created_by']['environment']['name']}", styles['Normal']))
+            story.append(Paragraph(f"Created by: {form_data['created_by']['fullname']}", styles['Normal']))
+            story.append(Spacer(1, 20))
 
-            # Draw questions and answers
-            for i, question in enumerate(questions, 1):
-                # Draw question
-                question_text = f"{i}. {question['text']}"
-                draw.text((self.margin, y_position), question_text, font=normal_font, fill='black')
-                y_position += 40
+            # Response Information
+            story.append(Paragraph("Response Information:", styles['Heading2']))
+            story.append(Paragraph("Name: _________________________________", styles['FormField']))
+            story.append(Paragraph("Date: _________________________________", styles['FormField']))
+            story.append(Spacer(1, 20))
 
-                # Draw answer if available
-                answer = answers.get(str(question['id']), '')
-                if answer:
-                    draw.text((self.margin + 20, y_position), f"Answer: {answer}", 
-                            font=normal_font, fill='darkblue')
-                    y_position += 40
+            # Questions
+            story.append(Paragraph("Questions:", styles['Heading2']))
+            for i, question in enumerate(form_data.get('questions', []), 1):
+                # Question text with number
+                story.append(Paragraph(f"{i}. {question['text']}", styles['FormField']))
+                
+                # Add appropriate answer field based on question type
+                if question['type'] == 'text':
+                    story.append(Paragraph("Answer: _________________________________", styles['Answer']))
+                
+                elif question['type'] == 'checkbox':
+                    # If there are predefined possible answers, use them
+                    if question.get('possible_answers'):
+                        for answer in question['possible_answers']:
+                            story.append(Paragraph(f"□ {answer['value']}", styles['Answer']))
+                    else:
+                        story.append(Paragraph("□ Yes    □ No", styles['Answer']))
+                
+                elif question['type'] == 'multiple_choices':
+                    if question.get('possible_answers'):
+                        for answer in question['possible_answers']:
+                            story.append(Paragraph(f"□ {answer['value']}", styles['Answer']))
+                    else:
+                        story.append(Paragraph("(No options available)", styles['Answer']))
 
-                y_position += 20
+                # Add remarks field if applicable
+                if question.get('remarks'):
+                    story.append(Paragraph(f"Remarks: {question['remarks']}", styles['Answer']))
 
-            # Add signature if present
-            signature = form_data.get('signature')
-            if signature:
-                try:
-                    # Convert base64 signature to image and paste
-                    sig_img = Image.open(BytesIO(signature))
-                    sig_img = sig_img.resize((300, 100), Image.Resampling.LANCZOS)
-                    img.paste(sig_img, (self.margin, y_position))
-                    y_position += 120
-                except Exception as e:
-                    logger.error(f"Error processing signature: {str(e)}")
+                story.append(Spacer(1, 10))
 
-            # Add timestamp
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            draw.text((self.margin, y_position), f"Generated: {timestamp}", 
-                     font=normal_font, fill='gray')
+            # Signature section
+            story.append(Spacer(1, 30))
+            story.append(Paragraph("Signatures:", styles['Heading2']))
+            story.append(Paragraph("Completed by: _______________________________", styles['FormField']))
+            story.append(Paragraph("Date: ____________________", styles['FormField']))
+            story.append(Paragraph("Reviewed by: ________________________________", styles['FormField']))
+            story.append(Paragraph("Date: ____________________", styles['FormField']))
 
-            # Convert to output format
-            output = BytesIO()
-            img.save(output, format=format.upper())
-            return output.getvalue()
+            # Build PDF
+            doc.build(story)
+            return buffer.getvalue()
 
         except Exception as e:
-            logger.error(f"Error generating {format} image: {str(e)}")
-            raise BadRequest(f"Error generating {format} image: {str(e)}")
+            logger.error(f"Error generating PDF: {str(e)}")
+            raise BadRequest(f"Error generating PDF: {str(e)}")
 
-    def _draw_question_answer(self, draw, question: Dict, answer: str, 
-                            y_pos: int, font) -> int:
-        """Helper method to draw question and answer on image"""
-        question_text = f"Q: {question['text']}"
-        draw.text((self.margin, y_pos), question_text, font=font, fill='black')
-        y_pos += 30
-        
-        if answer:
-            answer_text = f"A: {answer}"
-            draw.text((self.margin + 20, y_pos), answer_text, font=font, fill='blue')
-            y_pos += 30
+    def export_as_docx(self, form_data: Dict[str, Any]) -> bytes:
+        """
+        Export form as fillable DOCX
+        """
+        try:
+            self._validate_form_data(form_data)
+            doc = Document()
             
-        return y_pos + 10
+            # Add title
+            title = doc.add_heading(form_data['title'], 0)
+            title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            
+            # Add description if present
+            if form_data.get('description'):
+                desc = doc.add_paragraph(form_data['description'])
+                desc.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            doc.add_paragraph()
+
+            # Form Information
+            doc.add_heading('Form Information:', level=1)
+            doc.add_paragraph(f"Environment: {form_data['created_by']['environment']['name']}")
+            doc.add_paragraph(f"Created by: {form_data['created_by']['fullname']}")
+            doc.add_paragraph()
+
+            # Response Information
+            doc.add_heading('Response Information:', level=1)
+            doc.add_paragraph("Name: _________________________________")
+            doc.add_paragraph("Date: _________________________________")
+            doc.add_paragraph()
+
+            # Questions
+            doc.add_heading('Questions:', level=1)
+            
+            # Iterate through questions
+            for i, question in enumerate(form_data.get('questions', []), 1):
+                # Question text with number
+                p = doc.add_paragraph()
+                p.add_run(f"{i}. {question['text']}").bold = True
+                
+                # Add appropriate answer field based on question type
+                if question['type'] == 'text':
+                    doc.add_paragraph("Answer: _________________________________")
+                
+                elif question['type'] == 'checkbox':
+                    # If there are predefined possible answers, use them
+                    if question.get('possible_answers'):
+                        for answer in question['possible_answers']:
+                            p = doc.add_paragraph()
+                            p.add_run(f"□ {answer['value']}")
+                            p.style = 'List Bullet'  # Add bullets for better formatting
+                    else:
+                        doc.add_paragraph("□ Yes    □ No    □ N/A")
+                
+                elif question['type'] == 'multiple_choices':
+                    if question.get('possible_answers'):
+                        for answer in question['possible_answers']:
+                            p = doc.add_paragraph()
+                            p.add_run(f"□ {answer['value']}")
+                            p.style = 'List Bullet'
+                    else:
+                        doc.add_paragraph("(No options available)")
+                
+                # Add remarks field if exists
+                if question.get('remarks'):
+                    p = doc.add_paragraph()
+                    p.add_run("Remarks: ").bold = True
+                    p.add_run(question['remarks'])
+                
+                doc.add_paragraph()  # Add spacing between questions
+
+            # Signature section
+            doc.add_heading('Signatures:', level=1)
+            doc.add_paragraph("Completed by: _______________________________")
+            doc.add_paragraph("Date: ____________________")
+            doc.add_paragraph()
+            doc.add_paragraph("Reviewed by: ________________________________")
+            doc.add_paragraph("Date: ____________________")
+
+            # Save to buffer
+            buffer = BytesIO()
+            doc.save(buffer)
+            buffer.seek(0)
+            return buffer.getvalue()
+
+        except Exception as e:
+            logger.error(f"Error generating DOCX: {str(e)}")
+            raise BadRequest(f"Error generating DOCX: {str(e)}")
 
     @staticmethod
     def get_supported_formats() -> List[str]:
         """Get list of supported export formats"""
-        return ['PNG', 'JPG', 'PDF', 'CSV', 'XLSX']
+        return ['PDF', 'DOCX']
+    
+    def _validate_form_data(self, form_data: Dict[str, Any]) -> None:
+        """Validate form data structure before export"""
+        required_fields = ['title', 'created_by', 'questions']
+        for field in required_fields:
+            if field not in form_data:
+                raise ValueError(f"Missing required field: {field}")
+                
+        if not isinstance(form_data['questions'], list):
+            raise ValueError("Questions must be a list")
+            
+        for question in form_data['questions']:
+            if 'text' not in question or 'type' not in question:
+                raise ValueError("Each question must have 'text' and 'type' fields")
 
     def validate_format(self, format: str) -> None:
         """Validate export format"""
         if format.upper() not in self.supported_formats:
-            raise ValueError(f"Unsupported format: {format}. Supported formats: {', '.join(self.supported_formats)}")
+            raise ValueError(
+                f"Unsupported format: {format}. Supported formats: {', '.join(self.supported_formats)}"
+            )

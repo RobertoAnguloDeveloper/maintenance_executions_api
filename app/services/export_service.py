@@ -1,3 +1,5 @@
+# app/services/export_service.py
+
 from PIL import Image
 from io import BytesIO
 import os
@@ -16,6 +18,35 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from werkzeug.exceptions import BadRequest
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_EXPORT_PARAMS = {
+    'page_size': 'A4',
+    'margin_top': 1.0,
+    'margin_bottom': 1.0,
+    'margin_left': 1.0,
+    'margin_right': 1.0,
+    'line_spacing': 1.15,
+    'font_size': 12,
+    'logo_path': None,
+    'signatures': [
+        {
+            'title': 'Completed by',
+            'name': '',
+            'date': True
+        },
+        {
+            'title': 'Reviewed by',
+            'name': '',
+            'date': True
+        }
+    ],
+    'signature_spacing': {
+        'before_section': 20,  # Space before signatures section
+        'between_signatures': 10,  # Space between signatures
+        'after_date': 5,  # Space after date field
+        'after_section': 20  # Space after signatures section
+    }
+}
 
 class ExportService:
     def __init__(self):
@@ -40,22 +71,83 @@ class ExportService:
             if 'text' not in question or 'type' not in question:
                 raise ValueError("Each question must have 'text' and 'type' fields")
 
-    def _validate_format_params(self, params: Dict[str, Any]) -> None:
-        """Validate export format parameters"""
-        if params['page_size'] not in self.page_sizes:
-            raise ValueError(f"Invalid page size. Must be one of: {', '.join(self.page_sizes.keys())}")
+    def _add_signatures_pdf(self, story: List, signatures: List[Dict], styles: Dict, spacing_params: Dict) -> None:
+        """Add signature section to PDF document with customizable spacing"""
+        # Space before signatures section
+        story.append(Spacer(1, spacing_params.get('before_section', 20)))
+        story.append(Paragraph("Signatures:", styles['Heading2']))
         
-        for margin in ['margin_top', 'margin_bottom', 'margin_left', 'margin_right']:
-            if params[margin] < 0.1 or params[margin] > 3.0:
-                raise ValueError(f"{margin} must be between 0.1 and 3.0 inches")
-        
-        if params['line_spacing'] < 1.0 or params['line_spacing'] > 3.0:
-            raise ValueError("Line spacing must be between 1.0 and 3.0")
-        
-        if params['font_size'] < 8 or params['font_size'] > 16:
-            raise ValueError("Font size must be between 8 and 16 points")
+        for i, sig in enumerate(signatures):
+            # Add signature block
+            signature_block = []
+            
+            # Title and signature line
+            signature_block.append(
+                Paragraph(f"{sig['title']}: {'_' * 40}", styles['FormField'])
+            )
+            
+            # Pre-filled name if provided
+            if sig.get('name'):
+                signature_block.append(
+                    Paragraph(f"Name: {sig['name']}", styles['FormField'])
+                )
+            else:
+                signature_block.append(
+                    Paragraph("Name: _________________________________", styles['FormField'])
+                )
+            
+            # Date field if requested
+            if sig.get('date', True):
+                signature_block.append(
+                    Paragraph("Date: ____________________", styles['FormField'])
+                )
+                # Space after date field
+                signature_block.append(Spacer(1, spacing_params.get('after_date', 5)))
+            
+            story.append(Table([[cell] for cell in signature_block],
+                            spaceBefore=0,
+                            spaceAfter=spacing_params.get('between_signatures', 10)))
+            
+        # Space after signatures section
+        story.append(Spacer(1, spacing_params.get('after_section', 20)))
 
-    def _add_logo_to_pdf(self, story: List, logo_path: str, width: float = 2.0) -> None:
+    def _add_signatures_docx(self, doc: Document, signatures: List[Dict], spacing_params: Dict) -> None:
+        """Add signature section to DOCX document with customizable spacing"""
+        doc.add_paragraph().add_run().add_break()
+        doc.add_heading('Signatures:', level=1)
+        
+        # Space before first signature
+        doc.add_paragraph().add_run().add_break()
+        
+        for i, sig in enumerate(signatures):
+            # Add signature block
+            p = doc.add_paragraph()
+            p.style.paragraph_format.space_before = Pt(spacing_params.get('before_section', 20))
+            p.add_run(f"{sig['title']}: ").bold = True
+            p.add_run("_" * 40)
+            
+            # Pre-filled name if provided
+            p = doc.add_paragraph()
+            p.style.paragraph_format.space_before = Pt(spacing_params.get('after_date', 5))
+            p.add_run("Name: ").bold = True
+            if sig.get('name'):
+                p.add_run(sig['name'])
+            else:
+                p.add_run("_" * 40)
+            
+            # Date field if requested
+            if sig.get('date', True):
+                p = doc.add_paragraph()
+                p.style.paragraph_format.space_before = Pt(spacing_params.get('after_date', 5))
+                p.add_run("Date: ").bold = True
+                p.add_run("_" * 20)
+            
+            # Space between signatures
+            if i < len(signatures) - 1:
+                p = doc.add_paragraph()
+                p.style.paragraph_format.space_after = Pt(spacing_params.get('between_signatures', 10))
+
+    def _add_logo_pdf(self, story: List, logo_path: str, width: float = 2.0) -> None:
         """Add logo to PDF document"""
         try:
             if os.path.exists(logo_path):
@@ -68,22 +160,20 @@ class ExportService:
         except Exception as e:
             logger.warning(f"Could not add logo to PDF: {str(e)}")
 
-    def _add_logo_to_docx(self, doc: Document, logo_path: str, width: float = 2.0) -> None:
+    def _add_logo_docx(self, doc: Document, logo_path: str, width: float = 2.0) -> None:
         """Add logo to DOCX document"""
         try:
             if os.path.exists(logo_path):
                 if logo_path.lower().endswith(('.png', '.jpg', '.jpeg')):
                     doc.add_picture(logo_path, width=Inches(width))
-                    doc.add_paragraph()
+                    doc.add_paragraph()  # Add spacing after logo
         except Exception as e:
             logger.warning(f"Could not add logo to DOCX: {str(e)}")
 
     def export_as_pdf(self, form_data: Dict[str, Any], format_params: Dict[str, Any]) -> bytes:
         """Export form as fillable PDF with custom formatting"""
         try:
-            # Validate input
             self._validate_form_data(form_data)
-            self._validate_format_params(format_params)
 
             buffer = BytesIO()
             page_size = self.page_sizes[format_params['page_size']]
@@ -135,7 +225,7 @@ class ExportService:
 
             # Add logo if provided
             if format_params.get('logo_path'):
-                self._add_logo_to_pdf(story, format_params['logo_path'])
+                self._add_logo_pdf(story, format_params['logo_path'])
 
             # Title and description
             story.append(Paragraph(form_data['title'], styles['FormTitle']))
@@ -183,14 +273,14 @@ class ExportService:
 
                 story.append(Spacer(1, 10))
 
-            # Signature section
-            story.append(Spacer(1, 20))
-            story.append(Paragraph("Signatures:", styles['Heading2']))
-            story.append(Paragraph("Completed by: _______________________________", styles['FormField']))
-            story.append(Paragraph("Date: ____________________", styles['FormField']))
-            story.append(Spacer(1, 10))
-            story.append(Paragraph("Reviewed by: ________________________________", styles['FormField']))
-            story.append(Paragraph("Date: ____________________", styles['FormField']))
+            # Add signatures
+            if 'signatures' in format_params:
+                self._add_signatures_pdf(
+                    story,
+                    format_params['signatures'],
+                    styles,
+                    format_params.get('signature_spacing', DEFAULT_EXPORT_PARAMS['signature_spacing'])
+                )
 
             # Build PDF
             doc.build(story)
@@ -203,9 +293,7 @@ class ExportService:
     def export_as_docx(self, form_data: Dict[str, Any], format_params: Dict[str, Any]) -> bytes:
         """Export form as fillable DOCX with custom formatting"""
         try:
-            # Validate input
             self._validate_form_data(form_data)
-            self._validate_format_params(format_params)
 
             doc = Document()
             
@@ -229,7 +317,7 @@ class ExportService:
 
             # Add logo if provided
             if format_params.get('logo_path'):
-                self._add_logo_to_docx(doc, format_params['logo_path'])
+                self._add_logo_docx(doc, format_params['logo_path'])
 
             # Set default font size and line spacing
             style = doc.styles['Normal']
@@ -285,13 +373,8 @@ class ExportService:
 
                 doc.add_paragraph()
 
-            # Signature section
-            doc.add_heading('Signatures:', level=1)
-            doc.add_paragraph("Completed by: _______________________________")
-            doc.add_paragraph("Date: ____________________")
-            doc.add_paragraph()
-            doc.add_paragraph("Reviewed by: ________________________________")
-            doc.add_paragraph("Date: ____________________")
+            # Add signatures
+            self._add_signatures_docx(doc, format_params.get('signatures', []))
 
             # Save to buffer
             buffer = BytesIO()
@@ -314,3 +397,23 @@ class ExportService:
             raise ValueError(
                 f"Unsupported format: {format}. Supported formats: {', '.join(self.supported_formats)}"
             )
+            
+    def _validate_signature_spacing(self, spacing: dict) -> tuple[bool, Optional[str]]:
+        """Validate signature spacing parameters"""
+        try:
+            valid_ranges = {
+                'before_section': (5, 50),
+                'between_signatures': (5, 30),
+                'after_date': (2, 20),
+                'after_section': (5, 50)
+            }
+            
+            for key, (min_val, max_val) in valid_ranges.items():
+                if key in spacing:
+                    value = float(spacing[key])
+                    if not min_val <= value <= max_val:
+                        return False, f"Signature spacing {key} must be between {min_val} and {max_val}"
+                        
+            return True, None
+        except ValueError:
+            return False, "Invalid signature spacing values"

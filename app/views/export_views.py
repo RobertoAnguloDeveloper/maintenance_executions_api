@@ -19,9 +19,27 @@ DEFAULT_EXPORT_PARAMS = {
     'margin_bottom': 1.0,
     'margin_left': 1.0,
     'margin_right': 1.0,
-    'line_spacing': 1.0,
+    'line_spacing': 1.15,
     'font_size': 12,
-    'logo_path': None
+    'logo_path': None,
+    'signatures': [
+        {
+            'title': 'Completed by',
+            'name': '',
+            'date': True
+        },
+        {
+            'title': 'Reviewed by',
+            'name': '',
+            'date': True
+        }
+    ],
+    'signature_spacing': {
+        'before_section': 20,  # Space before signatures section
+        'between_signatures': 10,  # Space between signatures
+        'after_date': 5,  # Space after date field
+        'after_section': 20  # Space after signatures section
+    }
 }
 
 @export_bp.route('/form/<int:form_id>', methods=['GET'])
@@ -30,17 +48,6 @@ DEFAULT_EXPORT_PARAMS = {
 def export_form_data(form_id):
     """
     Export form data in specified format with custom formatting options
-    
-    Query Parameters:
-        format (str): Export format (PDF, DOCX)
-        page_size (str): Page size (A4, LETTER, LEGAL)
-        margin_top (float): Top margin in inches
-        margin_bottom (float): Bottom margin in inches
-        margin_left (float): Left margin in inches
-        margin_right (float): Right margin in inches
-        line_spacing (float): Line spacing multiplier
-        font_size (int): Base font size in points
-        logo_path (str): Path to logo image file
     """
     try:
         current_user = get_jwt_identity()
@@ -74,8 +81,31 @@ def export_form_data(form_id):
             'margin_right': float(request.args.get('margin_right', DEFAULT_EXPORT_PARAMS['margin_right'])),
             'line_spacing': float(request.args.get('line_spacing', DEFAULT_EXPORT_PARAMS['line_spacing'])),
             'font_size': int(request.args.get('font_size', DEFAULT_EXPORT_PARAMS['font_size'])),
-            'logo_path': request.args.get('logo_path', DEFAULT_EXPORT_PARAMS['logo_path'])
+            'logo_path': request.args.get('logo_path', DEFAULT_EXPORT_PARAMS['logo_path']),
+            'signature_spacing': {
+                'before_section': float(request.args.get('signature_space_before', DEFAULT_EXPORT_PARAMS['signature_spacing']['before_section'])),
+                'between_signatures': float(request.args.get('signature_space_between', DEFAULT_EXPORT_PARAMS['signature_spacing']['between_signatures'])),
+                'after_date': float(request.args.get('signature_space_date', DEFAULT_EXPORT_PARAMS['signature_spacing']['after_date'])),
+                'after_section': float(request.args.get('signature_space_after', DEFAULT_EXPORT_PARAMS['signature_spacing']['after_section']))
+            }
         }
+
+        # Get signature parameters
+        signatures = []
+        signature_count = min(max(1, int(request.args.get('signature_count', 2))), 5)  # Between 1 and 5
+        
+        for i in range(signature_count):
+            signature = {
+                'title': request.args.get(
+                    f'signature{i+1}_title',
+                    DEFAULT_EXPORT_PARAMS['signatures'][i]['title'] if i < len(DEFAULT_EXPORT_PARAMS['signatures']) else f'Signature {i+1}'
+                ),
+                'name': request.args.get(f'signature{i+1}_name', ''),
+                'date': request.args.get(f'signature{i+1}_date', 'true').lower() == 'true'
+            }
+            signatures.append(signature)
+
+        format_params['signatures'] = signatures
 
         # Validate logo path if provided
         if format_params['logo_path']:
@@ -103,7 +133,6 @@ def export_form_data(form_id):
                 }
             },
             'is_public': form.is_public,
-            'submissions_count': len([s for s in form.submissions if not s.is_deleted]),
             'questions': [
                 {
                     'id': q.question.id,
@@ -127,10 +156,8 @@ def export_form_data(form_id):
             ]
         }
 
-        # Generate export based on format
+        # Generate export
         try:
-            logger.info(f"Generating {export_format} export for form {form_id}")
-            
             if export_format == 'PDF':
                 file_data = export_service.export_as_pdf(form_data, format_params)
                 mimetype = 'application/pdf'
@@ -141,7 +168,6 @@ def export_form_data(form_id):
                 mimetype = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
                 filename = f'form_{form_id}_{datetime.now().strftime("%Y%m%d")}.docx'
 
-            # Log export attempt
             logger.info(f"Form {form_id} exported as {export_format} by user {current_user}")
 
             return send_file(
@@ -217,6 +243,31 @@ def get_format_parameters():
                 "range": [8, 16],
                 "default": DEFAULT_EXPORT_PARAMS['font_size']
             },
+            "signature_spacing": {
+                "description": "Spacing configuration for signature section",
+                "parameters": {
+                    "signature_space_before": {
+                        "description": "Space before signature section in points",
+                        "range": [5, 50],
+                        "default": DEFAULT_EXPORT_PARAMS['signature_spacing']['before_section']
+                    },
+                    "signature_space_between": {
+                        "description": "Space between signatures in points",
+                        "range": [5, 30],
+                        "default": DEFAULT_EXPORT_PARAMS['signature_spacing']['between_signatures']
+                    },
+                    "signature_space_date": {
+                        "description": "Space after date field in points",
+                        "range": [2, 20],
+                        "default": DEFAULT_EXPORT_PARAMS['signature_spacing']['after_date']
+                    },
+                    "signature_space_after": {
+                        "description": "Space after signature section in points",
+                        "range": [5, 50],
+                        "default": DEFAULT_EXPORT_PARAMS['signature_spacing']['after_section']
+                    }
+                }
+            },
             "logo_path": {
                 "description": "Path to logo image file (PNG, JPG, JPEG)",
                 "default": DEFAULT_EXPORT_PARAMS['logo_path']
@@ -255,7 +306,13 @@ def preview_export_parameters(form_id):
             'margin_right': float(request.args.get('margin_right', DEFAULT_EXPORT_PARAMS['margin_right'])),
             'line_spacing': float(request.args.get('line_spacing', DEFAULT_EXPORT_PARAMS['line_spacing'])),
             'font_size': int(request.args.get('font_size', DEFAULT_EXPORT_PARAMS['font_size'])),
-            'logo_path': request.args.get('logo_path', DEFAULT_EXPORT_PARAMS['logo_path'])
+            'logo_path': request.args.get('logo_path', DEFAULT_EXPORT_PARAMS['logo_path']),
+            'signature_spacing': {
+                'before_section': float(request.args.get('signature_space_before', DEFAULT_EXPORT_PARAMS['signature_spacing']['before_section'])),
+                'between_signatures': float(request.args.get('signature_space_between', DEFAULT_EXPORT_PARAMS['signature_spacing']['between_signatures'])),
+                'after_date': float(request.args.get('signature_space_date', DEFAULT_EXPORT_PARAMS['signature_spacing']['after_date'])),
+                'after_section': float(request.args.get('signature_space_after', DEFAULT_EXPORT_PARAMS['signature_spacing']['after_section']))
+            }
         }
 
         # Build example URLs
@@ -276,7 +333,11 @@ def preview_export_parameters(form_id):
                 f"margin_right=1.0&"
                 f"line_spacing=1.5&"
                 f"font_size=12&"
-                f"logo_path=/path/to/logo.png"
+                f"logo_path=/path/to/logo.png&"
+                f"signature_space_before=1.0&"
+                f"signature_space_between=8&"
+                f"signature_space_date=1&"
+                f"signature_space_after=0"
             )
         }
 
@@ -335,6 +396,27 @@ def preview_export_parameters(form_id):
                     "range": [8, 16],
                     "default": DEFAULT_EXPORT_PARAMS['font_size'],
                     "current": current_params['font_size']
+                },
+                "signature_spacing": {
+                    'before_section': {
+                        "description":"before_section in points",
+                        "default": DEFAULT_EXPORT_PARAMS['signature_spacing']['before_section'],
+                        "current": current_params['signature_spacing']['before_section']
+                        },
+                     'between_signatures': {
+                          "description":"between_signatures in points",
+                           "default": DEFAULT_EXPORT_PARAMS['signature_spacing']['between_signatures'],
+                           "current": current_params['signature_spacing']['between_signatures']
+                     },
+                     'after_date': {
+                          "description":"after_date in points",
+                           "default": DEFAULT_EXPORT_PARAMS['signature_spacing']['after_date'],
+                           "current": current_params['signature_spacing']['after_date']
+                     },
+                     'after_section':{
+                          "description":"after_section in points",
+                          "default": DEFAULT_EXPORT_PARAMS['signature_spacing']['after_section']
+                     }
                 },
                 "logo_path": {
                     "description": "Path to logo image file (PNG, JPG, JPEG)",

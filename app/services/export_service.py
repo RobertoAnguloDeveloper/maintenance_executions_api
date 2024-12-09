@@ -1,6 +1,4 @@
-# app/services/export_service.py
-
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image
 from io import BytesIO
 import os
 import logging
@@ -11,10 +9,10 @@ from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
 from docx.enum.style import WD_STYLE_TYPE
 from reportlab.lib import colors
-from reportlab.lib.pagesizes import letter
+from reportlab.lib.pagesizes import A4, LETTER, LEGAL
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
 from werkzeug.exceptions import BadRequest
 
 logger = logging.getLogger(__name__)
@@ -22,52 +20,124 @@ logger = logging.getLogger(__name__)
 class ExportService:
     def __init__(self):
         self.supported_formats = ['PDF', 'DOCX']
-        self.margin = 40
+        self.page_sizes = {
+            'A4': A4,
+            'LETTER': LETTER,
+            'LEGAL': LEGAL
+        }
 
-    def export_as_pdf(self, form_data: Dict[str, Any]) -> bytes:
-        """
-        Export form as fillable PDF
-        """
+    def _validate_form_data(self, form_data: Dict[str, Any]) -> None:
+        """Validate form data structure before export"""
+        required_fields = ['title', 'created_by', 'questions']
+        for field in required_fields:
+            if field not in form_data:
+                raise ValueError(f"Missing required field: {field}")
+            
+        if not isinstance(form_data['questions'], list):
+            raise ValueError("Questions must be a list")
+        
+        for question in form_data['questions']:
+            if 'text' not in question or 'type' not in question:
+                raise ValueError("Each question must have 'text' and 'type' fields")
+
+    def _validate_format_params(self, params: Dict[str, Any]) -> None:
+        """Validate export format parameters"""
+        if params['page_size'] not in self.page_sizes:
+            raise ValueError(f"Invalid page size. Must be one of: {', '.join(self.page_sizes.keys())}")
+        
+        for margin in ['margin_top', 'margin_bottom', 'margin_left', 'margin_right']:
+            if params[margin] < 0.1 or params[margin] > 3.0:
+                raise ValueError(f"{margin} must be between 0.1 and 3.0 inches")
+        
+        if params['line_spacing'] < 1.0 or params['line_spacing'] > 3.0:
+            raise ValueError("Line spacing must be between 1.0 and 3.0")
+        
+        if params['font_size'] < 8 or params['font_size'] > 16:
+            raise ValueError("Font size must be between 8 and 16 points")
+
+    def _add_logo_to_pdf(self, story: List, logo_path: str, width: float = 2.0) -> None:
+        """Add logo to PDF document"""
         try:
+            if os.path.exists(logo_path):
+                img = Image.open(logo_path)
+                aspect = img.height / img.width
+                img_width = width * inch
+                img_height = img_width * aspect
+                story.append(RLImage(logo_path, width=img_width, height=img_height))
+                story.append(Spacer(1, 20))
+        except Exception as e:
+            logger.warning(f"Could not add logo to PDF: {str(e)}")
+
+    def _add_logo_to_docx(self, doc: Document, logo_path: str, width: float = 2.0) -> None:
+        """Add logo to DOCX document"""
+        try:
+            if os.path.exists(logo_path):
+                if logo_path.lower().endswith(('.png', '.jpg', '.jpeg')):
+                    doc.add_picture(logo_path, width=Inches(width))
+                    doc.add_paragraph()
+        except Exception as e:
+            logger.warning(f"Could not add logo to DOCX: {str(e)}")
+
+    def export_as_pdf(self, form_data: Dict[str, Any], format_params: Dict[str, Any]) -> bytes:
+        """Export form as fillable PDF with custom formatting"""
+        try:
+            # Validate input
             self._validate_form_data(form_data)
+            self._validate_format_params(format_params)
+
             buffer = BytesIO()
+            page_size = self.page_sizes[format_params['page_size']]
+            
+            # Create document
             doc = SimpleDocTemplate(
                 buffer,
-                pagesize=letter,
-                rightMargin=50,
-                leftMargin=50,
-                topMargin=50,
-                bottomMargin=50
+                pagesize=page_size,
+                rightMargin=format_params['margin_right'] * inch,
+                leftMargin=format_params['margin_left'] * inch,
+                topMargin=format_params['margin_top'] * inch,
+                bottomMargin=format_params['margin_bottom'] * inch
             )
 
             # Prepare styles
             styles = getSampleStyleSheet()
+            base_font_size = format_params['font_size']
+            line_spacing = format_params['line_spacing']
+
+            # Custom styles
             styles.add(ParagraphStyle(
                 name='FormTitle',
                 parent=styles['Heading1'],
-                fontSize=16,
+                fontSize=base_font_size + 4,
                 spaceAfter=20,
-                alignment=1  # Center
+                alignment=1,
+                leading=base_font_size * line_spacing
             ))
+
             styles.add(ParagraphStyle(
                 name='FormField',
                 parent=styles['Normal'],
-                fontSize=12,
-                spaceAfter=20,
-                leading=16
+                fontSize=base_font_size,
+                spaceAfter=15,
+                leading=base_font_size * line_spacing
             ))
+
             styles.add(ParagraphStyle(
                 name='Answer',
                 parent=styles['Normal'],
-                fontSize=12,
+                fontSize=base_font_size,
                 leftIndent=20,
-                spaceAfter=15
+                spaceAfter=10,
+                leading=base_font_size * line_spacing
             ))
 
             # Build content
             story = []
 
-            # Header
+            # Add logo if provided
+            if format_params.get('logo_path'):
+                self._add_logo_to_pdf(story, format_params['logo_path'])
+
+            # Title and description
             story.append(Paragraph(form_data['title'], styles['FormTitle']))
             if form_data.get('description'):
                 story.append(Paragraph(form_data['description'], styles['Normal']))
@@ -75,8 +145,14 @@ class ExportService:
 
             # Form Information
             story.append(Paragraph("Form Information:", styles['Heading2']))
-            story.append(Paragraph(f"Environment: {form_data['created_by']['environment']['name']}", styles['Normal']))
-            story.append(Paragraph(f"Created by: {form_data['created_by']['fullname']}", styles['Normal']))
+            story.append(Paragraph(
+                f"Environment: {form_data['created_by']['environment']['name']}", 
+                styles['Normal']
+            ))
+            story.append(Paragraph(
+                f"Created by: {form_data['created_by']['fullname']}", 
+                styles['Normal']
+            ))
             story.append(Spacer(1, 20))
 
             # Response Information
@@ -86,41 +162,33 @@ class ExportService:
             story.append(Spacer(1, 20))
 
             # Questions
-            story.append(Paragraph("Questions:", styles['Heading2']))
-            for i, question in enumerate(form_data.get('questions', []), 1):
-                # Question text with number
+            for i, question in enumerate(form_data['questions'], 1):
+                # Question text
                 story.append(Paragraph(f"{i}. {question['text']}", styles['FormField']))
                 
-                # Add appropriate answer field based on question type
+                # Handle different question types
                 if question['type'] == 'text':
-                    story.append(Paragraph("Answer: _________________________________", styles['Answer']))
+                    story.append(Paragraph("_________________________________", styles['Answer']))
                 
-                elif question['type'] == 'checkbox':
-                    # If there are predefined possible answers, use them
+                elif question['type'] in ['checkbox', 'multiple_choices']:
                     if question.get('possible_answers'):
                         for answer in question['possible_answers']:
                             story.append(Paragraph(f"□ {answer['value']}", styles['Answer']))
                     else:
                         story.append(Paragraph("□ Yes    □ No", styles['Answer']))
-                
-                elif question['type'] == 'multiple_choices':
-                    if question.get('possible_answers'):
-                        for answer in question['possible_answers']:
-                            story.append(Paragraph(f"□ {answer['value']}", styles['Answer']))
-                    else:
-                        story.append(Paragraph("(No options available)", styles['Answer']))
 
-                # Add remarks field if applicable
+                # Add remarks if present
                 if question.get('remarks'):
                     story.append(Paragraph(f"Remarks: {question['remarks']}", styles['Answer']))
 
                 story.append(Spacer(1, 10))
 
             # Signature section
-            story.append(Spacer(1, 30))
+            story.append(Spacer(1, 20))
             story.append(Paragraph("Signatures:", styles['Heading2']))
             story.append(Paragraph("Completed by: _______________________________", styles['FormField']))
             story.append(Paragraph("Date: ____________________", styles['FormField']))
+            story.append(Spacer(1, 10))
             story.append(Paragraph("Reviewed by: ________________________________", styles['FormField']))
             story.append(Paragraph("Date: ____________________", styles['FormField']))
 
@@ -132,19 +200,47 @@ class ExportService:
             logger.error(f"Error generating PDF: {str(e)}")
             raise BadRequest(f"Error generating PDF: {str(e)}")
 
-    def export_as_docx(self, form_data: Dict[str, Any]) -> bytes:
-        """
-        Export form as fillable DOCX
-        """
+    def export_as_docx(self, form_data: Dict[str, Any], format_params: Dict[str, Any]) -> bytes:
+        """Export form as fillable DOCX with custom formatting"""
         try:
+            # Validate input
             self._validate_form_data(form_data)
+            self._validate_format_params(format_params)
+
             doc = Document()
             
-            # Add title
+            # Set page size and margins
+            section = doc.sections[0]
+            if format_params['page_size'] == 'A4':
+                section.page_width = Inches(8.27)
+                section.page_height = Inches(11.69)
+            elif format_params['page_size'] == 'LEGAL':
+                section.page_width = Inches(8.5)
+                section.page_height = Inches(14)
+            else:  # LETTER
+                section.page_width = Inches(8.5)
+                section.page_height = Inches(11)
+
+            # Set margins
+            section.left_margin = Inches(format_params['margin_left'])
+            section.right_margin = Inches(format_params['margin_right'])
+            section.top_margin = Inches(format_params['margin_top'])
+            section.bottom_margin = Inches(format_params['margin_bottom'])
+
+            # Add logo if provided
+            if format_params.get('logo_path'):
+                self._add_logo_to_docx(doc, format_params['logo_path'])
+
+            # Set default font size and line spacing
+            style = doc.styles['Normal']
+            style.font.size = Pt(format_params['font_size'])
+            style.paragraph_format.line_spacing = format_params['line_spacing']
+
+            # Title
             title = doc.add_heading(form_data['title'], 0)
             title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            
-            # Add description if present
+
+            # Description
             if form_data.get('description'):
                 desc = doc.add_paragraph(form_data['description'])
                 desc.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -163,44 +259,31 @@ class ExportService:
             doc.add_paragraph()
 
             # Questions
-            doc.add_heading('Questions:', level=1)
-            
-            # Iterate through questions
-            for i, question in enumerate(form_data.get('questions', []), 1):
-                # Question text with number
+            for i, question in enumerate(form_data['questions'], 1):
+                # Question text
                 p = doc.add_paragraph()
                 p.add_run(f"{i}. {question['text']}").bold = True
                 
-                # Add appropriate answer field based on question type
+                # Handle different question types
                 if question['type'] == 'text':
-                    doc.add_paragraph("Answer: _________________________________")
+                    doc.add_paragraph("_________________________________")
                 
-                elif question['type'] == 'checkbox':
-                    # If there are predefined possible answers, use them
-                    if question.get('possible_answers'):
-                        for answer in question['possible_answers']:
-                            p = doc.add_paragraph()
-                            p.add_run(f"□ {answer['value']}")
-                            p.style = 'List Bullet'  # Add bullets for better formatting
-                    else:
-                        doc.add_paragraph("□ Yes    □ No    □ N/A")
-                
-                elif question['type'] == 'multiple_choices':
+                elif question['type'] in ['checkbox', 'multiple_choices']:
                     if question.get('possible_answers'):
                         for answer in question['possible_answers']:
                             p = doc.add_paragraph()
                             p.add_run(f"□ {answer['value']}")
                             p.style = 'List Bullet'
                     else:
-                        doc.add_paragraph("(No options available)")
-                
-                # Add remarks field if exists
+                        doc.add_paragraph("□ Yes    □ No")
+
+                # Add remarks if present
                 if question.get('remarks'):
                     p = doc.add_paragraph()
                     p.add_run("Remarks: ").bold = True
                     p.add_run(question['remarks'])
-                
-                doc.add_paragraph()  # Add spacing between questions
+
+                doc.add_paragraph()
 
             # Signature section
             doc.add_heading('Signatures:', level=1)
@@ -224,20 +307,6 @@ class ExportService:
     def get_supported_formats() -> List[str]:
         """Get list of supported export formats"""
         return ['PDF', 'DOCX']
-    
-    def _validate_form_data(self, form_data: Dict[str, Any]) -> None:
-        """Validate form data structure before export"""
-        required_fields = ['title', 'created_by', 'questions']
-        for field in required_fields:
-            if field not in form_data:
-                raise ValueError(f"Missing required field: {field}")
-                
-        if not isinstance(form_data['questions'], list):
-            raise ValueError("Questions must be a list")
-            
-        for question in form_data['questions']:
-            if 'text' not in question or 'type' not in question:
-                raise ValueError("Each question must have 'text' and 'type' fields")
 
     def validate_format(self, format: str) -> None:
         """Validate export format"""

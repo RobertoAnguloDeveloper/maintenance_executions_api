@@ -26,13 +26,6 @@ def create_answer():
         value = data.get('value')
         remarks = data.get('remarks')
 
-        if not value:
-            return jsonify({"error": "Value is required"}), 400
-
-        # Validate value length
-        if len(str(value).strip()) < 1:
-            return jsonify({"error": "Answer value cannot be empty"}), 400
-
         new_answer, error = AnswerController.create_answer(
             value=value,
             remarks=remarks
@@ -66,12 +59,6 @@ def bulk_create_answers():
         if not answers_data:
             return jsonify({"error": "No answers provided"}), 400
 
-        # Validate all answers
-        for answer in answers_data:
-            if not answer.get('value'):
-                return jsonify({"error": "Value is required for all answers"}), 400
-            if len(str(answer['value']).strip()) < 1:
-                return jsonify({"error": "Answer values cannot be empty"}), 400
 
         # Add environment ID to each answer
         for answer in answers_data:
@@ -167,11 +154,6 @@ def update_answer(answer_id):
             return jsonify({"error": "Unauthorized access"}), 403
 
         data = request.get_json()
-        
-        # Validate value if provided
-        if 'value' in data:
-            if not data['value'] or len(str(data['value']).strip()) < 1:
-                return jsonify({"error": "Answer value cannot be empty"}), 400
 
         updated_answer, error = AnswerController.update_answer(
             answer_id,

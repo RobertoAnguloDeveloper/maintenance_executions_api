@@ -1,10 +1,8 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from app.services.auth_service import AuthService
 from app.controllers.answer_submitted_controller import AnswerSubmittedController
-from app.controllers.form_submission_controller import FormSubmissionController
+from app.services.auth_service import AuthService
 from app.utils.permission_manager import PermissionManager, EntityType, RoleType
-from datetime import datetime
 import logging
 
 logger = logging.getLogger(__name__)
@@ -25,27 +23,18 @@ def create_answer_submitted():
             return jsonify({"error": "No data provided"}), 400
 
         # Validate required fields
-        required_fields = ['form_answers_id', 'form_submissions_id']
+        required_fields = ['form_answer_id', 'form_submission_id']
         if not all(field in data for field in required_fields):
             return jsonify({
                 "error": "Missing required fields",
                 "required_fields": required_fields
             }), 400
 
-        # Validate form submission ownership
-        submission = FormSubmissionController.get_submission(data['form_submissions_id'])
-        if not submission:
-            return jsonify({"error": "Form submission not found"}), 404
-
-        if not user.role.is_super_user:
-            if submission.submitted_by != current_user:
-                return jsonify({"error": "Unauthorized access to form submission"}), 403
-
-        # Create the answer submission
         answer_submitted, error = AnswerSubmittedController.create_answer_submitted(
-            form_answers_id=data['form_answers_id'],
-            form_submissions_id=data['form_submissions_id'],
-            text_answered=data.get('text_answered')
+            form_answer_id=data['form_answer_id'],
+            form_submission_id=data['form_submission_id'],
+            text_answered=data.get('text_answered'),
+            current_user=current_user
         )
 
         if error:
@@ -79,18 +68,12 @@ def get_all_answers_submitted():
 
         # Date range filters
         start_date = request.args.get('start_date')
-        if start_date:
-            try:
-                filters['start_date'] = datetime.strptime(start_date, '%Y-%m-%d')
-            except ValueError:
-                return jsonify({"error": "Invalid start_date format. Use YYYY-MM-DD"}), 400
-
         end_date = request.args.get('end_date')
-        if end_date:
-            try:
-                filters['end_date'] = datetime.strptime(end_date, '%Y-%m-%d')
-            except ValueError:
-                return jsonify({"error": "Invalid end_date format. Use YYYY-MM-DD"}), 400
+        if start_date and end_date:
+            filters['date_range'] = {
+                'start': start_date,
+                'end': end_date
+            }
 
         answers_submitted = AnswerSubmittedController.get_all_answers_submitted(user, filters)
 
@@ -113,23 +96,47 @@ def get_answer_submitted(answer_submitted_id):
         current_user = get_jwt_identity()
         user = AuthService.get_current_user(current_user)
 
-        answer_submitted, error = AnswerSubmittedController.get_answer_submitted(answer_submitted_id)
+        answer_submitted, error = AnswerSubmittedController.get_answer_submitted(
+            answer_submitted_id,
+            current_user=current_user,
+            user_role=user.role.name
+        )
+
         if error:
             return jsonify({"error": error}), 404
-
-        # Access control
-        if not user.role.is_super_user:
-            submission = FormSubmissionController.get_submission(answer_submitted['form_submissions_id'])
-            if user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                if submission.form.creator.environment_id != user.environment_id:
-                    return jsonify({"error": "Unauthorized access"}), 403
-            elif submission.submitted_by != current_user:
-                return jsonify({"error": "Unauthorized access"}), 403
 
         return jsonify(answer_submitted), 200
 
     except Exception as e:
         logger.error(f"Error getting answer submitted {answer_submitted_id}: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
+
+@answer_submitted_bp.route('/submission/<int:submission_id>', methods=['GET'])
+@jwt_required()
+@PermissionManager.require_permission(action="view", entity_type=EntityType.SUBMISSIONS)
+def get_answers_by_submission(submission_id):
+    """Get all submitted answers for a form submission"""
+    try:
+        current_user = get_jwt_identity()
+        user = AuthService.get_current_user(current_user)
+
+        answers, error = AnswerSubmittedController.get_answers_by_submission(
+            submission_id,
+            current_user=current_user,
+            user_role=user.role.name
+        )
+
+        if error:
+            return jsonify({"error": error}), 400
+
+        return jsonify({
+            'submission_id': submission_id,
+            'total_answers': len(answers),
+            'answers': answers
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error getting answers for submission {submission_id}: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
 
 @answer_submitted_bp.route('/<int:answer_submitted_id>', methods=['PUT'])
@@ -141,24 +148,15 @@ def update_answer_submitted(answer_submitted_id):
         current_user = get_jwt_identity()
         user = AuthService.get_current_user(current_user)
 
-        # Get current answer submission
-        current_answer, error = AnswerSubmittedController.get_answer_submitted(answer_submitted_id)
-        if error:
-            return jsonify({"error": error}), 404
-
-        # Access control
-        if not user.role.is_super_user:
-            submission = FormSubmissionController.get_submission(current_answer['form_submissions_id'])
-            if submission.submitted_by != current_user:
-                return jsonify({"error": "Unauthorized access"}), 403
-
         data = request.get_json()
         if not data:
             return jsonify({"error": "No update data provided"}), 400
 
         updated_answer, error = AnswerSubmittedController.update_answer_submitted(
             answer_submitted_id,
-            text_answered=data.get('text_answered')
+            text_answered=data.get('text_answered'),
+            current_user=current_user,
+            user_role=user.role.name
         )
 
         if error:
@@ -182,18 +180,12 @@ def delete_answer_submitted(answer_submitted_id):
         current_user = get_jwt_identity()
         user = AuthService.get_current_user(current_user)
 
-        # Get current answer submission
-        current_answer, error = AnswerSubmittedController.get_answer_submitted(answer_submitted_id)
-        if error:
-            return jsonify({"error": error}), 404
+        success, message = AnswerSubmittedController.delete_answer_submitted(
+            answer_submitted_id,
+            current_user=current_user,
+            user_role=user.role.name
+        )
 
-        # Access control
-        if not user.role.is_super_user:
-            submission = FormSubmissionController.get_submission(current_answer['form_submissions_id'])
-            if submission.submitted_by != current_user:
-                return jsonify({"error": "Unauthorized access"}), 403
-
-        success, message = AnswerSubmittedController.delete_answer_submitted(answer_submitted_id)
         if not success:
             return jsonify({"error": message}), 400
 

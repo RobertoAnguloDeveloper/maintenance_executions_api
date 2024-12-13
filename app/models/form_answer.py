@@ -15,7 +15,7 @@ class FormAnswer(TimestampMixin, SoftDeleteMixin, db.Model):
     submissions = db.relationship(
         'AnswerSubmitted',
         back_populates='form_answer',
-        foreign_keys='AnswerSubmitted.form_answers_id'
+        foreign_keys='AnswerSubmitted.form_answer_id'
     )
 
     def get_question_type(self):

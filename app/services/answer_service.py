@@ -79,10 +79,6 @@ class AnswerService:
             if not answer:
                 return None, "Answer not found"
 
-            if value is not None:
-                if not value.strip():
-                    return None, "Answer value cannot be empty"
-                answer.value = value
 
             if remarks is not None:
                 answer.remarks = remarks
@@ -177,8 +173,6 @@ class AnswerService:
         try:
             created_answers = []
             for data in answers_data:
-                if not data.get('value', '').strip():
-                    return None, "Answer value cannot be empty"
 
                 answer = Answer(
                     value=data['value'],

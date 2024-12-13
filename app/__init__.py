@@ -8,6 +8,9 @@ import sys
 from sqlalchemy import inspect
 from flask_cors import CORS
 import logging
+import mimetypes
+
+mimetypes.init()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

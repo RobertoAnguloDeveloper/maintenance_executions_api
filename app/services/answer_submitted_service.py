@@ -26,14 +26,14 @@ class AnswerSubmittedService:
                 return False, f"Text answer is required for {question_type} question type"
             if question_type == 'date':
                 try:
-                    datetime.strptime(text_answered, '%Y-%m-%d')
+                    datetime.strptime(text_answered, '%d/%m/%Y')
                 except ValueError:
-                    return False, "Invalid date format. Use YYYY-MM-DD"
+                    return False, "Invalid date format. Use DD/MM/YYYY"
             elif question_type == 'datetime':
                 try:
-                    datetime.strptime(text_answered, '%Y-%m-%d %H:%M:%S')
+                    datetime.strptime(text_answered, '%d/%m/%Y %H:%M:%S')
                 except ValueError:
-                    return False, "Invalid datetime format. Use YYYY-MM-DD HH:MM:SS"
+                    return False, "Invalid datetime format. Use DD/MM/YYYY HH:MM:SS"
         elif text_answered:
             return False, f"Text answer not allowed for {question_type} question type"
         return True, None

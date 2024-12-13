@@ -62,6 +62,55 @@ class AttachmentController:
         except Exception as e:
             logger.error(f"Error in create_attachment controller: {str(e)}")
             return None, str(e)
+        
+    @staticmethod
+    def bulk_create_attachments(
+        form_submission_id: int,
+        files: List[Dict],
+        current_user: str,
+        user_role: str = None
+    ) -> Tuple[Optional[List[Dict]], Optional[str]]:
+        """
+        Bulk create attachments with authorization
+        
+        Args:
+            form_submission_id: ID of the form submission
+            files: List of file data
+            current_user: Username of current user
+            user_role: Role of current user
+            
+        Returns:
+            tuple: (List of created attachments or None, Error message or None)
+        """
+        try:
+            # Validate submission exists and check access rights
+            submission = FormSubmissionService.get_submission(form_submission_id)
+            if not submission:
+                return None, "Form submission not found"
+                
+            # Access control
+            if user_role != RoleType.ADMIN:
+                if user_role in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
+                    if submission.form.creator.environment_id != current_user.environment_id:
+                        return None, "Unauthorized access"
+                elif submission.submitted_by != current_user:
+                    return None, "Can only add attachments to own submissions"
+            
+            attachments, error = AttachmentService.bulk_create_attachments(
+                form_submission_id=form_submission_id,
+                files=files,
+                username=current_user,
+                upload_path=current_app.config['UPLOAD_FOLDER']
+            )
+            
+            if error:
+                return None, error
+                
+            return [attachment.to_dict() for attachment in attachments], None
+            
+        except Exception as e:
+            logger.error(f"Error in bulk_create_attachments controller: {str(e)}")
+            return None, str(e)
 
     @staticmethod
     def get_attachment(

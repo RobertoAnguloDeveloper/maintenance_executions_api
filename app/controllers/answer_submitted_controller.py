@@ -53,6 +53,47 @@ class AnswerSubmittedController:
         except Exception as e:
             logger.error(f"Error in create_answer_submitted controller: {str(e)}")
             return None, str(e)
+        
+    @staticmethod
+    def bulk_create_answers_submitted(
+        form_submission_id: int,
+        submissions_data: List[Dict],
+        current_user: str = None
+    ) -> Tuple[Optional[List[Dict]], Optional[str]]:
+        """
+        Bulk create answer submissions with validation
+        
+        Args:
+            form_submission_id: ID of the form submission
+            submissions_data: List of submission data
+            current_user: Username of current user
+            
+        Returns:
+            tuple: (List of created submissions or None, Error message or None)
+        """
+        try:
+            # Validate submission exists and check access rights
+            submission = FormSubmissionService.get_submission(form_submission_id)
+            if not submission:
+                return None, "Form submission not found"
+                
+            # Only submission owner can add answers
+            if current_user and submission.submitted_by != current_user:
+                return None, "Unauthorized: Can only add answers to own submissions"
+            
+            created_submissions, error = AnswerSubmittedService.bulk_create_answers_submitted(
+                submissions_data=submissions_data,
+                form_submission_id=form_submission_id
+            )
+            
+            if error:
+                return None, error
+                
+            return [submission.to_dict() for submission in created_submissions], None
+            
+        except Exception as e:
+            logger.error(f"Error in bulk_create_answers_submitted controller: {str(e)}")
+            return None, str(e)
 
     @staticmethod
     def get_all_answers_submitted(

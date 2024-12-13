@@ -54,6 +54,60 @@ def create_attachment():
     except Exception as e:
         logger.error(f"Error creating attachment: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
+    
+@attachment_bp.route('/bulk', methods=['POST'])
+@jwt_required()
+@PermissionManager.require_permission(action="create", entity_type=EntityType.ATTACHMENTS)
+def bulk_create_attachments():
+    """Bulk create attachments"""
+    try:
+        current_user = get_jwt_identity()
+        user = AuthService.get_current_user(current_user)
+        
+        # Validate form_submission_id
+        form_submission_id = request.form.get('form_submission_id')
+        if not form_submission_id:
+            return jsonify({"error": "form_submission_id is required"}), 400
+        
+        # Validate files presence
+        if 'files[]' not in request.files:
+            return jsonify({"error": "No files provided"}), 400
+        
+        files = request.files.getlist('files[]')
+        if not files:
+            return jsonify({"error": "No files selected"}), 400
+        
+        # Prepare files data with metadata
+        files_data = []
+        for file in files:
+            if file and file.filename:
+                is_signature = request.form.get(f'is_signature_{file.filename}', '').lower() == 'true'
+                files_data.append({
+                    'file': file,
+                    'is_signature': is_signature
+                })
+        
+        if not files_data:
+            return jsonify({"error": "No valid files provided"}), 400
+        
+        attachments, error = AttachmentController.bulk_create_attachments(
+            form_submission_id=int(form_submission_id),
+            files=files_data,
+            current_user=current_user,
+            user_role=user.role.name
+        )
+        
+        if error:
+            return jsonify({"error": error}), 400
+        
+        return jsonify({
+            "message": "Attachments created successfully",
+            "attachments": attachments
+        }), 201
+        
+    except Exception as e:
+        logger.error(f"Error creating attachments: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
 
 @attachment_bp.route('/<int:attachment_id>', methods=['GET'])
 @jwt_required()

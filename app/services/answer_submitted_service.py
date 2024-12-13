@@ -86,6 +86,72 @@ class AnswerSubmittedService:
             return None, "Unexpected error occurred"
         
     @staticmethod
+    def bulk_create_answers_submitted(
+        submissions_data: List[Dict],
+        form_submission_id: int
+    ) -> Tuple[Optional[List[AnswerSubmitted]], Optional[str]]:
+        """
+        Bulk create answer submissions
+        
+        Args:
+            submissions_data: List of dictionaries containing form_answer_id and text_answered
+            form_submission_id: ID of the form submission
+            
+        Returns:
+            tuple: (List of created AnswerSubmitted objects or None, Error message or None)
+        """
+        try:
+            created_submissions = []
+            
+            # Start transaction
+            db.session.begin_nested()
+            
+            for submission in submissions_data:
+                form_answer_id = submission.get('form_answer_id')
+                text_answered = submission.get('text_answered')
+                
+                # Validate form_answer exists
+                form_answer = FormAnswer.query.get(form_answer_id)
+                if not form_answer:
+                    db.session.rollback()
+                    return None, f"Form answer {form_answer_id} not found"
+                
+                # Validate text answer
+                is_valid, error = AnswerSubmittedService.validate_text_answer(
+                    form_answer, text_answered
+                )
+                if not is_valid:
+                    db.session.rollback()
+                    return None, f"Invalid text answer for form answer {form_answer_id}: {error}"
+                
+                # Check for existing submission
+                existing = AnswerSubmitted.query.filter_by(
+                    form_answer_id=form_answer_id,
+                    form_submission_id=form_submission_id,
+                    is_deleted=False
+                ).first()
+                
+                if existing:
+                    db.session.rollback()
+                    return None, f"Answer already submitted for form answer {form_answer_id}"
+                
+                answer_submitted = AnswerSubmitted(
+                    form_answer_id=form_answer_id,
+                    form_submission_id=form_submission_id,
+                    text_answered=text_answered
+                )
+                db.session.add(answer_submitted)
+                created_submissions.append(answer_submitted)
+            
+            db.session.commit()
+            return created_submissions, None
+            
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"Error in bulk_create_answers_submitted: {str(e)}")
+            return None, str(e)
+        
+    @staticmethod
     def get_answer_submitted(answer_submitted_id: int) -> Optional[AnswerSubmitted]:
         """Get a specific submitted answer"""
         try:

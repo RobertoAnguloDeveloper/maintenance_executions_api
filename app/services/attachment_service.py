@@ -1,4 +1,4 @@
-from typing import BinaryIO, Optional, Tuple, List
+from typing import BinaryIO, Dict, Optional, Tuple, List
 from datetime import datetime
 import os
 import logging
@@ -135,6 +135,80 @@ class AttachmentService:
             logger.error(f"Error creating attachment: {str(e)}")
             return None, str(e)
 
+    @staticmethod
+    def bulk_create_attachments(
+        form_submission_id: int,
+        files: List[Dict],
+        username: str,
+        upload_path: str
+    ) -> Tuple[Optional[List[Attachment]], Optional[str]]:
+        """
+        Bulk create attachments with validation
+        
+        Args:
+            form_submission_id: ID of the form submission
+            files: List of file objects with their metadata
+            username: Username for file organization
+            upload_path: Base path for file uploads
+            
+        Returns:
+            tuple: (List of created Attachment objects or None, Error message or None)
+        """
+        try:
+            created_attachments = []
+            
+            # Start transaction
+            db.session.begin_nested()
+            
+            for file_data in files:
+                file = file_data.get('file')
+                is_signature = file_data.get('is_signature', False)
+                
+                if not file:
+                    db.session.rollback()
+                    return None, "File object is required for each attachment"
+                    
+                # Validate file
+                is_valid, mime_type_or_error = AttachmentService.validate_file(
+                    file,
+                    file.filename,
+                    max_size=Attachment.MAX_FILE_SIZE
+                )
+                
+                if not is_valid:
+                    db.session.rollback()
+                    return None, f"Invalid file {file.filename}: {mime_type_or_error}"
+                
+                # Generate unique filename and path
+                secure_name = secure_filename(file.filename)
+                unique_name = AttachmentService.get_unique_filename(secure_name)
+                file_path = AttachmentService.create_file_path(username, unique_name)
+                
+                # Save file
+                success, error = AttachmentService.save_file(file, upload_path, file_path)
+                if not success:
+                    db.session.rollback()
+                    return None, f"Error saving file {file.filename}: {error}"
+                
+                # Create attachment record
+                attachment = Attachment(
+                    form_submission_id=form_submission_id,
+                    file_type=mime_type_or_error,
+                    file_path=file_path,
+                    is_signature=is_signature
+                )
+                
+                db.session.add(attachment)
+                created_attachments.append(attachment)
+            
+            db.session.commit()
+            logger.info(f"Successfully created {len(created_attachments)} attachments")
+            return created_attachments, None
+            
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"Error in bulk_create_attachments: {str(e)}")
+            return None, str(e)
     @staticmethod
     def delete_attachment(
         attachment_id: int,

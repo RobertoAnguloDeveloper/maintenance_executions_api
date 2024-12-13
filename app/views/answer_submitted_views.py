@@ -48,6 +48,38 @@ def create_answer_submitted():
     except Exception as e:
         logger.error(f"Error creating answer submission: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
+    
+@answer_submitted_bp.route('/bulk', methods=['POST'])
+@jwt_required()
+@PermissionManager.require_permission(action="create", entity_type=EntityType.SUBMISSIONS)
+def bulk_create_answers_submitted():
+    """Bulk create submitted answers"""
+    try:
+        current_user = get_jwt_identity()
+        
+        data = request.get_json()
+        if not data or 'form_submission_id' not in data or 'submissions' not in data:
+            return jsonify({
+                "error": "Missing required fields: form_submission_id and submissions"
+            }), 400
+            
+        submissions, error = AnswerSubmittedController.bulk_create_answers_submitted(
+            form_submission_id=data['form_submission_id'],
+            submissions_data=data['submissions'],
+            current_user=current_user
+        )
+        
+        if error:
+            return jsonify({"error": error}), 400
+            
+        return jsonify({
+            "message": "Answers submitted successfully",
+            "submissions": submissions
+        }), 201
+        
+    except Exception as e:
+        logger.error(f"Error in bulk create answers submitted: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
 
 @answer_submitted_bp.route('', methods=['GET'])
 @jwt_required()

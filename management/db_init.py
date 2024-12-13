@@ -335,7 +335,7 @@ class DatabaseInitializer:
             default_types = [
                 'text', 'multiple_choices', 
                 'checkbox', 'date', 
-                'datetime', 'user'
+                'datetime', 'user', 'signature'
             ]
             
             created_types = []

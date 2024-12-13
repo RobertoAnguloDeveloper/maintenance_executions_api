@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Tuple
 from app import db
 from app.models.soft_delete_mixin import SoftDeleteMixin
 from app.models.timestamp_mixin import TimestampMixin
@@ -53,6 +53,15 @@ class Attachment(TimestampMixin, SoftDeleteMixin, db.Model):
     def is_allowed_file(cls, filename: str) -> bool:
         """Check if file extension is allowed"""
         return '.' in filename and filename.rsplit('.', 1)[1].lower() in cls.ALLOWED_EXTENSIONS
+    
+    @classmethod
+    def is_allowed_mime_type(cls, file_content: bytes) -> Tuple[bool, str]:
+        """Check if file's MIME type is allowed"""
+        import magic
+        mime_type = magic.from_buffer(file_content, mime=True)
+        if mime_type in cls.ALLOWED_MIME_TYPES:
+            return True, mime_type
+        return False, ""
 
     @classmethod
     def get_mime_type(cls, filename: str) -> tuple[bool, str]:

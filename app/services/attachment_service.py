@@ -10,29 +10,19 @@ logger = logging.getLogger(__name__)
 
 class AttachmentService:
     @staticmethod
-    def get_unique_filename(upload_path: str, filename: str) -> str:
-        """Generate unique filename to avoid overwrites"""
-        base_name, extension = os.path.splitext(filename)
-        counter = 1
-        new_filename = filename
-        
-        while os.path.exists(os.path.join(upload_path, new_filename)):
-            new_filename = f"{base_name}_{counter}{extension}"
-            counter += 1
-            
-        return new_filename
+    def get_unique_filename(original_filename: str) -> str:
+        """Generate unique filename with timestamp"""
+        # Get filename and extension
+        base_name, extension = os.path.splitext(original_filename)
+        # Add timestamp to filename
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        return f"{base_name}_{timestamp}{extension}"
 
     @staticmethod
     def create_file_path(username: str, filename: str) -> str:
-        """Create organized file path structure"""
-        today = datetime.now()
-        return os.path.join(
-            username,
-            str(today.year),
-            str(today.month),
-            str(today.day),
-            filename
-        )
+        """Create organized file path structure by user"""
+        # Create single folder per user
+        return os.path.join(username, filename)
 
     @staticmethod
     def validate_file(
@@ -70,7 +60,7 @@ class AttachmentService:
             if not is_valid_mime:
                 return False, "Invalid file type"
 
-            return True, None
+            return True, mime_type
 
         except Exception as e:
             logger.error(f"File validation error: {str(e)}")
@@ -85,6 +75,7 @@ class AttachmentService:
         """Save file with proper error handling"""
         try:
             full_path = os.path.join(base_path, file_path)
+            # Create user directory if it doesn't exist
             os.makedirs(os.path.dirname(full_path), exist_ok=True)
             
             file.save(full_path)
@@ -101,17 +92,23 @@ class AttachmentService:
         filename: str,
         username: str,
         upload_path: str,
+        file_type: str = None,
         is_signature: bool = False
     ) -> Tuple[Optional[Attachment], Optional[str]]:
         """Create new attachment with enhanced validation"""
         try:
-            # Validate file
-            is_valid, error = AttachmentService.validate_file(file, filename)
-            if not is_valid:
-                return None, error
+            # Validate file if file_type not provided
+            if not file_type:
+                is_valid, mime_type = AttachmentService.validate_file(file, filename)
+                if not is_valid:
+                    return None, mime_type
+                file_type = mime_type
 
+            # Secure and uniquify filename
             secure_name = secure_filename(filename)
-            unique_name = AttachmentService.get_unique_filename(upload_path, secure_name)
+            unique_name = AttachmentService.get_unique_filename(secure_name)
+            
+            # Create path with just username folder
             file_path = AttachmentService.create_file_path(username, unique_name)
 
             # Save file
@@ -120,13 +117,9 @@ class AttachmentService:
                 return None, error
 
             # Create database record
-            file_content = file.read(2048)
-            file.seek(0)
-            _, mime_type = Attachment.is_allowed_mime_type(file_content)
-
             attachment = Attachment(
                 form_submission_id=form_submission_id,
-                file_type=mime_type,
+                file_type=file_type,
                 file_path=file_path,
                 is_signature=is_signature
             )
@@ -134,6 +127,7 @@ class AttachmentService:
             db.session.add(attachment)
             db.session.commit()
             
+            logger.info(f"File saved successfully: {file_path}")
             return attachment, None
 
         except Exception as e:

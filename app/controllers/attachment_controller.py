@@ -23,16 +23,6 @@ class AttachmentController:
     ) -> Tuple[Optional[Dict], Optional[str]]:
         """
         Validate and create new attachment with proper authorization
-        
-        Args:
-            form_submission_id: ID of the form submission
-            file: File object from request
-            current_user: Username of current user
-            is_signature: Whether this is a signature file
-            user_role: Role of current user
-            
-        Returns:
-            tuple: (Created attachment data or None, Error message or None)
         """
         try:
             # Validate submission exists and check access rights
@@ -48,6 +38,11 @@ class AttachmentController:
                 elif submission.submitted_by != current_user:
                     return None, "Can only add attachments to own submissions"
 
+            # Validate file
+            is_valid, mime_type_or_error = AttachmentService.validate_file(file, file.filename)
+            if not is_valid:
+                return None, mime_type_or_error
+
             # Create attachment
             attachment, error = AttachmentService.create_attachment(
                 form_submission_id=form_submission_id,
@@ -55,6 +50,7 @@ class AttachmentController:
                 filename=file.filename,
                 username=current_user,
                 upload_path=current_app.config['UPLOAD_FOLDER'],
+                file_type=mime_type_or_error,
                 is_signature=is_signature
             )
 

@@ -69,19 +69,20 @@ def bulk_create_attachments():
         if not form_submission_id:
             return jsonify({"error": "form_submission_id is required"}), 400
         
-        # Validate files presence
-        if 'files[]' not in request.files:
+        # Get all files from the request
+        files_data = []
+        file_fields = [key for key in request.files.keys() if key.startswith('file')]
+        
+        if not file_fields:
             return jsonify({"error": "No files provided"}), 400
         
-        files = request.files.getlist('files[]')
-        if not files:
-            return jsonify({"error": "No files selected"}), 400
-        
-        # Prepare files data with metadata
-        files_data = []
-        for file in files:
+        for field in file_fields:
+            file = request.files[field]
             if file and file.filename:
-                is_signature = request.form.get(f'is_signature_{file.filename}', '').lower() == 'true'
+                # Get the index from the field name (e.g., 'file1' -> '1')
+                index = field.replace('file', '')
+                is_signature = request.form.get(f'is_signature{index}', '').lower() == 'true'
+                
                 files_data.append({
                     'file': file,
                     'is_signature': is_signature
@@ -108,34 +109,77 @@ def bulk_create_attachments():
     except Exception as e:
         logger.error(f"Error creating attachments: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
+    
+@attachment_bp.route('', methods=['GET'])
+@jwt_required()
+@PermissionManager.require_permission(action="view", entity_type=EntityType.ATTACHMENTS)
+def get_all_attachments():
+    """Get all attachments with filtering"""
+    try:
+        current_user = get_jwt_identity()
+        user = AuthService.get_current_user(current_user)
+        
+        # Build filters from query parameters
+        filters = {}
+        
+        # Form submission filter
+        form_submission_id = request.args.get('form_submission_id', type=int)
+        if form_submission_id:
+            filters['form_submission_id'] = form_submission_id
+        
+        # Signature type filter
+        is_signature = request.args.get('is_signature', type=lambda v: v.lower() == 'true')
+        if is_signature is not None:
+            filters['is_signature'] = is_signature
+            
+        # File type filter
+        file_type = request.args.get('file_type')
+        if file_type:
+            filters['file_type'] = file_type
+            
+        attachments, error = AttachmentController.get_all_attachments(
+            current_user=current_user,
+            user_role=user.role.name,
+            filters=filters
+        )
+        
+        if error:
+            return jsonify({"error": error}), 400
+            
+        return jsonify({
+            "total_count": len(attachments),
+            "filters_applied": filters,
+            "attachments": attachments
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting attachments: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
 
 @attachment_bp.route('/<int:attachment_id>', methods=['GET'])
 @jwt_required()
 @PermissionManager.require_permission(action="view", entity_type=EntityType.ATTACHMENTS)
 def get_attachment(attachment_id):
-    """Get and download an attachment"""
+    """Get and download a specific attachment"""
     try:
         current_user = get_jwt_identity()
         user = AuthService.get_current_user(current_user)
 
-        attachment, error = AttachmentController.get_attachment(
-            attachment_id,
+        attachment_data, error = AttachmentController.get_attachment_with_file(
+            attachment_id=attachment_id,
             current_user=current_user,
             user_role=user.role.name
         )
 
         if error:
-            return jsonify({"error": error}), 404
+            return jsonify({"error": error}), 404 if error == "File not found" else 400
 
-        file_path = os.path.join(current_app.config['UPLOAD_FOLDER'], attachment['file_path'])
-        if not os.path.exists(file_path):
-            return jsonify({"error": "File not found"}), 404
-
+        # Return file for download
         return send_file(
-            file_path,
-            mimetype=attachment['file_type'],
+            attachment_data['file_path'],
+            mimetype=attachment_data['record'].file_type,
             as_attachment=True,
-            download_name=os.path.basename(file_path)
+            download_name=attachment_data['filename']
         )
 
     except Exception as e:

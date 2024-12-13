@@ -25,6 +25,9 @@ class Config:
         self.UPLOAD_FOLDER = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'uploads')
         self.MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB max file size
         
+        print("Upload Folder")
+        print(self.UPLOAD_FOLDER)
+        
         # Ensure upload directory exists
         if not os.path.exists(self.UPLOAD_FOLDER):
             os.makedirs(self.UPLOAD_FOLDER)

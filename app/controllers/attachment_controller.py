@@ -71,16 +71,7 @@ class AttachmentController:
         user_role: str = None
     ) -> Tuple[Optional[List[Dict]], Optional[str]]:
         """
-        Bulk create attachments with authorization
-        
-        Args:
-            form_submission_id: ID of the form submission
-            files: List of file data
-            current_user: Username of current user
-            user_role: Role of current user
-            
-        Returns:
-            tuple: (List of created attachments or None, Error message or None)
+        Bulk create attachments with improved validation
         """
         try:
             # Validate submission exists and check access rights
@@ -96,6 +87,23 @@ class AttachmentController:
                 elif submission.submitted_by != current_user:
                     return None, "Can only add attachments to own submissions"
             
+            # Validate all files first
+            for file_data in files:
+                file = file_data.get('file')
+                if not file:
+                    return None, "File object is required for each attachment"
+                    
+                # Initial validation
+                is_valid, error_or_mime = AttachmentService.validate_file(
+                    file,
+                    file.filename,
+                    max_size=Attachment.MAX_FILE_SIZE
+                )
+                
+                if not is_valid:
+                    return None, f"Invalid file {file.filename}: {error_or_mime}"
+            
+            # If all validations pass, create attachments
             attachments, error = AttachmentService.bulk_create_attachments(
                 form_submission_id=form_submission_id,
                 files=files,
@@ -111,6 +119,45 @@ class AttachmentController:
         except Exception as e:
             logger.error(f"Error in bulk_create_attachments controller: {str(e)}")
             return None, str(e)
+        
+    @staticmethod
+    def get_all_attachments(
+        current_user: str = None,
+        user_role: str = None,
+        filters: Dict = None
+    ) -> Tuple[List[Dict], Optional[str]]:
+        """
+        Get all attachments with role-based access control
+        
+        Args:
+            current_user: Username of current user
+            user_role: Role of current user
+            filters: Optional filters
+            
+        Returns:
+            tuple: (List of attachments, Error message or None)
+        """
+        try:
+            # Initialize filters if None
+            filters = filters or {}
+            
+            # Apply role-based filtering
+            if user_role != RoleType.ADMIN:
+                if user_role in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
+                    # Filter by environment
+                    filters['environment_id'] = current_user.environment_id
+                else:
+                    # Regular users can only see their own submissions
+                    filters['submitted_by'] = current_user
+
+            attachments = AttachmentService.get_all_attachments(filters)
+            
+            # Convert attachments to dict representation
+            return [attachment.to_dict() for attachment in attachments], None
+
+        except Exception as e:
+            logger.error(f"Error getting attachments in controller: {str(e)}")
+            return [], str(e)
 
     @staticmethod
     def get_attachment(
@@ -142,6 +189,41 @@ class AttachmentController:
 
         except Exception as e:
             logger.error(f"Error getting attachment: {str(e)}")
+            return None, str(e)
+        
+    @staticmethod
+    def get_attachment_with_file(
+        attachment_id: int,
+        current_user: str = None,
+        user_role: str = None
+    ) -> Tuple[Optional[Dict], Optional[str]]:
+        """
+        Get attachment with file data and authorization check
+        """
+        try:
+            logger.info(f"Fetching attachment {attachment_id} from upload folder: {current_app.config['UPLOAD_FOLDER']}")
+            
+            attachment_data, error = AttachmentService.get_attachment_with_file(
+                attachment_id=attachment_id,
+                base_path=current_app.config['UPLOAD_FOLDER']
+            )
+            
+            if error:
+                logger.error(f"Error retrieving attachment {attachment_id}: {error}")
+                return None, error
+                    
+            # Access control
+            if user_role != RoleType.ADMIN:
+                if user_role in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
+                    if attachment_data['record'].form_submission.form.creator.environment_id != current_user.environment_id:
+                        return None, "Unauthorized access"
+                elif attachment_data['record'].form_submission.submitted_by != current_user:
+                    return None, "Unauthorized access"
+                        
+            return attachment_data, None
+                
+        except Exception as e:
+            logger.error(f"Error in get_attachment controller: {str(e)}")
             return None, str(e)
 
     @staticmethod
@@ -185,17 +267,22 @@ class AttachmentController:
     ) -> Tuple[bool, str]:
         """
         Delete attachment with authorization check
+        
+        Args:
+            attachment_id: ID of the attachment
+            current_user: Username of current user
+            user_role: Role of current user
+            
+        Returns:
+            tuple: (Success boolean, Success/Error message)
         """
         try:
-            attachment = Attachment.query.filter_by(
-                id=attachment_id,
-                is_deleted=False
-            ).first()
-            
+            # Get attachment for access control
+            attachment = AttachmentService.get_attachment(attachment_id)
             if not attachment:
                 return False, "Attachment not found"
 
-            # Access control
+            # Check ownership/permissions
             if user_role != RoleType.ADMIN:
                 if user_role in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
                     if attachment.form_submission.form.creator.environment_id != current_user.environment_id:
@@ -208,16 +295,16 @@ class AttachmentController:
                 if submission_age.days > 7:
                     return False, "Cannot delete attachments older than 7 days"
 
-            success, error = AttachmentService.delete_attachment(
+            success, result = AttachmentService.delete_attachment(
                 attachment_id,
                 current_app.config['UPLOAD_FOLDER']
             )
 
             if not success:
-                return False, error or "Failed to delete attachment"
+                return False, result
 
             return True, "Attachment deleted successfully"
 
         except Exception as e:
-            logger.error(f"Error deleting attachment: {str(e)}")
+            logger.error(f"Error in delete_attachment controller: {str(e)}")
             return False, str(e)

@@ -22,7 +22,7 @@ class Attachment(TimestampMixin, SoftDeleteMixin, db.Model):
     form_submission = db.relationship('FormSubmission', back_populates='attachments')
     
     # Constants for file validation
-    ALLOWED_EXTENSIONS = {'pdf', 'png', 'jpg', 'jpeg', 'gif', 'doc', 'docx', 'xls', 'xlsx'}
+    ALLOWED_EXTENSIONS = {'pdf', 'png', 'jpg', 'jpeg', 'gif', 'doc', 'docx', 'xls', 'xlsx','txt'}
     MAX_FILE_SIZE = 16 * 1024 * 1024  # 16MB
     ALLOWED_MIME_TYPES = {
         'application/pdf': 'pdf',
@@ -32,7 +32,8 @@ class Attachment(TimestampMixin, SoftDeleteMixin, db.Model):
         'application/msword': 'doc',
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
         'application/vnd.ms-excel': 'xls',
-        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx'
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+        'text/plain': 'txt'
     }
 
     def __repr__(self):

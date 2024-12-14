@@ -4,7 +4,7 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.controllers.form_controller import FormController
 from app.controllers.form_question_controller import FormQuestionController
-from app.models.answers_submitted import AnswerSubmitted
+from app.models.answer_submitted import AnswerSubmitted
 from app.models.form_answer import FormAnswer
 from app.services.auth_service import AuthService
 from app.utils.permission_manager import PermissionManager, EntityType, RoleType

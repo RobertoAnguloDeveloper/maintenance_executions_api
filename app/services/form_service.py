@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Union, Any
-from app.models.answers_submitted import AnswerSubmitted
+from app.models.answer_submitted import AnswerSubmitted
 from app.models.attachment import Attachment
 from app.models.form_answer import FormAnswer
 from app.models.form_submission import FormSubmission

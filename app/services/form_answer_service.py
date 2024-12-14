@@ -3,7 +3,7 @@
 from typing import Any, Dict, List, Optional, Tuple, Union
 from app import db
 from app.models.answer import Answer
-from app.models.answers_submitted import AnswerSubmitted
+from app.models.answer_submitted import AnswerSubmitted
 from app.models.form import Form
 from app.models.form_answer import FormAnswer
 from sqlalchemy.exc import IntegrityError
@@ -241,69 +241,36 @@ class FormAnswerService:
             return [], error_msg
 
     @staticmethod
-    def update_form_answer(
-        form_answer_id: int,
-        current_user: User,
-        **kwargs
-    ) -> Tuple[Optional[FormAnswer], Optional[str]]:
-        """
-        Update a form answer with validation and authorization.
-        
-        Args:
-            form_answer_id: ID of the form answer to update
-            current_user: Current user object for authorization
-            **kwargs: Fields to update (answer_id)
-            
-        Returns:
-            tuple: (Updated FormAnswer object or None, Error message or None)
-        """
+    def update_form_answer(form_answer_id: int, current_user: User, **kwargs) -> Tuple[Optional[FormAnswer], Optional[str]]:
+        """Update a form answer with validation"""
         try:
-            # Verify form answer exists and is not deleted
             form_answer = FormAnswer.query.filter_by(
                 id=form_answer_id,
                 is_deleted=False
             ).first()
             
             if not form_answer:
-                return None, "Form answer not found or has been deleted"
+                return None, "Form answer not found"
 
-            # Authorization check
-            if not current_user.role.is_super_user:
-                if form_answer.form_question.form.creator.environment_id != current_user.environment_id:
-                    return None, "Unauthorized: Form answer belongs to different environment"
-
-            # Check if answer is already submitted
-            if AnswerSubmitted.query.filter_by(
-                form_answers_id=form_answer_id,
-                is_deleted=False
-            ).first():
-                return None, "Cannot update answer that has been submitted"
-
-            # Validate new answer if provided
-            new_answer_id = kwargs.get('answer_id')
-            if new_answer_id:
-                new_answer = Answer.query.filter_by(
-                    id=new_answer_id,
+            # Validate form_question_id if provided
+            if 'form_question_id' in kwargs:
+                form_question = FormQuestion.query.filter_by(
+                    id=kwargs['form_question_id'],
                     is_deleted=False
                 ).first()
-                
-                if not new_answer:
-                    return None, f"New answer {new_answer_id} not found or deleted"
+                if not form_question:
+                    return None, "Form question not found"
 
-                # Check for duplicate mapping
-                existing = FormAnswer.query.filter_by(
-                    form_question_id=form_answer.form_question_id,
-                    answer_id=new_answer_id,
+            # Validate answer_id if provided
+            if 'answer_id' in kwargs:
+                answer = Answer.query.filter_by(
+                    id=kwargs['answer_id'],
                     is_deleted=False
-                ).filter(FormAnswer.id != form_answer_id).first()
-                
-                if existing:
-                    return None, "This answer is already mapped to the question"
+                ).first()
+                if not answer:
+                    return None, "Answer not found"
 
-            # Start transaction
-            db.session.begin_nested()
-
-            # Update form answer
+            # Update fields
             for key, value in kwargs.items():
                 if hasattr(form_answer, key):
                     setattr(form_answer, key, value)
@@ -311,14 +278,13 @@ class FormAnswerService:
             form_answer.updated_at = datetime.utcnow()
             db.session.commit()
 
-            logger.info(f"Updated form answer {form_answer_id}")
+            logger.info(f"Form answer {form_answer_id} updated by user {current_user.username}")
             return form_answer, None
 
         except Exception as e:
             db.session.rollback()
-            error_msg = f"Error updating form answer: {str(e)}"
-            logger.error(error_msg)
-            return None, error_msg
+            logger.error(f"Error updating form answer: {str(e)}")
+            return None, str(e)
 
     @staticmethod
     def delete_form_answer(form_answer_id: int) -> tuple[bool, Union[dict, str]]:
@@ -340,7 +306,7 @@ class FormAnswerService:
 
             # Check if answer is submitted
             submitted = AnswerSubmitted.query.filter_by(
-                form_answers_id=form_answer_id,
+                form_answer_id=form_answer_id,
                 is_deleted=False
             ).first()
             
@@ -375,7 +341,7 @@ class FormAnswerService:
         """Check if answer is submitted"""
         return (AnswerSubmitted.query
             .filter_by(
-                form_answers_id=form_answer_id,
+                form_answer_id=form_answer_id,
                 is_deleted=False
             )
             .first() is not None)

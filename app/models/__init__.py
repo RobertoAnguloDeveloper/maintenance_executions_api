@@ -10,7 +10,7 @@ from .form import Form
 from .form_question import FormQuestion
 from .form_answer import FormAnswer
 from .form_submission import FormSubmission
-from .answers_submitted import AnswerSubmitted
+from .answer_submitted import AnswerSubmitted
 from .attachment import Attachment
 
 __all__ = [

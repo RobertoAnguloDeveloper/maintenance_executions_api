@@ -1,6 +1,6 @@
 from typing import Optional, Union
 from app import db
-from app.models.answers_submitted import AnswerSubmitted
+from app.models.answer_submitted import AnswerSubmitted
 from app.models.attachment import Attachment
 from app.models.environment import Environment
 from app.models.form import Form

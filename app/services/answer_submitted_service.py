@@ -1,12 +1,12 @@
 from typing import Dict, Optional, List, Tuple
 from app import db
-from app.models.answers_submitted import AnswerSubmitted
+from app.models.answer_submitted import AnswerSubmitted
 from app.models.form_answer import FormAnswer
 from datetime import datetime
 from typing import List, Optional, Tuple
 from datetime import datetime
 from app import db
-from app.models.answers_submitted import AnswerSubmitted
+from app.models.answer_submitted import AnswerSubmitted
 from app.models.form_answer import FormAnswer
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import joinedload

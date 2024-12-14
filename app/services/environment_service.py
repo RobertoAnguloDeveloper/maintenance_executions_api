@@ -4,7 +4,7 @@ from app.controllers.form_controller import FormController
 from app.controllers.user_controller import UserController
 from app.models import Environment
 from datetime import datetime
-from app.models.answers_submitted import AnswerSubmitted
+from app.models.answer_submitted import AnswerSubmitted
 from app.models.attachment import Attachment
 from app.models.form import Form
 from app.models.form_question import FormQuestion

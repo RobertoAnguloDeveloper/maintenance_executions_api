@@ -199,7 +199,7 @@ def get_form_answer(form_answer_id):
 @jwt_required()
 @PermissionManager.require_permission(action="update", entity_type=EntityType.FORMS)
 def update_form_answer(form_answer_id):
-    """Update a form answer"""
+    """Update a form answer mapping"""
     try:
         current_user = get_jwt_identity()
         user = AuthService.get_current_user(current_user)
@@ -214,17 +214,18 @@ def update_form_answer(form_answer_id):
                 return jsonify({"error": "Unauthorized access"}), 403
 
         data = request.get_json()
-        update_data = {k: v for k, v in data.items() if k in ['answer_id', 'remarks']}
+        update_data = {k: v for k, v in data.items() 
+                      if k in ['answer_id', 'form_question_id']}
 
         updated_form_answer, error = FormAnswerController.update_form_answer(
             form_answer_id,
+            current_user=user,  # Pass the user object
             **update_data
         )
 
         if error:
             return jsonify({"error": error}), 400
 
-        logger.info(f"Form answer {form_answer_id} updated by user {user.username}")
         return jsonify({
             "message": "Form answer updated successfully",
             "form_answer": updated_form_answer.to_dict()

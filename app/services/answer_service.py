@@ -4,7 +4,7 @@ from app.models.answer import Answer
 from sqlalchemy.exc import IntegrityError
 from datetime import datetime
 
-from app.models.answers_submitted import AnswerSubmitted
+from app.models.answer_submitted import AnswerSubmitted
 from app.models.form_answer import FormAnswer
 import logging
 

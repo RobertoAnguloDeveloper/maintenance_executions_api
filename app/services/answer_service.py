@@ -78,7 +78,9 @@ class AnswerService:
             
             if not answer:
                 return None, "Answer not found"
-
+            
+            if value is not None:
+                answer.value = value
 
             if remarks is not None:
                 answer.remarks = remarks

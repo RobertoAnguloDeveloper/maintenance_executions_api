@@ -416,7 +416,7 @@ class QuestionService:
             db.session.commit()
 
             logger.info(f"Question {question_id} deleted by user {current_user.username}")
-            return True, None
+            return True, 1
 
         except Exception as e:
             db.session.rollback()

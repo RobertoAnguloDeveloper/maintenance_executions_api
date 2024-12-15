@@ -80,8 +80,8 @@ class QuestionController:
         return QuestionService.update_question(user, question_id, **kwargs)
 
     @staticmethod
-    def delete_question(question_id):
+    def delete_question(question_id, user):
         """
         Delete a question
         """
-        return QuestionService.delete_question(question_id)
+        return QuestionService.delete_question(question_id, user)

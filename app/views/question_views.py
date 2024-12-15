@@ -269,7 +269,7 @@ def delete_question(question_id):
                 "active_forms": active_forms
             }), 400
 
-        success, result = QuestionController.delete_question(question_id)
+        success, result = QuestionController.delete_question(question_id, user)
         if success:
             logger.info(f"Question {question_id} and associated data deleted by {user.username}")
             return jsonify({

@@ -180,8 +180,7 @@ class FormAnswerService:
         """Get non-deleted form answer by ID with relationships"""
         return (FormAnswer.query
             .filter_by(
-                id=form_answer_id,
-                is_deleted=False
+                id=form_answer_id
             )
             .options(
                 joinedload(FormAnswer.form_question)
@@ -300,32 +299,25 @@ class FormAnswerService:
         try:
             # Get form answer checking is_deleted=False
             form_answer = FormAnswer.query.filter_by(
-                id=form_answer_id,
-                is_deleted=False
+                id=form_answer_id
             ).first()
             
-            if not form_answer:
-                return False, "Form answer not found"
-
             # Start transaction
             db.session.begin_nested()
 
-            # Capture deletion details for return
+            # Simple deletion stats since we're performing a permanent delete
             deletion_stats = {
-                'form_answer_id': form_answer.id,
-                'question_text': form_answer.form_question.question.text if form_answer.form_question and form_answer.form_question.question else None,
+                'form_answer_id': form_answer_id,
                 'answer_value': form_answer.answer.value if form_answer.answer else None,
-                'deleted_at': datetime.utcnow().isoformat()
+                'form_question': form_answer.form_question.question.text if form_answer.form_question and form_answer.form_question.question else None
             }
-
-            # Perform soft delete of form answer only
-            form_answer.is_deleted = True
-            form_answer.deleted_at = datetime.utcnow()
+            
+            db.session.delete(form_answer)
 
             # Commit changes
             db.session.commit()
             
-            logger.info(f"Form answer {form_answer_id} deleted successfully")
+            logger.info(f"Form answer {form_answer_id} permanently deleted. Stats: {deletion_stats}")
             return True, deletion_stats
 
         except Exception as e:

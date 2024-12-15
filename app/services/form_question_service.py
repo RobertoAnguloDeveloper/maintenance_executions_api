@@ -285,34 +285,7 @@ class FormQuestionService:
                 'answers_submitted': 0
             }
 
-            # Soft delete form answers
-            form_answers = (FormAnswer.query
-                .filter(
-                    FormAnswer.form_question_id == form_question_id,
-                    FormAnswer.is_deleted == False
-                ).all())
-
-            for form_answer in form_answers:
-                # Soft delete the form answer
-                form_answer.is_deleted = True
-                form_answer.deleted_at = datetime.utcnow()
-                deletion_stats['form_answers'] += 1
-
-                # Soft delete associated submitted answers
-                submitted_answers = (AnswerSubmitted.query
-                    .filter_by(
-                        form_answer_id=form_answer.id,
-                        is_deleted=False
-                    ).all())
-
-                for submitted in submitted_answers:
-                    submitted.is_deleted = True
-                    submitted.deleted_at = datetime.utcnow()
-                    deletion_stats['answers_submitted'] += 1
-
-            # Finally soft delete the form question
-            form_question.is_deleted = True
-            form_question.deleted_at = datetime.utcnow()
+            db.session.delete(form_question)
 
             # Commit all changes
             db.session.commit()

@@ -11,7 +11,7 @@ class FormAnswer(TimestampMixin, SoftDeleteMixin, db.Model):
     __tablename__ = 'form_answers'
     
     id = db.Column(db.Integer, primary_key=True)
-    form_question_id = db.Column(db.Integer, db.ForeignKey('form_questions.id'), nullable=False)
+    form_question_id = db.Column(db.Integer, db.ForeignKey('form_questions.id', ondelete='CASCADE'), nullable=False)
     answer_id = db.Column(db.Integer, db.ForeignKey('answers.id'), nullable=False)
     remarks = db.Column(db.Text)
 

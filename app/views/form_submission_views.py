@@ -1,19 +1,13 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.controllers.form_submission_controller import FormSubmissionController
-from app.controllers.form_controller import FormController  # Added for form validation
-from app.models.form import Form
-from app.models.form_answer import FormAnswer
 from app.services.auth_service import AuthService
 from app.utils.permission_manager import PermissionManager, EntityType, RoleType
 import logging
-from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
 form_submission_bp = Blueprint('form_submissions', __name__)
-
-# app/views/form_submission_views.py
 
 @form_submission_bp.route('', methods=['POST'])
 @jwt_required()
@@ -21,21 +15,34 @@ form_submission_bp = Blueprint('form_submissions', __name__)
 def create_submission():
     """Create a new form submission"""
     try:
-        data = request.get_json()
+        current_user = get_jwt_identity()
+
+        # Handle multipart/form-data for signatures
+        data = request.form.to_dict() if request.form else request.get_json()
+        files = request.files.to_dict()
+
         if not data or 'form_id' not in data:
             return jsonify({"error": "form_id is required"}), 400
 
-        current_user = get_jwt_identity()
+        # Process answers data
+        answers_data = data.get('answers', [])
+        for answer in answers_data:
+            if answer.get('is_signature'):
+                file_key = f"signature_{answer.get('question_id')}"
+                if file_key in files:
+                    answer['signature_file'] = files[file_key]
+
         submission, error = FormSubmissionController.create_submission(
-            form_id=data['form_id'],
-            username=current_user
+            form_id=int(data['form_id']),
+            username=current_user,
+            answers_data=answers_data
         )
 
         if error:
             return jsonify({"error": error}), 400
 
         return jsonify({
-            "message": "Form submission created successfully",
+            "message": "Form submitted successfully",
             "submission": submission.to_dict()
         }), 201
 
@@ -47,7 +54,7 @@ def create_submission():
 @jwt_required()
 @PermissionManager.require_permission(action="view", entity_type=EntityType.SUBMISSIONS)
 def get_all_submissions():
-    """Get all submissions with filters"""
+    """Get all submissions with filtering"""
     try:
         current_user = get_jwt_identity()
         user = AuthService.get_current_user(current_user)
@@ -60,11 +67,22 @@ def get_all_submissions():
         if form_id:
             filters['form_id'] = form_id
 
+        # Date range filters
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        if start_date and end_date:
+            filters['date_range'] = {
+                'start': start_date,
+                'end': end_date
+            }
+
         submissions = FormSubmissionController.get_all_submissions(user, filters)
 
-        return jsonify([
-            submission.to_dict() for submission in submissions
-        ]), 200
+        return jsonify({
+            'total_count': len(submissions),
+            'filters_applied': filters,
+            'submissions': [sub.to_dict() for sub in submissions]
+        }), 200
 
     except Exception as e:
         logger.error(f"Error getting submissions: {str(e)}")
@@ -74,7 +92,7 @@ def get_all_submissions():
 @jwt_required()
 @PermissionManager.require_permission(action="view", entity_type=EntityType.SUBMISSIONS)
 def get_submission(submission_id):
-    """Get a specific submission"""
+    """Get a specific submission with its answers"""
     try:
         current_user = get_jwt_identity()
         user = AuthService.get_current_user(current_user)
@@ -91,7 +109,20 @@ def get_submission(submission_id):
             elif submission.submitted_by != current_user:
                 return jsonify({"error": "Unauthorized access"}), 403
 
-        return jsonify(submission.to_dict()), 200
+        # Get answers with access control
+        answers, error = FormSubmissionController.get_submission_answers(
+            submission_id=submission_id,
+            current_user=current_user,
+            user_role=user.role.name
+        )
+
+        if error:
+            return jsonify({"error": error}), 403
+
+        submission_data = submission.to_dict()
+        submission_data['answers'] = answers
+
+        return jsonify(submission_data), 200
 
     except Exception as e:
         logger.error(f"Error getting submission {submission_id}: {str(e)}")
@@ -106,83 +137,48 @@ def delete_submission(submission_id):
         current_user = get_jwt_identity()
         user = AuthService.get_current_user(current_user)
 
-        # Get submission checking is_deleted=False
-        submission = FormSubmissionController.get_submission(submission_id)
-        if not submission:
-            return jsonify({"error": "Submission not found"}), 404
+        success, message = FormSubmissionController.delete_submission(
+            submission_id=submission_id,
+            current_user=current_user,
+            user_role=user.role.name
+        )
 
-        # Access control
-        if not user.role.is_super_user:
-            if user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                if submission.form.creator.environment_id != user.environment_id:
-                    return jsonify({"error": "Unauthorized access"}), 403
-            elif submission.submitted_by != current_user:
-                return jsonify({"error": "Cannot delete submissions by other users"}), 403
+        if not success:
+            return jsonify({"error": message}), 400
 
-            # Check submission age for non-admin users
-            submission_age = datetime.utcnow() - submission.submitted_at
-            if submission_age.days > 7:  # Configurable timeframe
-                return jsonify({
-                    "error": "Cannot delete submissions older than 7 days"
-                }), 400
-
-        success, error = FormSubmissionController.delete_submission(submission_id)
-        if success:
-            return jsonify({
-                "message": "Submission deleted successfully"
-            }), 200
-            
-        return jsonify({"error": error}), 400
+        return jsonify({
+            "message": "Submission deleted successfully",
+            "submission_id": submission_id
+        }), 200
 
     except Exception as e:
         logger.error(f"Error deleting submission {submission_id}: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
 
-@form_submission_bp.route('/form/<int:form_id>', methods=['GET'])
+@form_submission_bp.route('/<int:submission_id>/answers', methods=['GET'])
 @jwt_required()
 @PermissionManager.require_permission(action="view", entity_type=EntityType.SUBMISSIONS)
-def get_form_submissions(form_id):
-    """Get all submissions for a specific form"""
+def get_submission_answers(submission_id):
+    """Get all answers for a specific submission"""
     try:
         current_user = get_jwt_identity()
         user = AuthService.get_current_user(current_user)
 
-        # Create filters for the specific form
-        filters = {'form_id': form_id}
+        answers, error = FormSubmissionController.get_submission_answers(
+            submission_id=submission_id,
+            current_user=current_user,
+            user_role=user.role.name
+        )
 
-        submissions = FormSubmissionController.get_all_submissions(user, filters)
+        if error:
+            return jsonify({"error": error}), 400
 
-        return jsonify([
-            submission.to_dict() for submission in submissions
-        ]), 200
-
-    except Exception as e:
-        logger.error(f"Error getting submissions for form {form_id}: {str(e)}")
-        return jsonify({"error": "Internal server error"}), 500
-
-@form_submission_bp.route('/user/<string:username>', methods=['GET'])
-@jwt_required()
-@PermissionManager.require_permission(action="view", entity_type=EntityType.SUBMISSIONS)
-def get_user_submissions(username):
-    """Get all submissions by a specific user"""
-    try:
-        current_user = get_jwt_identity()
-        user = AuthService.get_current_user(current_user)
-
-        # Access control
-        if not user.role.is_super_user and current_user != username:
-            if user.role.name not in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                return jsonify({"error": "Unauthorized access"}), 403
-
-        # Create filters for the specific user
-        filters = {'submitted_by': username}
-        
-        submissions = FormSubmissionController.get_all_submissions(user, filters)
-
-        return jsonify([
-            submission.to_dict() for submission in submissions
-        ]), 200
+        return jsonify({
+            'submission_id': submission_id,
+            'total_answers': len(answers),
+            'answers': answers
+        }), 200
 
     except Exception as e:
-        logger.error(f"Error getting submissions for user {username}: {str(e)}")
+        logger.error(f"Error getting submission answers: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500

@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from app.models.form import Form
 from app.services.form_service import FormService
 from app.utils.permission_manager import PermissionManager, EntityType, RoleType
@@ -111,19 +111,27 @@ class FormController:
             return None, str(e)
 
     @staticmethod
-    def get_form_submissions(form_id: int) -> tuple:
-        """Get form submissions"""
+    def get_form_submissions(form_id: int) -> Tuple[List[Dict], Optional[str]]:
+        """
+        Get all submissions for a form with proper error handling
+        """
         try:
-            return FormService.get_form_submissions(form_id)
+            submissions = FormService.get_form_submissions(form_id)
+            return [sub.to_dict() for sub in submissions], None
         except Exception as e:
-            logger.error(f"Error in get_form_submissions controller: {str(e)}")
-            return None, str(e)
+            logger.error(f"Error getting form submissions: {str(e)}")
+            return [], "Error retrieving submissions"
 
     @staticmethod
-    def get_form_statistics(form_id: int) -> tuple:
-        """Get form statistics"""
+    def get_form_statistics(form_id: int) -> Tuple[Optional[Dict], Optional[str]]:
+        """
+        Get statistics for a form with proper error handling
+        """
         try:
-            return FormService.get_form_statistics(form_id)
+            stats = FormService.get_form_statistics(form_id)
+            if stats is None:
+                return None, "Error generating statistics"
+            return stats, None
         except Exception as e:
-            logger.error(f"Error in get_form_statistics controller: {str(e)}")
-            return None, str(e)
+            logger.error(f"Error getting form statistics: {str(e)}")
+            return None, "Error generating statistics"

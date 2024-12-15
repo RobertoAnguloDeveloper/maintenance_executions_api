@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.controllers.answer_submitted_controller import AnswerSubmittedController
 from app.services.auth_service import AuthService
@@ -18,22 +18,33 @@ def create_answer_submitted():
         current_user = get_jwt_identity()
         user = AuthService.get_current_user(current_user)
 
-        data = request.get_json()
+        # Handle multipart/form-data for potential signatures
+        data = request.form.to_dict() if request.form else request.get_json()
         if not data:
             return jsonify({"error": "No data provided"}), 400
 
         # Validate required fields
-        required_fields = ['form_answer_id', 'form_submission_id']
+        required_fields = ['form_submission_id', 'question_text', 'answer_text']
         if not all(field in data for field in required_fields):
             return jsonify({
                 "error": "Missing required fields",
                 "required_fields": required_fields
             }), 400
 
+        # Handle signature if present
+        is_signature = data.get('is_signature', False)
+        signature_file = request.files.get('signature') if is_signature else None
+
+        # Validate signature file if required
+        if is_signature and not signature_file:
+            return jsonify({"error": "Signature file is required for signature questions"}), 400
+
         answer_submitted, error = AnswerSubmittedController.create_answer_submitted(
-            form_answer_id=data['form_answer_id'],
-            form_submission_id=data['form_submission_id'],
-            text_answered=data.get('text_answered'),
+            form_submission_id=int(data['form_submission_id']),
+            question_text=data['question_text'],
+            answer_text=data['answer_text'],
+            is_signature=is_signature,
+            signature_file=signature_file,
             current_user=current_user
         )
 
@@ -48,7 +59,7 @@ def create_answer_submitted():
     except Exception as e:
         logger.error(f"Error creating answer submission: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
-    
+
 @answer_submitted_bp.route('/bulk', methods=['POST'])
 @jwt_required()
 @PermissionManager.require_permission(action="create", entity_type=EntityType.SUBMISSIONS)
@@ -57,15 +68,39 @@ def bulk_create_answers_submitted():
     try:
         current_user = get_jwt_identity()
         
-        data = request.get_json()
+        # Handle multipart/form-data for signatures
+        data = request.form.to_dict() if request.form else request.get_json()
+        files = request.files.to_dict()
+        
         if not data or 'form_submission_id' not in data or 'submissions' not in data:
             return jsonify({
                 "error": "Missing required fields: form_submission_id and submissions"
             }), 400
+
+        # Process submissions data and handle signatures
+        submissions_data = []
+        for submission in data['submissions']:
+            submission_data = {
+                'question_text': submission['question_text'],
+                'answer_text': submission['answer_text'],
+                'is_signature': submission.get('is_signature', False)
+            }
+            
+            # Add signature file if present
+            if submission_data['is_signature']:
+                file_key = f"signature_{submission.get('question_id')}"
+                if file_key in files:
+                    submission_data['signature_file'] = files[file_key]
+                else:
+                    return jsonify({
+                        "error": f"Missing signature file for question {submission.get('question_id')}"
+                    }), 400
+                    
+            submissions_data.append(submission_data)
             
         submissions, error = AnswerSubmittedController.bulk_create_answers_submitted(
-            form_submission_id=data['form_submission_id'],
-            submissions_data=data['submissions'],
+            form_submission_id=int(data['form_submission_id']),
+            submissions_data=submissions_data,
             current_user=current_user
         )
         
@@ -93,10 +128,10 @@ def get_all_answers_submitted():
         # Build filters from query parameters
         filters = {}
         
-        # Form filter
-        form_id = request.args.get('form_id', type=int)
-        if form_id:
-            filters['form_id'] = form_id
+        # Form submission filter
+        form_submission_id = request.args.get('form_submission_id', type=int)
+        if form_submission_id:
+            filters['form_submission_id'] = form_submission_id
 
         # Date range filters
         start_date = request.args.get('start_date')
@@ -107,12 +142,12 @@ def get_all_answers_submitted():
                 'end': end_date
             }
 
-        answers_submitted = AnswerSubmittedController.get_all_answers_submitted(user, filters)
+        answers = AnswerSubmittedController.get_all_answers_submitted(user, filters)
 
         return jsonify({
-            'total_count': len(answers_submitted),
+            'total_count': len(answers),
             'filters_applied': filters,
-            'answers_submitted': answers_submitted
+            'answers': answers
         }), 200
 
     except Exception as e:
@@ -129,7 +164,7 @@ def get_answer_submitted(answer_submitted_id):
         user = AuthService.get_current_user(current_user)
 
         answer_submitted, error = AnswerSubmittedController.get_answer_submitted(
-            answer_submitted_id,
+            answer_submitted_id=answer_submitted_id,
             current_user=current_user,
             user_role=user.role.name
         )
@@ -153,7 +188,7 @@ def get_answers_by_submission(submission_id):
         user = AuthService.get_current_user(current_user)
 
         answers, error = AnswerSubmittedController.get_answers_by_submission(
-            submission_id,
+            submission_id=submission_id,
             current_user=current_user,
             user_role=user.role.name
         )
@@ -185,8 +220,8 @@ def update_answer_submitted(answer_submitted_id):
             return jsonify({"error": "No update data provided"}), 400
 
         updated_answer, error = AnswerSubmittedController.update_answer_submitted(
-            answer_submitted_id,
-            text_answered=data.get('text_answered'),
+            answer_submitted_id=answer_submitted_id,
+            answer_text=data.get('answer_text'),
             current_user=current_user,
             user_role=user.role.name
         )
@@ -213,7 +248,7 @@ def delete_answer_submitted(answer_submitted_id):
         user = AuthService.get_current_user(current_user)
 
         success, message = AnswerSubmittedController.delete_answer_submitted(
-            answer_submitted_id,
+            answer_submitted_id=answer_submitted_id,
             current_user=current_user,
             user_role=user.role.name
         )

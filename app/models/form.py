@@ -105,6 +105,7 @@ class Form(TimestampMixin, SoftDeleteMixin, db.Model):
             'form_question_id': form_question.id,
             'text': question.text,
             'type': question_type,
+            'is_signature': question.is_signature,
             'order_number': form_question.order_number,
             'remarks': question.remarks
         }

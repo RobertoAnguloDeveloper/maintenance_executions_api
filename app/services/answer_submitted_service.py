@@ -1,101 +1,101 @@
-from typing import Dict, Optional, List, Tuple
+from typing import Dict, List, Optional, Tuple
 from app import db
 from app.models.answer_submitted import AnswerSubmitted
-from app.models.form_answer import FormAnswer
-from datetime import datetime
-from typing import List, Optional, Tuple
-from datetime import datetime
-from app import db
-from app.models.answer_submitted import AnswerSubmitted
-from app.models.form_answer import FormAnswer
-from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import joinedload
-import logging
-
+from app.models.attachment import Attachment
 from app.models.form_submission import FormSubmission
+from app.models.question import Question
+from datetime import datetime
+from werkzeug.datastructures import FileStorage
+import os
+import logging
 
 logger = logging.getLogger(__name__)
 
 class AnswerSubmittedService:
     @staticmethod
-    def validate_text_answer(form_answer: FormAnswer, text_answered: Optional[str]) -> Tuple[bool, Optional[str]]:
-        """Validate text answer based on question type"""
-        question_type = form_answer.get_question_type()
-        if question_type in ['text', 'date', 'datetime']:
-            if not text_answered:
-                return False, f"Text answer is required for {question_type} question type"
-            if question_type == 'date':
-                try:
-                    datetime.strptime(text_answered, '%d/%m/%Y')
-                except ValueError:
-                    return False, "Invalid date format. Use DD/MM/YYYY"
-            elif question_type == 'datetime':
-                try:
-                    datetime.strptime(text_answered, '%d/%m/%Y %H:%M:%S')
-                except ValueError:
-                    return False, "Invalid datetime format. Use DD/MM/YYYY HH:MM:SS"
-        elif text_answered:
-            return False, f"Text answer not allowed for {question_type} question type"
-        return True, None
-
-    @staticmethod
     def create_answer_submitted(
-        form_answer_id: int,
         form_submission_id: int,
-        text_answered: Optional[str] = None
+        question_text: str,
+        question_type_text: str,
+        answer_text: str,
+        is_signature: bool = False,
+        signature_file: Optional[FileStorage] = None,
+        upload_path: Optional[str] = None
     ) -> Tuple[Optional[AnswerSubmitted], Optional[str]]:
-        try:
-            # Validate form_answer exists
-            form_answer = FormAnswer.query.get(form_answer_id)
-            if not form_answer:
-                return None, "Form answer not found"
-
-            # Validate text answer
-            is_valid, error = AnswerSubmittedService.validate_text_answer(
-                form_answer, text_answered
-            )
-            if error:  # Changed condition
-                return None, error
-
-            # Check for existing submission
-            existing = AnswerSubmitted.query.filter_by(
-                form_answer_id=form_answer_id,
-                form_submission_id=form_submission_id,
-                is_deleted=False
-            ).first()
-            if existing:
-                return None, "Answer already submitted for this submission"
-
-            answer_submitted = AnswerSubmitted(
-                form_answer_id=form_answer_id,
-                form_submission_id=form_submission_id,
-                text_answered=text_answered
-            )
-            db.session.add(answer_submitted)
-            db.session.commit()
-
-            return answer_submitted, None
-
-        except SQLAlchemyError as e:
-            db.session.rollback()
-            logger.error(f"Database error in create_answer_submitted: {str(e)}")
-            return None, "Database error occurred"
-        except Exception as e:
-            db.session.rollback()
-            logger.error(f"Unexpected error in create_answer_submitted: {str(e)}")
-            return None, "Unexpected error occurred"
-        
-    @staticmethod
-    def bulk_create_answers_submitted(
-        submissions_data: List[Dict],
-        form_submission_id: int
-    ) -> Tuple[Optional[List[AnswerSubmitted]], Optional[str]]:
         """
-        Bulk create answer submissions
+        Create a new answer submission with signature handling.
         
         Args:
-            submissions_data: List of dictionaries containing form_answer_id and text_answered
             form_submission_id: ID of the form submission
+            question_text: The text of the question
+            answer_text: The answer text
+            is_signature: Whether this answer requires a signature
+            signature_file: File object for signature if applicable
+            upload_path: Base path for file uploads
+            
+        Returns:
+            tuple: (Created AnswerSubmitted object or None, Error message or None)
+        """
+        try:
+            # Verify form submission exists
+            form_submission = FormSubmission.query.filter_by(
+                id=form_submission_id,
+                is_deleted=False
+            ).first()
+            
+            if not form_submission:
+                return None, "Form submission not found"
+
+            # Create answer submission
+            answer_submitted = AnswerSubmitted(
+                form_submission_id=form_submission_id,
+                question=question_text,
+                question_type=question_type_text,
+                answer=answer_text
+            )
+            db.session.add(answer_submitted)
+
+            # Handle signature if applicable
+            if is_signature and signature_file and upload_path:
+                # Create signature directory if it doesn't exist
+                signature_dir = os.path.join(upload_path, 'signatures', str(form_submission_id))
+                os.makedirs(signature_dir, exist_ok=True)
+
+                # Save signature file
+                filename = f"signature_{datetime.now().strftime('%Y%m%d_%H%M%S')}{os.path.splitext(signature_file.filename)[1]}"
+                file_path = os.path.join('signatures', str(form_submission_id), filename)
+                signature_file.save(os.path.join(upload_path, file_path))
+
+                # Create attachment record
+                attachment = Attachment(
+                    form_submission_id=form_submission_id,
+                    file_type=signature_file.content_type,
+                    file_path=file_path,
+                    is_signature=True
+                )
+                db.session.add(attachment)
+
+            db.session.commit()
+            return answer_submitted, None
+
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"Error in create_answer_submitted: {str(e)}")
+            return None, str(e)
+
+    @staticmethod
+    def bulk_create_answers_submitted(
+        form_submission_id: int,
+        answers_data: List[Dict],
+        upload_path: Optional[str] = None
+    ) -> Tuple[Optional[List[AnswerSubmitted]], Optional[str]]:
+        """
+        Bulk create answer submissions with signature handling.
+        
+        Args:
+            form_submission_id: ID of the form submission
+            answers_data: List of dictionaries containing answer data
+            upload_path: Base path for file uploads
             
         Returns:
             tuple: (List of created AnswerSubmitted objects or None, Error message or None)
@@ -103,125 +103,138 @@ class AnswerSubmittedService:
         try:
             created_submissions = []
             
-            # Start transaction
-            db.session.begin_nested()
+            # Verify form submission exists
+            form_submission = FormSubmission.query.filter_by(
+                id=form_submission_id,
+                is_deleted=False
+            ).first()
             
-            for submission in submissions_data:
-                form_answer_id = submission.get('form_answer_id')
-                text_answered = submission.get('text_answered')
-                
-                # Validate form_answer exists
-                form_answer = FormAnswer.query.get(form_answer_id)
-                if not form_answer:
-                    db.session.rollback()
-                    return None, f"Form answer {form_answer_id} not found"
-                
-                # Validate text answer
-                is_valid, error = AnswerSubmittedService.validate_text_answer(
-                    form_answer, text_answered
-                )
-                if not is_valid:
-                    db.session.rollback()
-                    return None, f"Invalid text answer for form answer {form_answer_id}: {error}"
-                
-                # Check for existing submission
-                existing = AnswerSubmitted.query.filter_by(
-                    form_answer_id=form_answer_id,
-                    form_submission_id=form_submission_id,
-                    is_deleted=False
-                ).first()
-                
-                if existing:
-                    db.session.rollback()
-                    return None, f"Answer already submitted for form answer {form_answer_id}"
-                
+            if not form_submission:
+                return None, "Form submission not found"
+
+            for data in answers_data:
+                question_text = data.get('question_text')
+                question_type_text = data.get('question_type')
+                answer_text = data.get('answer_text')
+                is_signature = data.get('is_signature', False)
+                signature_file = data.get('signature_file')
+
+                if not question_text or not answer_text:
+                    return None, "Question text and answer text are required"
+
                 answer_submitted = AnswerSubmitted(
-                    form_answer_id=form_answer_id,
                     form_submission_id=form_submission_id,
-                    text_answered=text_answered
+                    question=question_text,
+                    question_type=question_type_text,
+                    answer=answer_text
                 )
                 db.session.add(answer_submitted)
                 created_submissions.append(answer_submitted)
-            
+
+                # Handle signature if applicable
+                if is_signature and signature_file and upload_path:
+                    # Create signature directory
+                    signature_dir = os.path.join(upload_path, 'signatures', str(form_submission_id))
+                    os.makedirs(signature_dir, exist_ok=True)
+
+                    # Save signature file
+                    filename = f"signature_{datetime.now().strftime('%Y%m%d_%H%M%S')}{os.path.splitext(signature_file.filename)[1]}"
+                    file_path = os.path.join('signatures', str(form_submission_id), filename)
+                    signature_file.save(os.path.join(upload_path, file_path))
+
+                    # Create attachment record
+                    attachment = Attachment(
+                        form_submission_id=form_submission_id,
+                        file_type=signature_file.content_type,
+                        file_path=file_path,
+                        is_signature=True
+                    )
+                    db.session.add(attachment)
+
             db.session.commit()
             return created_submissions, None
-            
+
         except Exception as e:
             db.session.rollback()
             logger.error(f"Error in bulk_create_answers_submitted: {str(e)}")
             return None, str(e)
-        
+
     @staticmethod
     def get_answer_submitted(answer_submitted_id: int) -> Optional[AnswerSubmitted]:
         """Get a specific submitted answer"""
-        try:
-            return (AnswerSubmitted.query
-                .filter_by(
-                    id=answer_submitted_id,
-                    is_deleted=False
-                )
-                .join(FormAnswer)
-                .join(FormSubmission)
-                .options(
-                    joinedload(AnswerSubmitted.form_answer),
-                    joinedload(AnswerSubmitted.form_submission)
-                )
-                .first())
-        except Exception as e:
-            logger.error(f"Error getting answer submitted {answer_submitted_id}: {str(e)}")
-            return None
+        return AnswerSubmitted.query.filter_by(
+            id=answer_submitted_id,
+            is_deleted=False
+        ).first()
 
     @staticmethod
-    def get_all_answers_submitted(filters: Dict = None) -> List[AnswerSubmitted]:
+    def get_all_answers_submitted(filters: Optional[Dict] = None) -> List[AnswerSubmitted]:
+        """Get all submitted answers with optional filtering"""
         query = AnswerSubmitted.query.filter_by(is_deleted=False)
+        
         if filters:
             if 'form_submission_id' in filters:
                 query = query.filter_by(form_submission_id=filters['form_submission_id'])
-        return query.all()
+        
+        return query.order_by(AnswerSubmitted.created_at.desc()).all()
 
     @staticmethod
     def get_answers_by_submission(submission_id: int) -> Tuple[List[AnswerSubmitted], Optional[str]]:
-        """Get all submitted answers for a form submission"""
+        """Get all answers for a specific submission"""
         try:
-            answers = (AnswerSubmitted.query
-                .filter_by(
-                    form_submission_id=submission_id,
-                    is_deleted=False
-                )
-                .options(
-                    joinedload(AnswerSubmitted.form_answer),
-                    joinedload(AnswerSubmitted.form_submission)
-                )
-                .all())
+            answers = AnswerSubmitted.query.filter_by(
+                form_submission_id=submission_id,
+                is_deleted=False
+            ).all()
             return answers, None
         except Exception as e:
             logger.error(f"Error getting answers by submission: {str(e)}")
             return [], str(e)
 
     @staticmethod
-    def update_answer_submitted(answer_submitted_id: int, text_answered: Optional[str] = None) -> Tuple[Optional[AnswerSubmitted], Optional[str]]:
+    def update_answer_submitted(
+        answer_submitted_id: int,
+        answer_text: Optional[str] = None
+    ) -> Tuple[Optional[AnswerSubmitted], Optional[str]]:
+        """Update a submitted answer"""
         try:
-            answer = AnswerSubmitted.query.get(answer_submitted_id)
+            answer = AnswerSubmitted.query.filter_by(
+                id=answer_submitted_id,
+                is_deleted=False
+            ).first()
+            
             if not answer:
                 return None, "Answer submission not found"
-            
-            answer.text_answered = text_answered
+
+            if answer_text is not None:
+                answer.answer = answer_text
+                answer.updated_at = datetime.utcnow()
+
             db.session.commit()
             return answer, None
+            
         except Exception as e:
             db.session.rollback()
+            logger.error(f"Error updating answer submitted: {str(e)}")
             return None, str(e)
 
     @staticmethod
     def delete_answer_submitted(answer_submitted_id: int) -> Tuple[bool, Optional[str]]:
+        """Soft delete a submitted answer"""
         try:
-            answer = AnswerSubmitted.query.get(answer_submitted_id)
+            answer = AnswerSubmitted.query.filter_by(
+                id=answer_submitted_id,
+                is_deleted=False
+            ).first()
+            
             if not answer:
                 return False, "Answer submission not found"
-            
+
             answer.soft_delete()
             db.session.commit()
             return True, None
+            
         except Exception as e:
             db.session.rollback()
+            logger.error(f"Error deleting answer submitted: {str(e)}")
             return False, str(e)

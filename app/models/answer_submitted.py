@@ -9,37 +9,33 @@ class AnswerSubmitted(TimestampMixin, SoftDeleteMixin, db.Model):
     __tablename__ = 'answers_submitted'
     
     id = db.Column(db.Integer, primary_key=True)
-    form_answer_id = db.Column(db.Integer, db.ForeignKey('form_answers.id'), nullable=False)  # Changed from form_answers_id
-    form_submission_id = db.Column(db.Integer, db.ForeignKey('form_submissions.id'), nullable=False)  # Changed from form_submissions_id
-    text_answered = db.Column(db.Text)
+    question = db.Column(db.Text)
+    question_type = db.Column(db.String(255), nullable=False)
+    answer = db.Column(db.Text)
+    form_submission_id = db.Column(db.Integer, db.ForeignKey('form_submissions.id'), nullable=False)
 
     # Relationships
-    form_answer = db.relationship('FormAnswer', back_populates='submissions')
     form_submission = db.relationship('FormSubmission', back_populates='answers_submitted')
 
     def __repr__(self):
         return f'<AnswerSubmitted {self.id}>'
 
     def to_dict(self):
+        """Convert answer submission to dictionary representation"""
         return {
             'id': self.id,
-            'form_answer_id': self.form_answer_id,
+            'question': self.question,
+            'question_type': self.question_type,
+            'answer': self.answer,
             'form_submission': {
-                                "id": self.form_submission.id,
-                                "submitted_by": self.form_submission.submitted_by,
-                                "submitted_at": self.form_submission.submitted_at
-                            },
-            'text_answered': self.text_answered,
-            'form_answer': {
-                'id': self.form_answer.id,
-                'question': {
-                    'text': self.form_answer.form_question.question.text,
-                    'type': self.form_answer.form_question.question.question_type.type
-                } if self.form_answer.form_question and self.form_answer.form_question.question else None,
-                'answer': {
-                    'value': self.form_answer.answer.value
-                } if self.form_answer.answer else None
-            } if self.form_answer else None,
+                "id": self.form_submission.id,
+                "submitted_by": self.form_submission.submitted_by,
+                "submitted_at": self.form_submission.submitted_at.isoformat() if self.form_submission.submitted_at else None,
+                "form": {
+                    "id": self.form_submission.form.id,
+                    "title": self.form_submission.form.title
+                } if self.form_submission.form else None
+            } if self.form_submission else None,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }

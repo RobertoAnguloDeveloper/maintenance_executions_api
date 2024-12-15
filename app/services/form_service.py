@@ -346,41 +346,83 @@ class FormService(BaseService):
                 .order_by(FormSubmission.submitted_at.desc())
                 .all())
 
-    @classmethod
-    def get_form_statistics(cls, form_id: int) -> Optional[Dict]:
-        """Get statistics for a form"""
-        try:
-            form = Form.query.filter_by(
-                id=form_id,
-                is_deleted=False
-            ).first()
+    @staticmethod
+    def get_form_statistics(form_id: int) -> Optional[Dict]:
+        """
+        Get comprehensive statistics for a form
+        
+        Args:
+            form_id: ID of the form
             
+        Returns:
+            Optional[Dict]: Statistics data or None if error
+        """
+        try:
+            form = Form.query.filter_by(id=form_id, is_deleted=False).first()
             if not form:
                 return None
-                
+
+            # Get all non-deleted submissions
             submissions = [s for s in form.submissions if not s.is_deleted]
-            total_submissions = len(submissions)
             
             stats = {
-                'total_submissions': total_submissions,
-                'submissions_by_date': {},
-                'questions_stats': {},
-                'average_completion_time': None,
+                'total_submissions': len(submissions),
                 'submission_trends': {
                     'daily': {},
                     'weekly': {},
                     'monthly': {}
-                }
+                },
+                'questions_stats': {},
+                'completion_rate': 0
             }
 
-            if total_submissions > 0:
-                stats.update(cls._calculate_submission_trends(submissions))
-                stats.update(cls._calculate_question_statistics(form))
-            
+            if submissions:
+                # Calculate submission trends
+                for submission in submissions:
+                    date = submission.submitted_at.date().isoformat()
+                    week = f"{submission.submitted_at.year}-W{submission.submitted_at.isocalendar()[1]}"
+                    month = submission.submitted_at.strftime('%Y-%m')
+
+                    stats['submission_trends']['daily'][date] = \
+                        stats['submission_trends']['daily'].get(date, 0) + 1
+                    stats['submission_trends']['weekly'][week] = \
+                        stats['submission_trends']['weekly'].get(week, 0) + 1
+                    stats['submission_trends']['monthly'][month] = \
+                        stats['submission_trends']['monthly'].get(month, 0) + 1
+
+                # Calculate question statistics
+                total_questions = len([q for q in form.form_questions if not q.is_deleted])
+                
+                for form_question in form.form_questions:
+                    if form_question.is_deleted:
+                        continue
+                        
+                    answers = AnswerSubmitted.query.join(
+                        FormSubmission
+                    ).filter(
+                        FormSubmission.form_id == form_id,
+                        FormSubmission.is_deleted == False,
+                        AnswerSubmitted.question == form_question.question.text
+                    ).all()
+
+                    stats['questions_stats'][form_question.question_id] = {
+                        'total_answers': len(answers),
+                        'question_text': form_question.question.text,
+                        'question_type': form_question.question.question_type.type
+                    }
+
+                # Calculate completion rate
+                if total_questions > 0:
+                    completed_submissions = len([
+                        s for s in submissions 
+                        if len(s.answers_submitted) >= total_questions
+                    ])
+                    stats['completion_rate'] = (completed_submissions / len(submissions)) * 100
+
             return stats
-            
+
         except Exception as e:
-            logger.error(f"Error getting form statistics: {str(e)}")
+            logger.error(f"Error generating form statistics: {str(e)}")
             return None
 
     @staticmethod

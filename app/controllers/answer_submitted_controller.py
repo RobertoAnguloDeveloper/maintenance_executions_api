@@ -1,7 +1,9 @@
 from typing import Dict, List, Optional, Tuple
+from flask import current_app
 from app.models import user
 from app.services.answer_submitted_service import AnswerSubmittedService
 from app.services.form_submission_service import FormSubmissionService
+from app.services.form_service import FormService
 from app.utils.permission_manager import RoleType
 from datetime import datetime
 import logging
@@ -11,18 +13,22 @@ logger = logging.getLogger(__name__)
 class AnswerSubmittedController:
     @staticmethod
     def create_answer_submitted(
-        form_answer_id: int,
         form_submission_id: int,
-        text_answered: Optional[str] = None,
+        question_text: str,
+        answer_text: str,
+        is_signature: bool = False,
+        signature_file = None,
         current_user: str = None
     ) -> Tuple[Optional[Dict], Optional[str]]:
         """
         Create a new submitted answer with validation and access control
         
         Args:
-            form_answer_id: ID of the form answer
             form_submission_id: ID of the form submission
-            text_answered: Optional text answer
+            question_text: Text of the question
+            answer_text: Text of the answer
+            is_signature: Whether this answer requires a signature
+            signature_file: Optional signature file for signature questions
             current_user: Username of current user for access control
             
         Returns:
@@ -38,11 +44,17 @@ class AnswerSubmittedController:
             if current_user and submission.submitted_by != current_user:
                 return None, "Unauthorized: Can only add answers to own submissions"
 
+            # Get upload path for signatures
+            upload_path = current_app.config['UPLOAD_FOLDER'] if is_signature else None
+
             # Create the answer submission
             answer_submitted, error = AnswerSubmittedService.create_answer_submitted(
-                form_answer_id=form_answer_id,
                 form_submission_id=form_submission_id,
-                text_answered=text_answered
+                question_text=question_text,
+                answer_text=answer_text,
+                is_signature=is_signature,
+                signature_file=signature_file,
+                upload_path=upload_path
             )
             
             if error:
@@ -80,10 +92,14 @@ class AnswerSubmittedController:
             # Only submission owner can add answers
             if current_user and submission.submitted_by != current_user:
                 return None, "Unauthorized: Can only add answers to own submissions"
+
+            # Get upload path for signatures
+            upload_path = current_app.config['UPLOAD_FOLDER']
             
             created_submissions, error = AnswerSubmittedService.bulk_create_answers_submitted(
-                submissions_data=submissions_data,
-                form_submission_id=form_submission_id
+                form_submission_id=form_submission_id,
+                answers_data=submissions_data,
+                upload_path=upload_path
             )
             
             if error:
@@ -129,7 +145,7 @@ class AnswerSubmittedController:
         except Exception as e:
             logger.error(f"Error getting answers submitted in controller: {str(e)}")
             return []
-
+        
     @staticmethod
     def get_answer_submitted(
         answer_submitted_id: int,
@@ -137,9 +153,18 @@ class AnswerSubmittedController:
         user_role: Optional[str] = None
     ) -> Tuple[Optional[Dict], Optional[str]]:
         """
-        Get a specific submitted answer with access control
+        Get a specific submitted answer with authorization checks.
+        
+        Args:
+            answer_submitted_id: ID of the answer submission
+            current_user: Username of current user
+            user_role: Role of current user
+            
+        Returns:
+            tuple: (Answer submitted dictionary or None, Error message or None)
         """
         try:
+            # Get the answer submission
             answer = AnswerSubmittedService.get_answer_submitted(answer_submitted_id)
             if not answer:
                 return None, "Answer submission not found"
@@ -164,17 +189,7 @@ class AnswerSubmittedController:
         current_user: Optional[str] = None,
         user_role: Optional[str] = None
     ) -> Tuple[List[Dict], Optional[str]]:
-        """
-        Get all submitted answers for a form submission
-        
-        Args:
-            submission_id: ID of the form submission
-            current_user: Username of current user
-            user_role: Role of current user
-            
-        Returns:
-            tuple: (List of answer submitted dictionaries, Error message or None)
-        """
+        """Get all submitted answers for a form submission"""
         try:
             # Get submission for access control
             submission = FormSubmissionService.get_submission(submission_id)
@@ -202,45 +217,33 @@ class AnswerSubmittedController:
     @staticmethod
     def update_answer_submitted(
         answer_submitted_id: int,
-        text_answered: Optional[str] = None,
+        answer_text: Optional[str] = None,
         current_user: Optional[str] = None,
         user_role: Optional[str] = None
     ) -> Tuple[Optional[Dict], Optional[str]]:
-        """
-        Update a submitted answer with access control
-        
-        Args:
-            answer_submitted_id: ID of the answer submission
-            text_answered: New text answer value
-            current_user: Username of current user
-            user_role: Role of current user
-            
-        Returns:
-            tuple: (Updated answer submitted data or None, Error message or None)
-        """
+        """Update a submitted answer"""
         try:
-            # Get existing answer for access control
-            current_answer = AnswerSubmittedService.get_answer_submitted(answer_submitted_id)
-            if not current_answer:
+            answer = AnswerSubmittedService.get_answer_submitted(answer_submitted_id)
+            if not answer:
                 return None, "Answer submission not found"
 
             # Access control
             if current_user and user_role != RoleType.ADMIN:
                 if user_role in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                    if current_answer.form_submission.form.creator.environment_id != user.environment_id:
+                    if answer.form_submission.form.creator.environment_id != user.environment_id:
                         return None, "Unauthorized access"
-                elif current_answer.form_submission.submitted_by != current_user:
+                elif answer.form_submission.submitted_by != current_user:
                     return None, "Unauthorized access"
 
             # Check submission age for non-admin users
             if user_role != RoleType.ADMIN:
-                submission_age = datetime.utcnow() - current_answer.form_submission.submitted_at
+                submission_age = datetime.utcnow() - answer.form_submission.submitted_at
                 if submission_age.days > 7:  # Configurable timeframe
                     return None, "Cannot update answers older than 7 days"
 
             updated_answer, error = AnswerSubmittedService.update_answer_submitted(
                 answer_submitted_id,
-                text_answered
+                answer_text
             )
             
             if error:
@@ -258,19 +261,8 @@ class AnswerSubmittedController:
         current_user: Optional[str] = None,
         user_role: Optional[str] = None
     ) -> Tuple[bool, str]:
-        """
-        Delete a submitted answer with access control
-        
-        Args:
-            answer_submitted_id: ID of the answer submission
-            current_user: Username of current user
-            user_role: Role of current user
-            
-        Returns:
-            tuple: (Success boolean, Success/Error message)
-        """
+        """Delete a submitted answer"""
         try:
-            # Get answer for access control
             answer = AnswerSubmittedService.get_answer_submitted(answer_submitted_id)
             if not answer:
                 return False, "Answer submission not found"
@@ -283,7 +275,8 @@ class AnswerSubmittedController:
                 elif answer.form_submission.submitted_by != current_user:
                     return False, "Unauthorized access"
 
-                # Check submission age for non-admin users
+            # Check submission age for non-admin users
+            if user_role != RoleType.ADMIN:
                 submission_age = datetime.utcnow() - answer.form_submission.submitted_at
                 if submission_age.days > 7:
                     return False, "Cannot delete answers from submissions older than 7 days"

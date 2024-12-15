@@ -256,20 +256,24 @@ class FormQuestionService:
             return None, str(e)
 
     @staticmethod
-    def delete_form_question(form_question_id: int) -> tuple[bool, Union[dict, str]]:
+    def delete_form_question(form_question_id: int) -> Tuple[bool, Union[Dict[str, int], str]]:
         """
-        Permanently delete a form question and associated data through cascade delete
+        Delete a form question with cascade soft delete
         
         Args:
-            form_question_id (int): ID of the form question to delete
+            form_question_id: ID of the form question to delete
             
         Returns:
-            tuple: (success: bool, result: Union[dict, str])
-                result contains either deletion statistics or error message
+            tuple: (Success boolean, Dict with deletion stats or error message)
         """
         try:
-            form_question = FormQuestion.query.get(form_question_id)
-            
+            # Get form question with explicit joins
+            form_question = (FormQuestion.query
+                .filter_by(id=form_question_id, is_deleted=False)
+                .options(
+                    joinedload(FormQuestion.form_answers)
+                ).first())
+                
             if not form_question:
                 return False, "Form question not found"
 
@@ -277,15 +281,43 @@ class FormQuestionService:
             db.session.begin_nested()
 
             deletion_stats = {
-                'form_answers': len(form_question.form_answers),
-                'answers_submitted': sum(len(fa.answers_submitted) for fa in form_question.form_answers)
+                'form_answers': 0,
+                'answers_submitted': 0
             }
 
-            # Perform hard delete - will cascade to related records due to relationship settings
-            db.session.delete(form_question)
+            # Soft delete form answers
+            form_answers = (FormAnswer.query
+                .filter(
+                    FormAnswer.form_question_id == form_question_id,
+                    FormAnswer.is_deleted == False
+                ).all())
+
+            for form_answer in form_answers:
+                # Soft delete the form answer
+                form_answer.is_deleted = True
+                form_answer.deleted_at = datetime.utcnow()
+                deletion_stats['form_answers'] += 1
+
+                # Soft delete associated submitted answers
+                submitted_answers = (AnswerSubmitted.query
+                    .filter_by(
+                        form_answer_id=form_answer.id,
+                        is_deleted=False
+                    ).all())
+
+                for submitted in submitted_answers:
+                    submitted.is_deleted = True
+                    submitted.deleted_at = datetime.utcnow()
+                    deletion_stats['answers_submitted'] += 1
+
+            # Finally soft delete the form question
+            form_question.is_deleted = True
+            form_question.deleted_at = datetime.utcnow()
+
+            # Commit all changes
             db.session.commit()
             
-            logger.info(f"Form question {form_question_id} and associated data permanently deleted. Stats: {deletion_stats}")
+            logger.info(f"Form question {form_question_id} and associated data deleted. Stats: {deletion_stats}")
             return True, deletion_stats
 
         except Exception as e:

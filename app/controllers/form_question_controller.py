@@ -6,7 +6,7 @@ from app.models.form_question import FormQuestion
 from app.services.auth_service import AuthService
 from app.services.form_question_service import FormQuestionService
 from sqlalchemy.exc import SQLAlchemyError
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple, Union
 import logging
 
 logger = logging.getLogger(__name__)
@@ -135,9 +135,21 @@ class FormQuestionController:
         return FormQuestionService.update_form_question(form_question_id, **kwargs)
 
     @staticmethod
-    def delete_form_question(form_question_id):
-        """Delete a form question mapping"""
-        return FormQuestionService.delete_form_question(form_question_id)
+    def delete_form_question(form_question_id: int) -> Tuple[bool, Union[Dict[str, int], str]]:
+        """
+        Delete a form question with cascade validation
+        
+        Args:
+            form_question_id: ID of the form question to delete
+            
+        Returns:
+            tuple: (Success boolean, Dict with deletion stats or error message)
+        """
+        try:
+            return FormQuestionService.delete_form_question(form_question_id)
+        except Exception as e:
+            logger.error(f"Error in delete_form_question controller: {str(e)}")
+            return False, str(e)
 
     @staticmethod
     def bulk_create_form_questions(form_id, questions):

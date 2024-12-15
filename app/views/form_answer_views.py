@@ -239,12 +239,12 @@ def update_form_answer(form_answer_id):
 @jwt_required()
 @PermissionManager.require_permission(action="delete", entity_type=EntityType.FORMS)
 def delete_form_answer(form_answer_id):
-    """Delete a form answer with cascade soft delete"""
+    """Delete a form answer"""
     try:
         current_user = get_jwt_identity()
         user = AuthService.get_current_user(current_user)
 
-        # Get form answer with is_deleted=False check
+        # Get form answer checking is_deleted=False
         form_answer = FormAnswerController.get_form_answer(form_answer_id)
         if not form_answer:
             return jsonify({"error": "Form answer not found"}), 404
@@ -254,18 +254,12 @@ def delete_form_answer(form_answer_id):
             if form_answer.form_question.form.creator.environment_id != user.environment_id:
                 return jsonify({"error": "Unauthorized access"}), 403
 
-        # Check if answer is already submitted
-        if FormAnswerController.is_answer_submitted(form_answer_id):
-            return jsonify({
-                "error": "Cannot delete answer that has been submitted"
-            }), 400
-
         success, result = FormAnswerController.delete_form_answer(form_answer_id)
         if success:
-            logger.info(f"Form answer {form_answer_id} and associated data deleted by {user.username}")
+            logger.info(f"Form answer {form_answer_id} deleted by {user.username}")
             return jsonify({
-                "message": "Form answer and associated data deleted successfully",
-                "deleted_items": result
+                "message": "Form answer deleted successfully",
+                "deleted_item": result
             }), 200
             
         return jsonify({"error": result}), 400

@@ -1,5 +1,6 @@
 # app/controllers/form_answer_controller.py
 
+from typing import Dict, Tuple, Union
 from app.models.user import User
 from app.services.form_answer_service import FormAnswerService
 import logging
@@ -73,9 +74,14 @@ class FormAnswerController:
             return None, str(e)
 
     @staticmethod
-    def delete_form_answer(form_answer_id):
+    def delete_form_answer(form_answer_id: int) -> Tuple[bool, Union[Dict, str]]:
         """Delete a form answer"""
-        return FormAnswerService.delete_form_answer(form_answer_id)
+        try:
+            success, result = FormAnswerService.delete_form_answer(form_answer_id)
+            return success, result
+        except Exception as e:
+            logger.error(f"Error in delete_form_answer controller: {str(e)}")
+            return False, str(e)
 
     @staticmethod
     def is_answer_submitted(form_answer_id):

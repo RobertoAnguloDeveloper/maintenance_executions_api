@@ -270,19 +270,6 @@ def delete_form_question(form_question_id):
             if form_question.form.creator.environment_id != user.environment_id:
                 return jsonify({"error": "Unauthorized access"}), 403
 
-        # Check if there are any submissions using this question
-        has_submissions = (AnswerSubmitted.query
-            .join(FormAnswer)
-            .filter(
-                FormAnswer.form_question_id == form_question_id,
-                AnswerSubmitted.is_deleted == False
-            ).first() is not None)
-
-        if has_submissions and user.role.name not in [RoleType.ADMIN, RoleType.SITE_MANAGER]:
-            return jsonify({
-                "error": "Cannot delete question with existing submissions"
-            }), 400
-
         success, result = FormQuestionController.delete_form_question(form_question_id)
         if success:
             logger.info(f"Form question {form_question_id} and associated data deleted by {user.username}")

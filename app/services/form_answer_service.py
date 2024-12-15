@@ -287,47 +287,45 @@ class FormAnswerService:
             return None, str(e)
 
     @staticmethod
-    def delete_form_answer(form_answer_id: int) -> tuple[bool, Union[dict, str]]:
+    def delete_form_answer(form_answer_id: int) -> Tuple[bool, Union[Dict, str]]:
         """
-        Permanently delete a form answer and associated data
+        Delete a form answer (soft delete)
         
         Args:
-            form_answer_id (int): ID of the form answer to delete
+            form_answer_id: ID of the form answer to delete
             
         Returns:
-            tuple: (success: bool, result: Union[dict, str])
-                    result contains either deletion statistics or error message
+            tuple: (Success boolean, Result dictionary or error message)
         """
         try:
-            form_answer = FormAnswer.query.get(form_answer_id)
+            # Get form answer checking is_deleted=False
+            form_answer = FormAnswer.query.filter_by(
+                id=form_answer_id,
+                is_deleted=False
+            ).first()
             
             if not form_answer:
                 return False, "Form answer not found"
 
-            # Check if answer is submitted
-            submitted = AnswerSubmitted.query.filter_by(
-                form_answer_id=form_answer_id,
-                is_deleted=False
-            ).first()
-            
-            if submitted:
-                return False, "Cannot delete answer that has been submitted"
-
             # Start transaction
             db.session.begin_nested()
 
-            # Simple deletion stats since we're performing a permanent delete
+            # Capture deletion details for return
             deletion_stats = {
-                'form_answer_id': form_answer_id,
+                'form_answer_id': form_answer.id,
+                'question_text': form_answer.form_question.question.text if form_answer.form_question and form_answer.form_question.question else None,
                 'answer_value': form_answer.answer.value if form_answer.answer else None,
-                'form_question': form_answer.form_question.question.text if form_answer.form_question and form_answer.form_question.question else None
+                'deleted_at': datetime.utcnow().isoformat()
             }
 
-            # Perform hard delete - will cascade to related records
-            db.session.delete(form_answer)
+            # Perform soft delete of form answer only
+            form_answer.is_deleted = True
+            form_answer.deleted_at = datetime.utcnow()
+
+            # Commit changes
             db.session.commit()
             
-            logger.info(f"Form answer {form_answer_id} permanently deleted. Stats: {deletion_stats}")
+            logger.info(f"Form answer {form_answer_id} deleted successfully")
             return True, deletion_stats
 
         except Exception as e:

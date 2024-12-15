@@ -191,6 +191,39 @@ class QuestionService:
             error_msg = f"Error searching questions: {str(e)}"
             logger.error(error_msg)
             return [], error_msg
+        
+    @staticmethod
+    def get_questions_by_environment(environment_id: int) -> list[Question]:
+        """
+        Get all non-deleted questions associated with an environment
+        
+        Args:
+            environment_id: ID of the environment to filter by
+
+        Returns:
+            List of Question objects
+        """
+        try:
+            questions = (Question.query
+                .join(FormQuestion, FormQuestion.question_id == Question.id)
+                .join(Form, Form.id == FormQuestion.form_id)
+                .join(User, User.id == Form.user_id)
+                .filter(
+                    User.environment_id == environment_id,
+                    Question.is_deleted == False,
+                    FormQuestion.is_deleted == False,
+                    Form.is_deleted == False,
+                    User.is_deleted == False
+                )
+                .distinct()
+                .order_by(Question.text)
+                .all())
+            
+            return questions
+
+        except Exception as e:
+            logger.error(f"Error getting questions by environment: {str(e)}")
+            return []
 
     @staticmethod
     def search_questions_by_type(

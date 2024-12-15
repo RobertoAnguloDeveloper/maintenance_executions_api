@@ -99,7 +99,7 @@ def bulk_create_questions():
 @jwt_required()
 @PermissionManager.require_permission(action="view", entity_type=EntityType.QUESTIONS)
 def get_all_questions():
-    """Get all questions"""
+    """Get all questions with environment-based filtering"""
     try:
         current_user = get_jwt_identity()
         user = AuthService.get_current_user(current_user)
@@ -107,8 +107,11 @@ def get_all_questions():
         if user.role.is_super_user:
             questions = QuestionController.get_all_questions()
         else:
-            # Filter questions by environment
+            # Filter questions by environment for non-admin users
             questions = QuestionController.get_questions_by_environment(user.environment_id)
+
+        if questions is None:
+            questions = []
 
         return jsonify([q.to_dict() for q in questions]), 200
 

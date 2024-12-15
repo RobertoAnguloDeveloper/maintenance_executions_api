@@ -1,3 +1,4 @@
+from app.models.question import Question
 from app.services.question_service import QuestionService
 
 class QuestionController:
@@ -51,6 +52,11 @@ class QuestionController:
             remarks=remarks,
             environment_id=environment_id
         )
+        
+    @staticmethod
+    def get_questions_by_environment(environment_id: int) -> list[Question]:
+        """Get all questions associated with an environment"""
+        return QuestionService.get_questions_by_environment(environment_id)
 
     @staticmethod
     def get_questions_by_type(question_type_id):

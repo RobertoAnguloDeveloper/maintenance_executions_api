@@ -2,6 +2,7 @@ from typing import Dict, List, Optional, Tuple
 from app import db
 from app.models.form_submission import FormSubmission
 from app.models.answer_submitted import AnswerSubmitted
+from app.utils.permission_manager import RoleType
 from app.models.attachment import Attachment
 from app.models.form import Form
 from sqlalchemy.orm import joinedload
@@ -90,6 +91,84 @@ class FormSubmissionService:
             db.session.rollback()
             logger.error(f"Error creating form submission: {str(e)}")
             return None, str(e)
+        
+    @staticmethod
+    def get_all_submissions(user: User, filters: Optional[Dict] = None) -> List[FormSubmission]:
+        """
+        Get all form submissions with role-based filtering and access control.
+        
+        Args:
+            user: Current user object for role-based access
+            filters: Optional dictionary containing filters:
+                - form_id: Filter by specific form
+                - date_range: Dict with 'start' and 'end' dates
+                - environment_id: Filter by environment
+                - submitted_by: Filter by submitter username
+                
+        Returns:
+            List[FormSubmission]: List of form submissions matching criteria
+        """
+        try:
+            # Base query with proper joins and filters
+            query = (FormSubmission.query
+                .join(Form)
+                .filter(
+                    FormSubmission.is_deleted == False,
+                    Form.is_deleted == False
+                ))
+            
+            # Apply role-based filtering
+            if not user.role.is_super_user:
+                if user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
+                    # Can only see submissions in their environment
+                    query = (query
+                        .join(User, User.id == Form.user_id)
+                        .filter(User.environment_id == user.environment_id))
+                else:
+                    # Regular users can only see their own submissions
+                    query = query.filter(FormSubmission.submitted_by == user.username)
+
+            # Apply optional filters
+            if filters:
+                if 'form_id' in filters:
+                    query = query.filter(FormSubmission.form_id == filters['form_id'])
+                    
+                if 'environment_id' in filters:
+                    query = (query
+                        .join(User, User.id == Form.user_id)
+                        .filter(User.environment_id == filters['environment_id']))
+                        
+                if 'submitted_by' in filters:
+                    query = query.filter(
+                        FormSubmission.submitted_by == filters['submitted_by']
+                    )
+                    
+                if 'date_range' in filters:
+                    date_range = filters['date_range']
+                    if date_range.get('start'):
+                        query = query.filter(
+                            FormSubmission.submitted_at >= date_range['start']
+                        )
+                    if date_range.get('end'):
+                        query = query.filter(
+                            FormSubmission.submitted_at <= date_range['end']
+                        )
+
+            # Add eager loading for related data
+            query = (query.options(
+                joinedload(FormSubmission.form),
+                joinedload(FormSubmission.answers_submitted),
+                joinedload(FormSubmission.attachments)
+            ))
+
+            # Order by submission date, most recent first
+            submissions = query.order_by(FormSubmission.submitted_at.desc()).all()
+            
+            return submissions
+
+        except Exception as e:
+            logger.error(f"Error getting submissions: {str(e)}")
+            return []
 
     @staticmethod
     def get_submission(submission_id: int) -> Optional[FormSubmission]:

@@ -101,6 +101,33 @@ class FormSubmissionController:
         except Exception as e:
             logger.error(f"Error getting submission {submission_id}: {str(e)}")
             return None
+        
+    @staticmethod
+    def get_user_submissions(
+        username: str,
+        filters: Optional[Dict] = None
+    ) -> Tuple[List[FormSubmission], Optional[str]]:
+        """
+        Get all submissions for a specific user with filtering.
+        
+        Args:
+            username: Username of the submitter
+            filters: Optional filters dictionary
+            
+        Returns:
+            tuple: (List of submissions, Error message if any)
+        """
+        try:
+            submissions = FormSubmissionService.get_submissions_by_user(
+                username=username,
+                filters=filters
+            )
+            return submissions, None
+
+        except Exception as e:
+            error_msg = f"Error getting user submissions: {str(e)}"
+            logger.error(error_msg)
+            return [], error_msg
 
     @staticmethod
     def get_submission_answers(

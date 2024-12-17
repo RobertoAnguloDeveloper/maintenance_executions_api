@@ -196,6 +196,41 @@ class FormSubmissionService:
         except Exception as e:
             logger.error(f"Error retrieving submission {submission_id}: {str(e)}")
             return None
+        
+    @staticmethod
+    def get_submissions_by_user(username: str, filters: Dict = None) -> List[FormSubmission]:
+        """
+        Get all submissions for a specific user with optional filtering.
+        
+        Args:
+            username: Username of the submitter
+            filters: Optional dictionary containing filters
+                - start_date: Start date for filtering
+                - end_date: End date for filtering
+                - form_id: Filter by specific form
+                
+        Returns:
+            List[FormSubmission]: List of form submissions
+        """
+        try:
+            query = FormSubmission.query.filter_by(
+                submitted_by=username,
+                is_deleted=False
+            )
+
+            if filters:
+                if 'start_date' in filters:
+                    query = query.filter(FormSubmission.submitted_at >= filters['start_date'])
+                if 'end_date' in filters:
+                    query = query.filter(FormSubmission.submitted_at <= filters['end_date'])
+                if 'form_id' in filters:
+                    query = query.filter_by(form_id=filters['form_id'])
+
+            return query.order_by(FormSubmission.submitted_at.desc()).all()
+
+        except Exception as e:
+            logger.error(f"Error getting submissions for user {username}: {str(e)}")
+            return []
 
     @staticmethod
     def delete_submission(submission_id: int) -> Tuple[bool, Optional[str]]:

@@ -1,3 +1,4 @@
+from datetime import datetime
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.controllers.form_submission_controller import FormSubmissionController
@@ -126,6 +127,53 @@ def get_submission(submission_id):
 
     except Exception as e:
         logger.error(f"Error getting submission {submission_id}: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
+    
+@form_submission_bp.route('/my-submissions', methods=['GET'])
+@jwt_required()
+@PermissionManager.require_permission(action="view_own_submissions", entity_type=EntityType.SUBMISSIONS)
+def get_my_submissions():
+    """Get all submissions for the current user with filtering"""
+    try:
+        current_user = get_jwt_identity()
+        
+        # Get filter parameters
+        filters = {}
+        
+        # Date range filters
+        start_date = request.args.get('start_date')
+        if start_date:
+            filters['start_date'] = datetime.strptime(start_date, '%Y-%m-%d')
+            
+        end_date = request.args.get('end_date')
+        if end_date:
+            filters['end_date'] = datetime.strptime(end_date, '%Y-%m-%d')
+            
+        # Form filter
+        form_id = request.args.get('form_id', type=int)
+        if form_id:
+            filters['form_id'] = form_id
+
+        submissions, error = FormSubmissionController.get_user_submissions(
+            username=current_user,
+            filters=filters
+        )
+
+        if error:
+            return jsonify({"error": error}), 400
+
+        return jsonify({
+            "total_count": len(submissions),
+            "filters_applied": {
+                "start_date": start_date,
+                "end_date": end_date,
+                "form_id": form_id
+            },
+            "submissions": [sub.to_dict() for sub in submissions]
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error getting user submissions: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
 
 @form_submission_bp.route('/<int:submission_id>', methods=['DELETE'])

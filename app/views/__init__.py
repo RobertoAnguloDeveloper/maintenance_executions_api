@@ -16,6 +16,7 @@ from .form_question_views import form_question_bp
 from .form_answer_views import form_answer_bp
 from .frontend_views import frontend_bp
 from .export_views import export_bp
+from .cmms_config_views import cmms_config_bp
 
 def register_blueprints(app):
     blueprints = [
@@ -35,6 +36,7 @@ def register_blueprints(app):
         (form_answer_bp, '/api/form-answers'),
         (export_bp, '/api/export'),
         (frontend_bp, ''),
+        (cmms_config_bp,'/api/cmms-configs')
     ]
 
     for blueprint, url_prefix in blueprints:

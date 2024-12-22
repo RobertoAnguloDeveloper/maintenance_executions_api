@@ -1,13 +1,10 @@
-# app/views/cmms_config_views.py
-
 from flask import Blueprint, request, jsonify, send_file
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.controllers.cmms_config_controller import CMMSConfigController
 from app.services.auth_service import AuthService
-from app.utils.permission_manager import PermissionManager, EntityType
-import logging
+from app.utils.permission_manager import PermissionManager, EntityType, RoleType
 from werkzeug.utils import secure_filename
-import os
+import logging
 
 logger = logging.getLogger(__name__)
 
@@ -15,13 +12,19 @@ cmms_config_bp = Blueprint('cmms-configs', __name__)
 
 @cmms_config_bp.route('', methods=['POST'])
 @jwt_required()
-@PermissionManager.require_permission(action="create", entity_type=EntityType.FORMS)
+@PermissionManager.require_role(RoleType.ADMIN)
 def create_config():
-    """Create a new CMMS configuration JSON file"""
+    """Create a new CMMS configuration file"""
     try:
+        # First verify JWT and get identity
         current_user = get_jwt_identity()
-        
+        if not current_user:
+            return jsonify({"error": "Invalid or expired token"}), 401
+
         # Validate request data
+        if not request.is_json:
+            return jsonify({"error": "Request must be JSON"}), 400
+
         data = request.get_json()
         if not data:
             return jsonify({"error": "No data provided"}), 400
@@ -29,11 +32,18 @@ def create_config():
         required_fields = ['filename', 'content']
         if not all(field in data for field in required_fields):
             return jsonify({"error": "Missing required fields"}), 400
-            
+
+        # Validate filename
+        if not isinstance(data['filename'], str):
+            return jsonify({"error": "Filename must be a string"}), 400
+
+        if not data['filename'].endswith('.json'):
+            return jsonify({"error": "Only JSON files are supported for this endpoint"}), 400
+
         # Create config file
         config, error = CMMSConfigController.create_config(
             filename=data['filename'],
-            content=data['content'],
+            content=data['content'],  # Pass the content as is, controller will handle conversion
             current_user=current_user
         )
         
@@ -53,7 +63,7 @@ def create_config():
 @jwt_required()
 @PermissionManager.require_permission(action="create", entity_type=EntityType.FORMS)
 def upload_config():
-    """Upload a CMMS configuration JSON file"""
+    """Upload a CMMS configuration file"""
     try:
         current_user = get_jwt_identity()
         
@@ -61,13 +71,13 @@ def upload_config():
             return jsonify({"error": "No file provided"}), 400
             
         file = request.files['file']
-        if not file or file.filename == '':
+        if not file or not file.filename:
             return jsonify({"error": "No selected file"}), 400
             
         # Upload config file
         config, error = CMMSConfigController.upload_config(
             file=file,
-            filename=secure_filename(file.filename),
+            filename=file.filename,
             current_user=current_user
         )
         
@@ -82,29 +92,38 @@ def upload_config():
     except Exception as e:
         logger.error(f"Error uploading config file: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
-
-@cmms_config_bp.route('/<filename>', methods=['GET'])
+    
+@cmms_config_bp.route('/file/<path:filename>', methods=['GET'])
 @jwt_required()
 @PermissionManager.require_permission(action="view", entity_type=EntityType.FORMS)
-def load_config(filename):
-    """Load a CMMS configuration JSON file"""
+def get_file(filename):
+    """Get a file from the CMMS directory structure"""
     try:
         current_user = get_jwt_identity()
-        
-        config, error = CMMSConfigController.load_config(
-            filename=secure_filename(filename),
-            current_user=current_user
-        )
-        
+        if not current_user:
+            return jsonify({"error": "Invalid or expired token"}), 401
+            
+        # Find the file
+        file_info, error = CMMSConfigController.find_file(filename, current_user)
         if error:
             return jsonify({"error": error}), 404
             
-        return jsonify(config), 200
-        
+        try:
+            return send_file(
+                file_info['path'],
+                mimetype=file_info['mime_type'],
+                as_attachment=True,
+                download_name=file_info['filename']
+            )
+            
+        except Exception as e:
+            logger.error(f"Error sending file: {str(e)}")
+            return jsonify({"error": "Error accessing file"}), 500
+            
     except Exception as e:
-        logger.error(f"Error loading config file: {str(e)}")
+        logger.error(f"Error getting file {filename}: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
-
+    
 @cmms_config_bp.route('/<filename>/rename', methods=['PUT'])
 @jwt_required()
 @PermissionManager.require_permission(action="update", entity_type=EntityType.FORMS)
@@ -135,16 +154,50 @@ def rename_config(filename):
         logger.error(f"Error renaming config file: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
 
+@cmms_config_bp.route('/<filename>', methods=['GET'])
+@jwt_required()
+def load_config(filename):
+    """Load a CMMS configuration file"""
+    try:
+        current_user = get_jwt_identity()
+        if not current_user:
+            return jsonify({"error": "Invalid or expired token"}), 401
+
+        # Get file
+        config, error = CMMSConfigController.load_config(
+            filename=filename,
+            current_user=current_user
+        )
+        
+        if error:
+            return jsonify({"error": error}), 404
+            
+        # For files that need to be downloaded
+        if isinstance(config.get('content'), bytes):
+            return send_file(
+                config['path'],
+                mimetype=config['file_type'],
+                as_attachment=True,
+                download_name=filename
+            )
+            
+        # For JSON and text files, return as JSON response
+        return jsonify(config), 200
+        
+    except Exception as e:
+        logger.error(f"Error loading config file: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
+
 @cmms_config_bp.route('/<filename>', methods=['DELETE'])
 @jwt_required()
 @PermissionManager.require_permission(action="delete", entity_type=EntityType.FORMS)
 def delete_config(filename):
-    """Delete a CMMS configuration JSON file"""
+    """Delete a CMMS configuration file"""
     try:
         current_user = get_jwt_identity()
         
         success, error = CMMSConfigController.delete_config(
-            filename=secure_filename(filename),
+            filename=filename,
             current_user=current_user
         )
         
@@ -158,3 +211,30 @@ def delete_config(filename):
     except Exception as e:
         logger.error(f"Error deleting config file: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
+
+@cmms_config_bp.route('/check', methods=['GET'])
+@jwt_required()
+def check_config_file():
+    """Check if configuration file exists in the configs folder."""
+    try:
+        exists, metadata = CMMSConfigController.check_config_file()
+        
+        response = {
+            "exists": exists,
+            "metadata": metadata
+        }
+        
+        # Add helpful message based on existence
+        if exists:
+            response["message"] = "Configuration file found in configs folder"
+        else:
+            response["message"] = "Configuration file not found in configs folder"
+            
+        return jsonify(response), 200
+        
+    except Exception as e:
+        logger.error(f"Error checking config file: {str(e)}")
+        return jsonify({
+            "error": "Internal server error",
+            "details": str(e)
+        }), 500

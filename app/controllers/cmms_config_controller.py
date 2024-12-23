@@ -118,6 +118,36 @@ class CMMSConfigController:
             return None, str(e)
         
     @staticmethod
+    def update_config(
+        filename: str,
+        content: Union[str, dict, bytes],
+        current_user: str
+    ) -> Tuple[Optional[Dict], Optional[str]]:
+        """Update a configuration file"""
+        try:
+            if not current_user:
+                return None, "User not authenticated"
+
+            # Initialize service with base path
+            service = CMMSConfigService(current_app.config['UPLOAD_FOLDER'])
+            
+            # Update config file
+            config, error = service.update_config(
+                filename=filename,
+                content=content,
+                current_user=current_user
+            )
+            if error:
+                return None, error
+                
+            logger.info(f"Config file {filename} updated by user {current_user}")
+            return config, None
+            
+        except Exception as e:
+            logger.error(f"Error updating config file: {str(e)}")
+            return None, str(e)
+        
+    @staticmethod
     def rename_config(
         old_filename: str,
         new_filename: str,

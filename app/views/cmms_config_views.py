@@ -124,6 +124,46 @@ def get_file(filename):
         logger.error(f"Error getting file {filename}: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
     
+@cmms_config_bp.route('/configs/<filename>', methods=['PUT'])
+@jwt_required()
+@PermissionManager.require_role(RoleType.ADMIN)  # Only admin can update config files
+def update_config_file(filename):
+    """Update a JSON configuration file"""
+    try:
+        current_user = get_jwt_identity()
+        if not current_user:
+            return jsonify({"error": "Invalid or expired token"}), 401
+
+        # Validate request data
+        if not request.is_json:
+            return jsonify({"error": "Request must be JSON"}), 400
+
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+
+        if not 'content' in data:
+            return jsonify({"error": "Content is required"}), 400
+
+        # Update config file
+        config, error = CMMSConfigController.update_config(
+            filename=filename,
+            content=data['content'],
+            current_user=current_user
+        )
+        
+        if error:
+            return jsonify({"error": error}), 400
+            
+        return jsonify({
+            "message": "Configuration file updated successfully",
+            "config": config
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error updating config file: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
+
 @cmms_config_bp.route('/<filename>/rename', methods=['PUT'])
 @jwt_required()
 @PermissionManager.require_permission(action="update", entity_type=EntityType.FORMS)

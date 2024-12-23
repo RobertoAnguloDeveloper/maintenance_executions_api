@@ -297,6 +297,88 @@ class CMMSConfigService:
             'mime_type': mime_type or 'application/octet-stream'
         }
         
+    def update_config(
+        self,
+        filename: str,
+        content: Union[str, dict, bytes],
+        current_user: str
+    ) -> Tuple[Optional[Dict], Optional[str]]:
+        """
+        Update a JSON configuration file in configs directory.
+        
+        Args:
+            filename: Name of the file to update
+            content: New content for the file
+            current_user: Username for logging
+            
+        Returns:
+            tuple: (Updated file metadata or None, Error message or None)
+        """
+        try:
+            if not filename.endswith('.json'):
+                return None, "Only JSON files can be updated"
+            
+            # Ensure we only update files in configs directory
+            secure_name = secure_filename(filename)
+            file_path = os.path.join(self.configs_path, secure_name)
+            
+            # Verify file exists
+            if not os.path.exists(file_path):
+                return None, "Configuration file not found"
+                
+            # Convert content to bytes if it's a dict or str
+            if isinstance(content, dict):
+                try:
+                    content = json.dumps(content, indent=2).encode('utf-8')
+                except Exception as e:
+                    return None, f"Invalid JSON content: {str(e)}"
+            elif isinstance(content, str):
+                try:
+                    # Validate JSON format
+                    json.loads(content)
+                    content = content.encode('utf-8')
+                except json.JSONDecodeError:
+                    return None, "Invalid JSON format"
+            elif not isinstance(content, bytes):
+                return None, "Content must be string, dict or bytes"
+                
+            # Validate file size
+            if not self._validate_file_size(len(content)):
+                return None, f"File size exceeds maximum limit of {self.MAX_FILE_SIZE/1024/1024}MB"
+
+            # Backup existing file
+            backup_path = f"{file_path}.bak"
+            try:
+                with open(file_path, 'rb') as src, open(backup_path, 'wb') as dst:
+                    dst.write(src.read())
+            except Exception as e:
+                return None, f"Error creating backup: {str(e)}"
+
+            try:
+                # Write new content
+                with open(file_path, 'wb') as f:
+                    f.write(content)
+                    
+                # Calculate new hash and metadata
+                content_hash = self._compute_hash(content)
+                metadata = self._get_metadata(file_path, content_hash)
+                
+                # Remove backup file
+                os.remove(backup_path)
+                
+                logger.info(f"Config file {filename} updated by user {current_user}")
+                return metadata, None
+                
+            except Exception as e:
+                # Restore from backup if write fails
+                if os.path.exists(backup_path):
+                    os.replace(backup_path, file_path)
+                return None, f"Error updating file: {str(e)}"
+
+        except Exception as e:
+            logger.error(f"Error updating config file: {str(e)}")
+            return None, str(e)
+        
     def rename_config(self, old_filename: str, new_filename: str) -> Tuple[Optional[Dict], Optional[str]]:
         """
         Rename a configuration file in the cmms_files directory.

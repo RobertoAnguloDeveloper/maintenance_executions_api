@@ -1,7 +1,11 @@
-from flask import Blueprint, request, jsonify, send_file
+from datetime import datetime
+import mimetypes
+import os
+from flask import Blueprint, current_app, request, jsonify, send_file
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.controllers.cmms_config_controller import CMMSConfigController
 from app.services.auth_service import AuthService
+from app.services.cmms_config_service import CMMSConfigService
 from app.utils.permission_manager import PermissionManager, EntityType, RoleType
 from werkzeug.utils import secure_filename
 import logging
@@ -61,7 +65,7 @@ def create_config():
 
 @cmms_config_bp.route('/upload', methods=['POST'])
 @jwt_required()
-@PermissionManager.require_permission(action="create", entity_type=EntityType.FORMS)
+@PermissionManager.require_role(RoleType.ADMIN)
 def upload_config():
     """Upload a CMMS configuration file"""
     try:
@@ -91,6 +95,77 @@ def upload_config():
         
     except Exception as e:
         logger.error(f"Error uploading config file: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
+    
+@cmms_config_bp.route('/files', methods=['GET'])
+@jwt_required()
+@PermissionManager.require_permission(action="view", entity_type=EntityType.FORMS)
+def list_files():
+    """List all files in the uploads directory with their metadata."""
+    try:
+        current_user = get_jwt_identity()
+        if not current_user:
+            return jsonify({"error": "Invalid or expired token"}), 401
+
+        # Get instance of CMMSConfigService
+        config_service = CMMSConfigService(current_app.config['UPLOAD_FOLDER'])
+        base_path = config_service.base_path  # This is the 'uploads' folder
+        
+        files_list = []
+        # Walk through the entire uploads directory
+        for root, _, files in os.walk(base_path):
+            for filename in files:
+                try:
+                    file_path = os.path.join(root, filename)
+                    # Skip backup files
+                    if filename.endswith('.bak'):
+                        continue
+                        
+                    # Get file stats
+                    file_stat = os.stat(file_path)
+                    
+                    # Get relative path from uploads directory
+                    rel_path = os.path.relpath(file_path, base_path)
+                    
+                    # Get mime type
+                    mime_type, _ = mimetypes.guess_type(filename)
+                    
+                    # Calculate file size in a human-readable format
+                    size_bytes = file_stat.st_size
+                    if size_bytes < 1024:
+                        size_str = f"{size_bytes} B"
+                    elif size_bytes < 1024 * 1024:
+                        size_str = f"{size_bytes/1024:.1f} KB"
+                    else:
+                        size_str = f"{size_bytes/(1024*1024):.1f} MB"
+                    
+                    files_list.append({
+                        "filename": filename,
+                        "path": rel_path,
+                        "full_path": file_path,
+                        "size": size_bytes,
+                        "size_formatted": size_str,
+                        "mime_type": mime_type or 'application/octet-stream',
+                        "created_at": datetime.fromtimestamp(file_stat.st_ctime).isoformat(),
+                        "modified_at": datetime.fromtimestamp(file_stat.st_mtime).isoformat(),
+                        "directory": os.path.basename(os.path.dirname(file_path))
+                    })
+                    
+                except Exception as file_error:
+                    logger.warning(f"Error processing file {filename}: {str(file_error)}")
+                    continue
+
+        # Sort files by directory and then by filename
+        files_list.sort(key=lambda x: (x['directory'], x['filename']))
+
+        return jsonify({
+            "message": "Files retrieved successfully",
+            "files": files_list,
+            "total_files": len(files_list)
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error listing files: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
     
 @cmms_config_bp.route('/file/<path:filename>', methods=['GET'])
@@ -166,7 +241,7 @@ def update_config_file(filename):
 
 @cmms_config_bp.route('/<filename>/rename', methods=['PUT'])
 @jwt_required()
-@PermissionManager.require_permission(action="update", entity_type=EntityType.FORMS)
+@PermissionManager.require_role(RoleType.ADMIN)
 def rename_config(filename):
     """Rename a CMMS configuration JSON file"""
     try:
@@ -230,7 +305,7 @@ def load_config(filename):
 
 @cmms_config_bp.route('/<filename>', methods=['DELETE'])
 @jwt_required()
-@PermissionManager.require_permission(action="delete", entity_type=EntityType.FORMS)
+@PermissionManager.require_role(RoleType.ADMIN)
 def delete_config(filename):
     """Delete a CMMS configuration file"""
     try:

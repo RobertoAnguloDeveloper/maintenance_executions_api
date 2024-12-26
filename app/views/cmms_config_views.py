@@ -109,11 +109,14 @@ def get_file(filename):
             return jsonify({"error": error}), 404
             
         try:
+            # Configure send_file for streaming large files
             return send_file(
                 file_info['path'],
                 mimetype=file_info['mime_type'],
-                as_attachment=True,
-                download_name=file_info['filename']
+                as_attachment=False,  # Changed to False to allow browser handling
+                download_name=file_info['filename'],
+                max_age=0,  # Disable caching
+                conditional=True  # Enable conditional requests
             )
             
         except Exception as e:

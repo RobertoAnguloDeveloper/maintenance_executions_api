@@ -174,6 +174,8 @@ def list_files():
 def get_file(filename):
     """Get a file from the CMMS directory structure"""
     try:
+        # print(f'Request headers: {request.headers}')
+        # print(f'Requested file: {filename}')
         current_user = get_jwt_identity()
         if not current_user:
             return jsonify({"error": "Invalid or expired token"}), 401

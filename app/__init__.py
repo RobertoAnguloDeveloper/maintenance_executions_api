@@ -1,4 +1,4 @@
-from flask import Flask
+from flask import Flask, request
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_jwt_extended import JWTManager
@@ -84,12 +84,34 @@ def create_app(config_class=None):
             "Content-Type", 
             "Authorization",
             "Access-Control-Allow-Origin",
-            "Access-Control-Allow-Credentials"
+            "Access-Control-Allow-Credentials",
+            "Accept-Encoding"
         ],
         "supports_credentials": True,
-        "expose_headers": ["Content-Type", "Authorization"]
+        "expose_headers": ["Content-Type", "Authorization","Content-Length",
+                "Content-Range","Accept-Ranges"]
         }
     })
+    
+    @app.after_request
+    def after_request(response):
+        # Allow file downloads from any origin
+        if request.path.startswith('/api/cmms-configs/file/'):
+            response.headers.add('Access-Control-Allow-Origin', '*')
+            response.headers.add('Access-Control-Allow-Headers', 
+                'Content-Type, Authorization, X-Requested-With, Accept, Cache-Control, Accept-Encoding')
+            response.headers.add('Access-Control-Allow-Methods', 'GET, OPTIONS')
+            response.headers.add('Access-Control-Expose-Headers',
+                'Content-Length, Content-Range, Accept-Ranges')
+            
+            # Add specific headers for file downloads
+            response.headers.add('Accept-Ranges', 'bytes')
+            
+            # Remove any problematic headers
+            if 'Accept-Encoding' in response.headers:
+                del response.headers['Accept-Encoding']
+                
+        return response
     
     try:
         # Initialize configuration

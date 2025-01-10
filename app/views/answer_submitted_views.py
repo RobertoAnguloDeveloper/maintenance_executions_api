@@ -13,38 +13,26 @@ answer_submitted_bp = Blueprint('answers-submitted', __name__)
 @jwt_required()
 @PermissionManager.require_permission(action="create", entity_type=EntityType.SUBMISSIONS)
 def create_answer_submitted():
-    """Create a new submitted answer"""
     try:
         current_user = get_jwt_identity()
-        user = AuthService.get_current_user(current_user)
-
-        # Handle multipart/form-data for potential signatures
+        
         data = request.form.to_dict() if request.form else request.get_json()
         if not data:
             return jsonify({"error": "No data provided"}), 400
 
         # Validate required fields
-        required_fields = ['form_submission_id', 'question_text', 'answer_text']
+        required_fields = ['form_submission_id', 'question_text', 'question_type_text', 'answer_text']
         if not all(field in data for field in required_fields):
             return jsonify({
                 "error": "Missing required fields",
                 "required_fields": required_fields
             }), 400
 
-        # Handle signature if present
-        is_signature = data.get('is_signature', False)
-        signature_file = request.files.get('signature') if is_signature else None
-
-        # Validate signature file if required
-        if is_signature and not signature_file:
-            return jsonify({"error": "Signature file is required for signature questions"}), 400
-
         answer_submitted, error = AnswerSubmittedController.create_answer_submitted(
             form_submission_id=int(data['form_submission_id']),
             question_text=data['question_text'],
+            question_type_text=data['question_type_text'],
             answer_text=data['answer_text'],
-            is_signature=is_signature,
-            signature_file=signature_file,
             current_user=current_user
         )
 
@@ -68,48 +56,48 @@ def bulk_create_answers_submitted():
     try:
         current_user = get_jwt_identity()
         
-        # Handle multipart/form-data for signatures
-        data = request.form.to_dict() if request.form else request.get_json()
-        files = request.files.to_dict()
-        
+        data = request.get_json()
         if not data or 'form_submission_id' not in data or 'submissions' not in data:
             return jsonify({
                 "error": "Missing required fields: form_submission_id and submissions"
             }), 400
 
-        # Process submissions data and handle signatures
-        submissions_data = []
+        # Validate each submission data
         for submission in data['submissions']:
-            submission_data = {
-                'question_text': submission['question_text'],
-                'answer_text': submission['answer_text'],
-                'is_signature': submission.get('is_signature', False)
-            }
-            
-            # Add signature file if present
-            if submission_data['is_signature']:
-                file_key = f"signature_{submission.get('question_id')}"
-                if file_key in files:
-                    submission_data['signature_file'] = files[file_key]
-                else:
-                    return jsonify({
-                        "error": f"Missing signature file for question {submission.get('question_id')}"
-                    }), 400
-                    
-            submissions_data.append(submission_data)
-            
+            if not all(key in submission for key in ['question_text', 'question_type_text', 'answer_text']):
+                return jsonify({
+                    "error": "Each submission must contain question_text, question_type_text, and answer_text"
+                }), 400
+
         submissions, error = AnswerSubmittedController.bulk_create_answers_submitted(
             form_submission_id=int(data['form_submission_id']),
-            submissions_data=submissions_data,
+            submissions_data=data['submissions'],
             current_user=current_user
         )
         
         if error:
             return jsonify({"error": error}), 400
             
+        # Convert AnswerSubmitted objects to dictionaries
+        submissions_data = []
+        if submissions:
+            for submission in submissions:
+                if hasattr(submission, 'to_dict'):
+                    submissions_data.append(submission.to_dict())
+                else:
+                    submissions_data.append({
+                        'id': submission.id,
+                        'question': submission.question,
+                        'question_type': submission.question_type,
+                        'answer': submission.answer,
+                        'form_submission_id': submission.form_submission_id,
+                        'created_at': submission.created_at.isoformat() if submission.created_at else None,
+                        'updated_at': submission.updated_at.isoformat() if submission.updated_at else None
+                    })
+            
         return jsonify({
             "message": "Answers submitted successfully",
-            "submissions": submissions
+            "submissions": submissions_data
         }), 201
         
     except Exception as e:

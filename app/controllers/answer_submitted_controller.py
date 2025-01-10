@@ -1,6 +1,7 @@
 from typing import Dict, List, Optional, Tuple
 from flask import current_app
 from app.models import user
+from app.models.answer_submitted import AnswerSubmitted
 from app.services.answer_submitted_service import AnswerSubmittedService
 from app.services.form_submission_service import FormSubmissionService
 from app.services.form_service import FormService
@@ -15,27 +16,11 @@ class AnswerSubmittedController:
     def create_answer_submitted(
         form_submission_id: int,
         question_text: str,
+        question_type_text: str,
         answer_text: str,
-        is_signature: bool = False,
-        signature_file = None,
         current_user: str = None
     ) -> Tuple[Optional[Dict], Optional[str]]:
-        """
-        Create a new submitted answer with validation and access control
-        
-        Args:
-            form_submission_id: ID of the form submission
-            question_text: Text of the question
-            answer_text: Text of the answer
-            is_signature: Whether this answer requires a signature
-            signature_file: Optional signature file for signature questions
-            current_user: Username of current user for access control
-            
-        Returns:
-            tuple: (Created answer submitted data or None, Error message or None)
-        """
         try:
-            # Validate submission exists and check access rights
             submission = FormSubmissionService.get_submission(form_submission_id)
             if not submission:
                 return None, "Form submission not found"
@@ -44,17 +29,11 @@ class AnswerSubmittedController:
             if current_user and submission.submitted_by != current_user:
                 return None, "Unauthorized: Can only add answers to own submissions"
 
-            # Get upload path for signatures
-            upload_path = current_app.config['UPLOAD_FOLDER'] if is_signature else None
-
-            # Create the answer submission
             answer_submitted, error = AnswerSubmittedService.create_answer_submitted(
                 form_submission_id=form_submission_id,
                 question_text=question_text,
-                answer_text=answer_text,
-                is_signature=is_signature,
-                signature_file=signature_file,
-                upload_path=upload_path
+                question_type_text=question_type_text,
+                answer_text=answer_text
             )
             
             if error:
@@ -71,42 +50,38 @@ class AnswerSubmittedController:
         form_submission_id: int,
         submissions_data: List[Dict],
         current_user: str = None
-    ) -> Tuple[Optional[List[Dict]], Optional[str]]:
+    ) -> Tuple[Optional[List[AnswerSubmitted]], Optional[str]]:
         """
         Bulk create answer submissions with validation
         
         Args:
             form_submission_id: ID of the form submission
-            submissions_data: List of submission data
+            submissions_data: List of submission data dictionaries
             current_user: Username of current user
             
         Returns:
-            tuple: (List of created submissions or None, Error message or None)
+            tuple: (List of created AnswerSubmitted objects or None, Error message or None)
         """
         try:
             # Validate submission exists and check access rights
             submission = FormSubmissionService.get_submission(form_submission_id)
             if not submission:
                 return None, "Form submission not found"
-                
+                    
             # Only submission owner can add answers
             if current_user and submission.submitted_by != current_user:
                 return None, "Unauthorized: Can only add answers to own submissions"
 
-            # Get upload path for signatures
-            upload_path = current_app.config['UPLOAD_FOLDER']
-            
             created_submissions, error = AnswerSubmittedService.bulk_create_answers_submitted(
                 form_submission_id=form_submission_id,
-                answers_data=submissions_data,
-                upload_path=upload_path
+                answers_data=submissions_data
             )
             
             if error:
                 return None, error
-                
-            return [submission.to_dict() for submission in created_submissions], None
-            
+                    
+            return created_submissions, None
+
         except Exception as e:
             logger.error(f"Error in bulk_create_answers_submitted controller: {str(e)}")
             return None, str(e)

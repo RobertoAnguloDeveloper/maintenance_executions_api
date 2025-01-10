@@ -90,15 +90,7 @@ class AnswerSubmittedService:
         upload_path: Optional[str] = None
     ) -> Tuple[Optional[List[AnswerSubmitted]], Optional[str]]:
         """
-        Bulk create answer submissions with signature handling.
-        
-        Args:
-            form_submission_id: ID of the form submission
-            answers_data: List of dictionaries containing answer data
-            upload_path: Base path for file uploads
-            
-        Returns:
-            tuple: (List of created AnswerSubmitted objects or None, Error message or None)
+        Bulk create answer submissions.
         """
         try:
             created_submissions = []
@@ -112,44 +104,18 @@ class AnswerSubmittedService:
             if not form_submission:
                 return None, "Form submission not found"
 
+            # Start transaction
+            db.session.begin_nested()
+
             for data in answers_data:
-                question_text = data.get('question_text')
-                question_type_text = data.get('question_type')
-                answer_text = data.get('answer_text')
-                is_signature = data.get('is_signature', False)
-                signature_file = data.get('signature_file')
-
-                if not question_text or not answer_text:
-                    return None, "Question text and answer text are required"
-
                 answer_submitted = AnswerSubmitted(
                     form_submission_id=form_submission_id,
-                    question=question_text,
-                    question_type=question_type_text,
-                    answer=answer_text
+                    question=data['question_text'],
+                    question_type=data['question_type_text'],
+                    answer=data['answer_text']
                 )
                 db.session.add(answer_submitted)
                 created_submissions.append(answer_submitted)
-
-                # Handle signature if applicable
-                if is_signature and signature_file and upload_path:
-                    # Create signature directory
-                    signature_dir = os.path.join(upload_path, 'signatures', str(form_submission_id))
-                    os.makedirs(signature_dir, exist_ok=True)
-
-                    # Save signature file
-                    filename = f"signature_{datetime.now().strftime('%Y%m%d_%H%M%S')}{os.path.splitext(signature_file.filename)[1]}"
-                    file_path = os.path.join('signatures', str(form_submission_id), filename)
-                    signature_file.save(os.path.join(upload_path, file_path))
-
-                    # Create attachment record
-                    attachment = Attachment(
-                        form_submission_id=form_submission_id,
-                        file_type=signature_file.content_type,
-                        file_path=file_path,
-                        is_signature=True
-                    )
-                    db.session.add(attachment)
 
             db.session.commit()
             return created_submissions, None

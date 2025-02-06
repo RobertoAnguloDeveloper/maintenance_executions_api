@@ -21,20 +21,22 @@ class Attachment(TimestampMixin, SoftDeleteMixin, db.Model):
     # Relationships
     form_submission = db.relationship('FormSubmission', back_populates='attachments')
     
-    # Constants for file validation
-    ALLOWED_EXTENSIONS = {'pdf', 'png', 'jpg', 'jpeg', 'gif', 'doc', 'docx', 'xls', 'xlsx','txt'}
-    MAX_FILE_SIZE = 16 * 1024 * 1024  # 16MB
-    ALLOWED_MIME_TYPES = {
-        'application/pdf': 'pdf',
-        'image/png': 'png',
-        'image/jpeg': 'jpg',
-        'image/gif': 'gif',
-        'application/msword': 'doc',
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
-        'application/vnd.ms-excel': 'xls',
-        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
-        'text/plain': 'txt'
+    # Enhanced file type definitions
+    ALLOWED_EXTENSIONS = {
+        'pdf': 'application/pdf',
+        'png': 'image/png',
+        'jpg': 'image/jpeg',
+        'jpeg': 'image/jpeg',
+        'gif': 'image/gif',
+        'doc': 'application/msword',
+        'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'xls': 'application/vnd.ms-excel',
+        'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'txt': 'text/plain'
     }
+    
+    ALLOWED_MIME_TYPES = {v: k for k, v in ALLOWED_EXTENSIONS.items()}
+    MAX_FILE_SIZE = 16 * 1024 * 1024  # 16MB
 
     def __repr__(self):
         return f'<Attachment {self.id}: {self.file_type}>'

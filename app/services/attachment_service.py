@@ -1,3 +1,4 @@
+import mimetypes
 from typing import BinaryIO, Dict, Optional, Tuple, List, Union
 from datetime import datetime
 import os
@@ -35,15 +36,7 @@ class AttachmentService:
         max_size: int = None
     ) -> Tuple[bool, Optional[str]]:
         """
-        Comprehensive file validation with improved error handling
-        
-        Args:
-            file: File object to validate
-            filename: Original filename
-            max_size: Maximum allowed file size (optional)
-            
-        Returns:
-            tuple: (is_valid: bool, mime_type_or_error: str)
+        Enhanced file validation with fallback mechanisms
         """
         try:
             if not filename:
@@ -66,18 +59,21 @@ class AttachmentService:
             if size > max_size:
                 return False, f"File size exceeds limit of {max_size / (1024*1024)}MB"
 
-            # Get MIME type
-            import magic
-            file_content = file.read(2048)  # Read first 2048 bytes for MIME check
-            file.seek(0)  # Reset file pointer
+            # Use mimetypes library as primary method for type detection
+            mime_type, _ = mimetypes.guess_type(filename)
             
-            mime_type = magic.from_buffer(file_content, mime=True)
+            # Fallback to basic extension mapping if mime type detection fails
+            if not mime_type:
+                mime_type = Attachment.ALLOWED_EXTENSIONS.get(ext)
             
+            if not mime_type:
+                return False, "Could not determine file type"
+
             # Special handling for text files
             if mime_type == 'text/plain' and ext == 'txt':
                 return True, mime_type
-                
-            if mime_type not in Attachment.ALLOWED_MIME_TYPES:
+
+            if mime_type not in Attachment.ALLOWED_MIME_TYPES.values():
                 return False, (
                     f"Invalid file type (MIME: {mime_type}). "
                     f"Allowed types: {', '.join(sorted(Attachment.ALLOWED_EXTENSIONS))}"
@@ -219,16 +215,7 @@ class AttachmentService:
         upload_path: str
     ) -> Tuple[Optional[List[Attachment]], Optional[str]]:
         """
-        Bulk create attachments with validation
-        
-        Args:
-            form_submission_id: ID of the form submission
-            files: List of file objects with their metadata
-            username: Username for file organization
-            upload_path: Base path for file uploads
-            
-        Returns:
-            tuple: (List of created Attachment objects or None, Error message or None)
+        Enhanced bulk attachment creation with improved validation
         """
         try:
             created_attachments = []
@@ -244,7 +231,7 @@ class AttachmentService:
                     db.session.rollback()
                     return None, "File object is required for each attachment"
                     
-                # Validate file
+                # Initial validation
                 is_valid, mime_type_or_error = AttachmentService.validate_file(
                     file,
                     file.filename,
@@ -254,17 +241,21 @@ class AttachmentService:
                 if not is_valid:
                     db.session.rollback()
                     return None, f"Invalid file {file.filename}: {mime_type_or_error}"
-                
+
                 # Generate unique filename and path
                 secure_name = secure_filename(file.filename)
-                unique_name = AttachmentService.get_unique_filename(secure_name)
-                file_path = AttachmentService.create_file_path(username, unique_name)
+                unique_name = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{secure_name}"
+                file_path = os.path.join(username, unique_name)
+                
+                # Create directory if it doesn't exist
+                os.makedirs(os.path.join(upload_path, username), exist_ok=True)
                 
                 # Save file
-                success, error = AttachmentService.save_file(file, upload_path, file_path)
-                if not success:
+                try:
+                    file.save(os.path.join(upload_path, file_path))
+                except Exception as e:
                     db.session.rollback()
-                    return None, f"Error saving file {file.filename}: {error}"
+                    return None, f"Error saving file {file.filename}: {str(e)}"
                 
                 # Create attachment record
                 attachment = Attachment(

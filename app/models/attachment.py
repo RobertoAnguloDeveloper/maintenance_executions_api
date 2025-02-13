@@ -21,7 +21,7 @@ class Attachment(TimestampMixin, SoftDeleteMixin, db.Model):
     # Relationships
     form_submission = db.relationship('FormSubmission', back_populates='attachments')
     
-    # Enhanced file type definitions
+    # Enhanced file type definitions with simplified MIME types for Office documents
     ALLOWED_EXTENSIONS = {
         'pdf': 'application/pdf',
         'png': 'image/png',
@@ -29,10 +29,16 @@ class Attachment(TimestampMixin, SoftDeleteMixin, db.Model):
         'jpeg': 'image/jpeg',
         'gif': 'image/gif',
         'doc': 'application/msword',
-        'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'docx': 'application/docx',  # Simplified from 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
         'xls': 'application/vnd.ms-excel',
-        'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'xlsx': 'application/xlsx',  # Simplified from 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         'txt': 'text/plain'
+    }
+    
+    # Map of full MIME types to simplified ones for compatibility
+    MIME_TYPE_MAPPING = {
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'application/docx',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'application/xlsx'
     }
     
     ALLOWED_MIME_TYPES = {v: k for k, v in ALLOWED_EXTENSIONS.items()}
@@ -56,42 +62,66 @@ class Attachment(TimestampMixin, SoftDeleteMixin, db.Model):
     def is_allowed_file(cls, filename: str) -> bool:
         """Check if file extension is allowed"""
         return '.' in filename and filename.rsplit('.', 1)[1].lower() in cls.ALLOWED_EXTENSIONS
+
+    @classmethod
+    def normalize_mime_type(cls, mime_type: str) -> str:
+        """Convert full MIME types to simplified versions if needed"""
+        return cls.MIME_TYPE_MAPPING.get(mime_type, mime_type)
     
     @classmethod
     def is_allowed_mime_type(cls, file_content: bytes) -> Tuple[bool, str]:
         """Check if file's MIME type is allowed"""
-        import magic
-        mime_type = magic.from_buffer(file_content, mime=True)
-        if mime_type in cls.ALLOWED_MIME_TYPES:
-            return True, mime_type
-        return False, ""
+        try:
+            import magic
+            mime_type = magic.from_buffer(file_content, mime=True)
+            # Normalize the MIME type
+            normalized_mime = cls.normalize_mime_type(mime_type)
+            if normalized_mime in cls.ALLOWED_MIME_TYPES:
+                return True, normalized_mime
+            return False, ""
+        except ImportError:
+            logger.warning("python-magic not installed, falling back to mimetypes")
+            return False, ""
 
     @classmethod
     def get_mime_type(cls, filename: str) -> tuple[bool, str]:
         """Get MIME type from filename"""
         mime_type, _ = mimetypes.guess_type(filename)
-        if mime_type in cls.ALLOWED_MIME_TYPES:
-            return True, mime_type
+        if not mime_type:
+            return False, ""
+            
+        # Normalize the MIME type
+        normalized_mime = cls.normalize_mime_type(mime_type)
+        if normalized_mime in cls.ALLOWED_MIME_TYPES:
+            return True, normalized_mime
         return False, ""
 
     @classmethod
     def validate_file(cls, file, filename: str) -> tuple[bool, Optional[str]]:
         """Validate file type and size"""
-        if not filename:
-            return False, "No filename provided"
+        try:
+            if not filename:
+                return False, "No filename provided"
 
-        if not cls.is_allowed_file(filename):
-            return False, f"File type not allowed. Allowed types: {', '.join(cls.ALLOWED_EXTENSIONS)}"
+            if not cls.is_allowed_file(filename):
+                return False, f"File type not allowed. Allowed types: {', '.join(cls.ALLOWED_EXTENSIONS)}"
 
-        file.seek(0, os.SEEK_END)
-        size = file.tell()
-        file.seek(0)
+            file.seek(0, os.SEEK_END)
+            size = file.tell()
+            file.seek(0)
 
-        if size > cls.MAX_FILE_SIZE:
-            return False, f"File size exceeds limit of {cls.MAX_FILE_SIZE / (1024*1024)}MB"
+            if size > cls.MAX_FILE_SIZE:
+                return False, f"File size exceeds limit of {cls.MAX_FILE_SIZE / (1024*1024)}MB"
 
-        is_valid_mime, _ = cls.get_mime_type(filename)
-        if not is_valid_mime:
-            return False, "Invalid file type"
+            # Get extension and corresponding MIME type
+            ext = filename.rsplit('.', 1)[1].lower() if '.' in filename else ''
+            mime_type = cls.ALLOWED_EXTENSIONS.get(ext)
+            
+            if not mime_type:
+                return False, "Invalid file type"
 
-        return True, None
+            return True, mime_type
+
+        except Exception as e:
+            logger.error(f"Error validating file: {str(e)}")
+            return False, f"Error validating file: {str(e)}"

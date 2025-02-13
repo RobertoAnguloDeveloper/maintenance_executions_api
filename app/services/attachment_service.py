@@ -36,7 +36,7 @@ class AttachmentService:
         max_size: int = None
     ) -> Tuple[bool, Optional[str]]:
         """
-        Enhanced file validation with fallback mechanisms
+        Enhanced file validation with proper MIME type handling
         """
         try:
             if not filename:
@@ -59,25 +59,11 @@ class AttachmentService:
             if size > max_size:
                 return False, f"File size exceeds limit of {max_size / (1024*1024)}MB"
 
-            # Use mimetypes library as primary method for type detection
-            mime_type, _ = mimetypes.guess_type(filename)
-            
-            # Fallback to basic extension mapping if mime type detection fails
-            if not mime_type:
-                mime_type = Attachment.ALLOWED_EXTENSIONS.get(ext)
+            # Get MIME type from extension mapping
+            mime_type = Attachment.ALLOWED_EXTENSIONS.get(ext)
             
             if not mime_type:
                 return False, "Could not determine file type"
-
-            # Special handling for text files
-            if mime_type == 'text/plain' and ext == 'txt':
-                return True, mime_type
-
-            if mime_type not in Attachment.ALLOWED_MIME_TYPES.values():
-                return False, (
-                    f"Invalid file type (MIME: {mime_type}). "
-                    f"Allowed types: {', '.join(sorted(Attachment.ALLOWED_EXTENSIONS))}"
-                )
 
             return True, mime_type
 

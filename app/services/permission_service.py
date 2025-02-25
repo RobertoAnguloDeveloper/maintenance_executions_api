@@ -17,11 +17,13 @@ class PermissionService(BaseService):
         super().__init__(Permission)
     
     @staticmethod
-    def create_permission(name, description):
+    def create_permission(name, action, entity, description):
         try:
             current_time = datetime.utcnow()
             new_permission = Permission(
-                name=name, 
+                name=name,
+                action=action,
+                entity=entity, 
                 description=description,
                 created_at=current_time,
                 updated_at=current_time
@@ -72,6 +74,8 @@ class PermissionService(BaseService):
 
                 permission = Permission(
                     name=name,
+                    action=data.get('action'),
+                    entity=data.get('entity'),
                     description=data.get('description')
                 )
                 db.session.add(permission)
@@ -170,18 +174,22 @@ class PermissionService(BaseService):
 
             logger.info(f"Number of permissions found: {len(permissions)}")
             for perm in permissions:
-                logger.info(f"Permission: id={perm.id}, name={perm.name}")
+                logger.info(f"Permission: id={perm.id}, name={perm.name}, action={perm.action}, entity={perm.entity}, description={perm.description}")
             return permissions
         except Exception as e:
             logger.error(f"Error when getting all permissions: {str(e)}")
             return []
 
     @staticmethod
-    def update_permission(permission_id, name=None, description=None):
+    def update_permission(permission_id, name=None, action=None, entity=None, description=None):
         permission = Permission.query.get(permission_id)
         if permission:
             if name:
                 permission.name = name
+            if action is not None:
+                permission.action = action
+            if entity is not None:
+                permission.entity = entity
             if description is not None:
                 permission.description = description
             try:

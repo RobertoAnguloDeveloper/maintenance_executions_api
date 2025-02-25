@@ -150,20 +150,72 @@ class DatabaseInitializer:
             'manage_environments': 'Can manage all environments',
         }
 
+        # Valid actions and entities based on requirements
+        valid_actions = ["create", "update", "view", "delete"]
+        valid_entities = [
+            "environments", "users", "roles", "permissions", "role_permissions",
+            "forms", "form_questions", "questions", "question_types", 
+            "form_submissions", "form_answers", "answers", "answers_submitted", 
+            "attachments"
+        ]
+
         created_permissions = []
         for perm_name, description in permissions_config.items():
+            # Parse action and entity from permission name
+            parts = perm_name.split('_', 1)
+            
+            # Default values
+            action = "view"  # Default action
+            entity = "users"  # Default entity
+            
+            if len(parts) == 2:
+                action_part, entity_part = parts
+                
+                # Validate action
+                if action_part in valid_actions:
+                    action = action_part
+                
+                # Handle special cases and validate entity
+                if entity_part == "all_users":
+                    entity = "users"
+                elif entity_part == "public_forms":
+                    entity = "forms"
+                elif entity_part == "own_submissions":
+                    entity = "form_submissions"
+                elif entity_part == "own_attachments":
+                    entity = "attachments"
+                elif entity_part in valid_entities:
+                    entity = entity_part
+                elif entity_part.endswith('s') and entity_part[:-1] in valid_entities:
+                    entity = entity_part
+                
+            # Handle special cases that don't follow the pattern
+            if perm_name.startswith('manage_'):
+                action = "update"  # manage implies update capability
+                entity_part = perm_name.split('_', 1)[1]
+                if entity_part == "all_users":
+                    entity = "users"
+                elif entity_part == "all_forms":
+                    entity = "forms"
+                elif entity_part == "environments":
+                    entity = "environments"
+
             permission = Permission.query.filter_by(name=perm_name).first()
             if permission:
                 permission.description = description
+                permission.action = action
+                permission.entity = entity
                 permission.updated_at = datetime.utcnow()
-                logger.info(f"Updated permission: {perm_name}")
+                logger.info(f"Updated permission: {perm_name} with action={action}, entity={entity}")
             else:
                 permission = Permission(
                     name=perm_name,
-                    description=description
+                    description=description,
+                    action=action,
+                    entity=entity
                 )
                 db.session.add(permission)
-                logger.info(f"Created permission: {perm_name}")
+                logger.info(f"Created permission: {perm_name} with action={action}, entity={entity}")
             
             created_permissions.append(permission)
         

@@ -2,8 +2,8 @@ from app.services.permission_service import PermissionService
 
 class PermissionController:
     @staticmethod
-    def create_permission(name, description):
-        return PermissionService.create_permission(name, description)
+    def create_permission(name, action, entity, description):
+        return PermissionService.create_permission(name, action, entity, description)
 
     @staticmethod
     def get_permission(permission_id):
@@ -18,8 +18,8 @@ class PermissionController:
         return PermissionService.get_all_permissions()
 
     @staticmethod
-    def update_permission(permission_id, name=None, description=None):
-        return PermissionService.update_permission(permission_id, name, description)
+    def update_permission(permission_id, name=None, action=None, entity=None, description=None):
+        return PermissionService.update_permission(permission_id, name, action, entity, description)
 
     @staticmethod
     def delete_permission(permission_id):

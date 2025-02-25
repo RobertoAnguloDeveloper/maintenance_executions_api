@@ -31,6 +31,8 @@ class RolePermission(TimestampMixin, SoftDeleteMixin, db.Model):
             'permissions': {
                             "id": self.permission_id,
                             "name": self.permission.name if self.permission else None,
+                            "action": self.permission.action if self.permission else None,
+                            "entity": self.permission.entity if self.permission else None,
                             "description": self.permission.description if self.permission else None
                             },
             'created_at': self.created_at.isoformat() if self.created_at else None,

@@ -91,7 +91,9 @@ class User(TimestampMixin, SoftDeleteMixin, db.Model):
                 active_permissions = [
                                         {
                                             'id': p.id,
-                                            'name': p.name
+                                            'name': p.name,
+                                            'action': p.action,
+                                            'entity': p.entity
                                         }
                                         for p in active_role.permissions 
                                         if not p.is_deleted  # Check permission is not deleted

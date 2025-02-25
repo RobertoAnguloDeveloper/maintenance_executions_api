@@ -20,23 +20,24 @@ def create_permission():
     """Create a new permission - Admin only"""
     try:
         data = request.get_json()
-        name = data.get('name')
+        required_fields = ['name', 'action', 'entity']
         description = data.get('description')
 
-        if not name:
-            return jsonify({"error": "Name is required"}), 400
+        for field in required_fields:
+            if field not in data or not data[field]:
+                return jsonify({"error": "Name is required"}), 400
 
         # Validate permission name format
-        if not name.islower() or ' ' in name:
+        if not data['name'].islower() or ' ' in data['name']:
             return jsonify({
                 "error": "Permission name must be lowercase without spaces"
             }), 400
 
-        new_permission, error = PermissionController.create_permission(name, description)
+        new_permission, error = PermissionController.create_permission(data['name'], description)
         if error:
             return jsonify({"error": error}), 400
 
-        logger.info(f"Permission '{name}' created successfully")
+        logger.info(f"Permission '{data['name']}' created successfully")
         return jsonify({
             "message": "Permission created successfully", 
             "permission": new_permission.to_dict()
@@ -141,6 +142,8 @@ def update_permission(permission_id):
 
         data = request.get_json()
         name = data.get('name')
+        action = data.get('action')
+        entity = data.get('entity')
         description = data.get('description')
 
         # Validate new permission name
@@ -150,7 +153,7 @@ def update_permission(permission_id):
             }), 400
 
         updated_permission, error = PermissionController.update_permission(
-            permission_id, name, description
+            permission_id, name, action, entity, description
         )
         if error:
             return jsonify({"error": error}), 400

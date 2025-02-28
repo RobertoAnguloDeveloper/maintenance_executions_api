@@ -104,6 +104,7 @@ def get_all_users():
             else:
                 # Non-admin users only see active users in their environment
                 users = UserController.get_users_by_environment(current_user_obj.environment_id)
+                
 
             return jsonify([
                 user.to_dict(

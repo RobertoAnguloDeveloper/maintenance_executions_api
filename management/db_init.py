@@ -351,19 +351,16 @@ class DatabaseInitializer:
                     permissions['view_answers_submitted'],
                     permissions['create_answers_submitted'],
                     permissions['update_answers_submitted'],
-                    permissions['delete_answers_submitted'],
                     
                     # Form Submission Management
                     permissions['view_form_submissions'],
                     permissions['create_form_submissions'],
                     permissions['update_form_submissions'],
-                    permissions['delete_form_submissions'],
                     
                     # Attachment Management
                     permissions['view_attachments'],
                     permissions['create_attachments'],
                     permissions['update_attachments'],
-                    permissions['delete_attachments'],
                     
                     # Environment Access
                     permissions['view_environments']
@@ -391,20 +388,14 @@ class DatabaseInitializer:
                     # Answer Submitted Management
                     permissions['view_answers_submitted'],
                     permissions['create_answers_submitted'],
-                    permissions['update_answers_submitted'],
-                    permissions['delete_answers_submitted'],
                     
                     # Form Submission Management
                     permissions['view_form_submissions'],
                     permissions['create_form_submissions'],
-                    permissions['update_form_submissions'],
-                    permissions['delete_form_submissions'],
                     
                     # Attachment Management
                     permissions['view_attachments'],
                     permissions['create_attachments'],
-                    permissions['update_attachments'],
-                    permissions['delete_attachments'],
                     
                     # Environment Access
                     permissions['view_environments']

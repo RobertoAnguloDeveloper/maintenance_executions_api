@@ -20,7 +20,9 @@ class AttachmentController:
         current_user: str,
         is_signature: bool = False,
         user_role: str = None,
-        answer_submitted_id: int = None
+        answer_submitted_id: int = None,
+        signature_position: str = None,
+        signature_author: str = None
     ) -> Tuple[Optional[Dict], Optional[str]]:
         """
         Validate and create new attachment with proper authorization
@@ -53,7 +55,9 @@ class AttachmentController:
                 upload_path=current_app.config['UPLOAD_FOLDER'],
                 file_type=mime_type_or_error,
                 is_signature=is_signature,
-                answer_submitted_id=answer_submitted_id  # Pass answer_submitted_id for signatures
+                answer_submitted_id=answer_submitted_id,  # Pass answer_submitted_id for signatures
+                signature_position=signature_position,    # Pass new signature position
+                signature_author=signature_author         # Pass new signature author
             )
 
             if error:
@@ -260,6 +264,65 @@ class AttachmentController:
         except Exception as e:
             logger.error(f"Error getting submission attachments: {str(e)}")
             return [], str(e)
+            
+    @staticmethod
+    def update_attachment(
+        attachment_id: int,
+        signature_position: str = None,
+        signature_author: str = None,
+        is_signature: bool = None,
+        current_user: str = None,
+        user_role: str = None
+    ) -> Tuple[Optional[Dict], Optional[str]]:
+        """
+        Update attachment signature metadata with authorization check
+        
+        Args:
+            attachment_id: ID of the attachment to update
+            signature_position: New signature position
+            signature_author: New signature author
+            is_signature: Update is_signature flag
+            current_user: Username of current user
+            user_role: Role of current user
+            
+        Returns:
+            tuple: (Updated attachment dict or None, Error message or None)
+        """
+        try:
+            # Get attachment for access control
+            attachment = AttachmentService.get_attachment(attachment_id)
+            if not attachment:
+                return None, "Attachment not found"
+
+            # Access control
+            if user_role != RoleType.ADMIN:
+                if user_role in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
+                    if attachment.form_submission.form.creator.environment_id != current_user.environment_id:
+                        return None, "Unauthorized access"
+                elif attachment.form_submission.submitted_by != current_user:
+                    return None, "Can only update own attachments"
+                    
+                # Check submission age for non-admin users
+                submission_age = datetime.utcnow() - attachment.form_submission.submitted_at
+                if submission_age.days > 7:
+                    return None, "Cannot update attachments older than 7 days"
+
+            # Update attachment
+            updated_attachment, error = AttachmentService.update_attachment(
+                attachment_id=attachment_id,
+                signature_position=signature_position,
+                signature_author=signature_author,
+                is_signature=is_signature
+            )
+            
+            if error:
+                return None, error
+                
+            return updated_attachment.to_dict(), None
+            
+        except Exception as e:
+            logger.error(f"Error updating attachment {attachment_id}: {str(e)}")
+            return None, str(e)
 
     @staticmethod
     def delete_attachment(
@@ -268,15 +331,7 @@ class AttachmentController:
         user_role: str = None
     ) -> Tuple[bool, str]:
         """
-        Delete attachment with authorization check
-        
-        Args:
-            attachment_id: ID of the attachment
-            current_user: Username of current user
-            user_role: Role of current user
-            
-        Returns:
-            tuple: (Success boolean, Success/Error message)
+        Delete an attachment
         """
         try:
             # Get attachment for access control

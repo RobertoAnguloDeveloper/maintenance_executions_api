@@ -1,4 +1,3 @@
-import mimetypes
 from typing import BinaryIO, Dict, Optional, Tuple, List, Union
 from datetime import datetime
 import os
@@ -20,7 +19,9 @@ class AttachmentService:
         original_filename: str, 
         is_signature: bool = False,
         answer_submitted_id: int = None,
-        form_submission_id: int = None
+        form_submission_id: int = None,
+        signature_position: str = None,
+        signature_author: str = None
     ) -> str:
         """
         Generate unique filename with timestamp, with special handling for signatures
@@ -30,6 +31,8 @@ class AttachmentService:
             is_signature: Whether the file is a signature
             answer_submitted_id: ID of the answer submitted (for signatures)
             form_submission_id: ID of the form submission
+            signature_position: Position of the signature
+            signature_author: Author of the signature
             
         Returns:
             str: Unique filename
@@ -42,43 +45,14 @@ class AttachmentService:
         
         # Special handling for signatures
         if is_signature and form_submission_id:
-            try:
-                # Get answer submitted for question text
-                answer = None
-                if answer_submitted_id:
-                    answer = AnswerSubmitted.query.filter_by(id=answer_submitted_id).first()
-                
-                # If we don't have a specific answer ID, try to find a signature-related answer
-                if not answer and form_submission_id:
-                    answers = AnswerSubmitted.query.filter_by(
-                        form_submission_id=form_submission_id,
-                        is_deleted=False
-                    ).filter(
-                        (AnswerSubmitted.question.contains('Signature')) | 
-                        (AnswerSubmitted.question.contains('signature')) |
-                        (AnswerSubmitted.question.contains('Firma')) |
-                        (AnswerSubmitted.question_type.contains('signature'))
-                    ).all()
-                    
-                    if answers:
-                        answer = answers[0]  # Use the first matching answer
-                
-                # Get form ID
-                submission = FormSubmission.query.filter_by(id=form_submission_id).first()
-                
-                if answer and submission and submission.form:
-                    # Format: {id}_{question}_{form_id}_{timestamp}{extension}
-                    question_part = answer.question.replace(' ', '_')[:30]  # Limit length and replace spaces
-                    return f"{answer.id}_{question_part}_{submission.form.id}_{timestamp}{extension}"
-                elif submission and submission.form:
-                    # If we don't have a specific answer but have the submission
-                    return f"signature_{submission.form.id}_{timestamp}{extension}"
-            except Exception as e:
-                logger.error(f"Error creating signature filename: {str(e)}")
-                # Fall back to default signature naming
-                return f"signature_{timestamp}{extension}"
+            # Use the required format: {form_submission_id}+{signature_position}+{signature_author}+{timestamp}
+            # Clean up any potentially problematic characters in position and author
+            safe_position = str(signature_position or '').replace(' ', '_').replace('/', '_').replace('\\', '_')
+            safe_author = str(signature_author or '').replace(' ', '_').replace('/', '_').replace('\\', '_')
+            
+            return f"{form_submission_id}+{safe_position}+{safe_author}+{timestamp}{extension}"
         
-        # Default naming pattern
+        # Default naming pattern for non-signature files
         return f"{base_name}_{timestamp}{extension}"
 
     @staticmethod
@@ -210,9 +184,11 @@ class AttachmentService:
         upload_path: str,
         file_type: str = None,
         is_signature: bool = False,
-        answer_submitted_id: int = None
+        answer_submitted_id: int = None,
+        signature_position: str = None,
+        signature_author: str = None
     ) -> Tuple[Optional[Attachment], Optional[str]]:
-        """Create new attachment with enhanced signature naming"""
+        """Create new attachment with enhanced signature handling"""
         try:
             # Validate file if file_type not provided
             if not file_type:
@@ -227,7 +203,9 @@ class AttachmentService:
                 secure_name, 
                 is_signature=is_signature,
                 answer_submitted_id=answer_submitted_id,
-                form_submission_id=form_submission_id
+                form_submission_id=form_submission_id,
+                signature_position=signature_position,
+                signature_author=signature_author
             )
             
             # Create path with just username folder
@@ -238,12 +216,14 @@ class AttachmentService:
             if not success:
                 return None, error
 
-            # Create database record
+            # Create database record with signature fields
             attachment = Attachment(
                 form_submission_id=form_submission_id,
                 file_type=file_type,
                 file_path=file_path,
-                is_signature=is_signature
+                is_signature=is_signature,
+                signature_position=signature_position if is_signature else None,
+                signature_author=signature_author if is_signature else None
             )
             
             db.session.add(attachment)
@@ -265,7 +245,7 @@ class AttachmentService:
         upload_path: str
     ) -> Tuple[Optional[List[Attachment]], Optional[str]]:
         """
-        Enhanced bulk attachment creation with improved validation and signature naming
+        Enhanced bulk attachment creation with improved validation and signature handling
         """
         try:
             created_attachments = []
@@ -277,6 +257,8 @@ class AttachmentService:
                 file = file_data.get('file')
                 is_signature = file_data.get('is_signature', False)
                 answer_submitted_id = file_data.get('answer_submitted_id')
+                signature_position = file_data.get('signature_position')
+                signature_author = file_data.get('signature_author')
                 
                 if not file:
                     db.session.rollback()
@@ -299,7 +281,9 @@ class AttachmentService:
                     secure_name,
                     is_signature=is_signature,
                     answer_submitted_id=answer_submitted_id,
-                    form_submission_id=form_submission_id
+                    form_submission_id=form_submission_id,
+                    signature_position=signature_position,
+                    signature_author=signature_author
                 )
                 
                 file_path = os.path.join(username, unique_name)
@@ -314,12 +298,14 @@ class AttachmentService:
                     db.session.rollback()
                     return None, f"Error saving file {file.filename}: {str(e)}"
                 
-                # Create attachment record
+                # Create attachment record with signature fields if applicable
                 attachment = Attachment(
                     form_submission_id=form_submission_id,
                     file_type=mime_type_or_error,
                     file_path=file_path,
-                    is_signature=is_signature
+                    is_signature=is_signature,
+                    signature_position=signature_position if is_signature else None,
+                    signature_author=signature_author if is_signature else None
                 )
                 
                 db.session.add(attachment)
@@ -344,6 +330,8 @@ class AttachmentService:
                 - form_submission_id: Filter by form submission
                 - is_signature: Filter by signature type
                 - file_type: Filter by file type
+                - signature_author: Filter by signature author
+                - signature_position: Filter by signature position
                 
         Returns:
             List[Attachment]: List of attachment objects
@@ -360,6 +348,13 @@ class AttachmentService:
                     
                 if 'file_type' in filters:
                     query = query.filter_by(file_type=filters['file_type'])
+                    
+                # Add filters for new fields
+                if 'signature_author' in filters and filters['signature_author']:
+                    query = query.filter_by(signature_author=filters['signature_author'])
+                    
+                if 'signature_position' in filters and filters['signature_position']:
+                    query = query.filter_by(signature_position=filters['signature_position'])
             
             # Join with form_submission to get additional details
             query = (query.join(FormSubmission)
@@ -543,6 +538,9 @@ class AttachmentService:
             deletion_stats = {
                 'attachment_id': attachment.id,
                 'file_path': attachment.file_path,
+                'is_signature': attachment.is_signature,
+                'signature_position': attachment.signature_position,
+                'signature_author': attachment.signature_author,
                 'deleted_at': datetime.utcnow().isoformat()
             }
             
@@ -557,3 +555,58 @@ class AttachmentService:
             error_msg = f"Error deleting attachment: {str(e)}"
             logger.error(error_msg)
             return False, error_msg
+            
+    @staticmethod
+    def update_attachment(
+        attachment_id: int,
+        signature_position: str = None,
+        signature_author: str = None,
+        is_signature: bool = None
+    ) -> Tuple[Optional[Attachment], Optional[str]]:
+        """
+        Update an attachment's signature metadata
+        
+        Args:
+            attachment_id: ID of the attachment to update
+            signature_position: New signature position
+            signature_author: New signature author
+            is_signature: Update the is_signature flag
+            
+        Returns:
+            Tuple[Optional[Attachment], Optional[str]]: Updated attachment or error message
+        """
+        try:
+            # Get attachment checking is_deleted=False
+            attachment = Attachment.query.filter_by(
+                id=attachment_id,
+                is_deleted=False
+            ).first()
+            
+            if not attachment:
+                return None, "Attachment not found"
+                
+            # Update signature fields if provided
+            if signature_position is not None:
+                attachment.signature_position = signature_position
+                
+            if signature_author is not None:
+                attachment.signature_author = signature_author
+                
+            if is_signature is not None:
+                attachment.is_signature = is_signature
+                # If marked as not a signature, clear signature fields
+                if not is_signature:
+                    attachment.signature_position = None
+                    attachment.signature_author = None
+            
+            attachment.updated_at = datetime.utcnow()
+            db.session.commit()
+            
+            logger.info(f"Attachment {attachment_id} updated successfully")
+            return attachment, None
+            
+        except Exception as e:
+            db.session.rollback()
+            error_msg = f"Error updating attachment: {str(e)}"
+            logger.error(error_msg)
+            return None, error_msg

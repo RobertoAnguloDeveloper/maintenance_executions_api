@@ -134,32 +134,19 @@ class ExportSubmissionService:
             story.append(info_table)
             story.append(Spacer(1, 24))
             
-            # Get all form questions with order
-            form_questions = FormQuestion.query.filter_by(
-                form_id=form.id,
-                is_deleted=False
-            ).order_by(FormQuestion.order_number).all()
-            
-            question_order = {fq.question_id: fq.order_number for fq in form_questions}
-            
-            # Get all answers in order of questions
+            # Get all answers excluding signature type questions
             answers = AnswerSubmitted.query.filter_by(
                 form_submission_id=submission_id,
                 is_deleted=False
             ).all()
             
-            # Sort answers to match form question order if possible
             sorted_answers = sorted(
-                answers, 
+                [a for a in answers if a.question_type.lower() != 'signature'], 
                 key=lambda a: a.question
             )
             
-            # Add questions and answers, excluding signature type questions
+            # Add questions and answers
             for answer in sorted_answers:
-                # Skip questions with question_type = 'signature'
-                if answer.question_type.lower() == 'signature':
-                    continue
-                    
                 q_text = f"{answer.question}"
                 story.append(Paragraph(q_text, styles['Question']))
                 
@@ -168,22 +155,45 @@ class ExportSubmissionService:
             
             # Add signatures if requested
             if include_signatures:
-                signatures = ExportSubmissionService._get_signature_images(submission_id, upload_path)
+                # Get all signature attachments
+                attachments = Attachment.query.filter_by(
+                    form_submission_id=submission_id,
+                    is_signature=True,
+                    is_deleted=False
+                ).all()
                 
-                if signatures:
+                if attachments:
                     story.append(Spacer(1, 24))
                     story.append(Paragraph("Signatures:", styles['Heading2']))
                     story.append(Spacer(1, 6))
                     
-                    # Process each signature individually for maximum left alignment
-                    for sig in signatures:
-                        if sig["exists"]:
+                    for attachment in attachments:
+                        file_path = os.path.join(upload_path, attachment.file_path)
+                        exists = os.path.exists(file_path)
+                        
+                        # Extract signature metadata
+                        signature_position = attachment.signature_position
+                        signature_author = attachment.signature_author
+                        
+                        # Try to extract from filename if not in attachment record
+                        if not signature_position or not signature_author:
                             try:
-                                # Add the label with no indent
-                                story.append(Paragraph(sig["label"], styles["SignatureLabel"]))
+                                filename = os.path.basename(attachment.file_path)
+                                parts = filename.split('+')
                                 
-                                # Create image with no left padding
-                                img = Image(sig["path"], width=3.5*inch, height=1.4*inch)
+                                if len(parts) >= 4:
+                                    # Format: {form_submission_id}+{signature_position}+{signature_author}+{timestamp}
+                                    if not signature_position:
+                                        signature_position = parts[1].replace('_', ' ')
+                                    if not signature_author:
+                                        signature_author = parts[2].replace('_', ' ')
+                            except Exception as e:
+                                logger.warning(f"Could not parse signature metadata from filename: {str(e)}")
+                        
+                        if exists:
+                            try:
+                                # 1. First, add the signature image
+                                img = Image(file_path, width=3.5*inch, height=1.4*inch)
                                 
                                 # Create a table with zero left padding to push image to the left
                                 sig_table = Table(
@@ -200,14 +210,30 @@ class ExportSubmissionService:
                                 ]))
                                 
                                 story.append(sig_table)
+                                story.append(Spacer(1, 5))
+                                
+                                # 2. Next, add signature author below the image
+                                if signature_author:
+                                    story.append(Paragraph(f"<b>Signed by:</b> {signature_author}", styles['Normal']))
+                                    story.append(Spacer(1, 3))
+                                
+                                # 3. Finally, add signature position below the author
+                                if signature_position:
+                                    story.append(Paragraph(f"<b>Position:</b> {signature_position}", styles['Normal']))
+                                
                                 story.append(Spacer(1, 16))
+                                
                             except Exception as img_error:
                                 logger.warning(f"Error adding signature image: {str(img_error)}")
                                 story.append(Paragraph("Image could not be loaded", styles['Normal']))
                                 story.append(Spacer(1, 12))
                         else:
-                            story.append(Paragraph(sig['label'], styles["SignatureLabel"]))
-                            story.append(Paragraph("Image not found", styles['Normal']))
+                            # Add signature information even if image can't be found
+                            if signature_author:
+                                story.append(Paragraph(f"<b>Signed by:</b> {signature_author}", styles['Normal']))
+                                story.append(Spacer(1, 3))
+                            if signature_position:
+                                story.append(Paragraph(f"<b>Position:</b> {signature_position}", styles['Normal']))
                             story.append(Spacer(1, 12))
             
             # Build the PDF
@@ -222,14 +248,14 @@ class ExportSubmissionService:
     @staticmethod
     def _get_signature_images(submission_id: int, upload_path: str) -> List[Dict]:
         """
-        Get all signature images for a submission
+        Get all signature images for a submission with proper metadata extraction
         
         Args:
             submission_id: ID of the form submission
             upload_path: Path to uploads folder
             
         Returns:
-            List of signature image details including paths and labels
+            List of signature image details including paths, authors, and positions
         """
         signatures = []
         
@@ -240,46 +266,40 @@ class ExportSubmissionService:
             is_deleted=False
         ).all()
         
-        # Get all answer submitted records for this submission
-        answers = AnswerSubmitted.query.filter_by(
-            form_submission_id=submission_id,
-            is_deleted=False
-        ).all()
-        
-        # Get signature type answers
-        signature_answers = [a for a in answers if a.question_type.lower() == 'signature']
-        
-        # Map signature attachments to questions when possible
-        labeled_signatures = []
-        
+        # Process each attachment
         for attachment in attachments:
-            # Try to find a matching answer by looking at the file path pattern
-            # The pattern should be: {id}_{question}_{form_id}_{timestamp}
-            path_parts = os.path.basename(attachment.file_path).split('_')
+            # Get the file path
+            file_path = os.path.join(upload_path, attachment.file_path)
+            exists = os.path.exists(file_path)
             
-            if len(path_parts) >= 3:
-                # Try to extract the answer ID from the filename
+            # Try to extract author and position from filename or use model fields
+            signature_position = attachment.signature_position
+            signature_author = attachment.signature_author
+            
+            # If not available in model, try to extract from filename
+            if not signature_position or not signature_author:
                 try:
-                    answer_id = int(path_parts[0])
-                    # Find the corresponding answer
-                    answer = next((a for a in answers if a.id == answer_id), None)
+                    # Parse the filename which should have format: {id}+{position}+{author}+{timestamp}.ext
+                    filename = os.path.basename(attachment.file_path)
+                    parts = filename.split('+')
                     
-                    if answer:
-                        labeled_signatures.append({
-                            "path": os.path.join(upload_path, attachment.file_path),
-                            "label": answer.question,
-                            "exists": os.path.exists(os.path.join(upload_path, attachment.file_path))
-                        })
-                        continue
-                except (ValueError, IndexError):
-                    # If we can't parse the answer ID, fall through to default handling
-                    pass
+                    if len(parts) >= 4:
+                        # First part is submission ID
+                        # Second part is position
+                        if not signature_position:
+                            signature_position = parts[1].replace('_', ' ')
+                        
+                        # Third part is author
+                        if not signature_author:
+                            signature_author = parts[2].replace('_', ' ')
+                except Exception as e:
+                    logger.warning(f"Could not parse signature metadata from filename: {str(e)}")
             
-            # Default handling for signatures without clear mapping
-            labeled_signatures.append({
-                "path": os.path.join(upload_path, attachment.file_path),
-                "label": "Signature",
-                "exists": os.path.exists(os.path.join(upload_path, attachment.file_path))
+            signatures.append({
+                "path": file_path,
+                "position": signature_position or "Signature",
+                "author": signature_author or "Signer",
+                "exists": exists
             })
         
-        return labeled_signatures
+        return signatures

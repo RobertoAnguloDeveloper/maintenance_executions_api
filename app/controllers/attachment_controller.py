@@ -19,7 +19,8 @@ class AttachmentController:
         file: FileStorage,
         current_user: str,
         is_signature: bool = False,
-        user_role: str = None
+        user_role: str = None,
+        answer_submitted_id: int = None
     ) -> Tuple[Optional[Dict], Optional[str]]:
         """
         Validate and create new attachment with proper authorization
@@ -43,7 +44,7 @@ class AttachmentController:
             if not is_valid:
                 return None, mime_type_or_error
 
-            # Create attachment
+            # Create attachment with enhanced signature handling
             attachment, error = AttachmentService.create_attachment(
                 form_submission_id=form_submission_id,
                 file=file,
@@ -51,7 +52,8 @@ class AttachmentController:
                 username=current_user,
                 upload_path=current_app.config['UPLOAD_FOLDER'],
                 file_type=mime_type_or_error,
-                is_signature=is_signature
+                is_signature=is_signature,
+                answer_submitted_id=answer_submitted_id  # Pass answer_submitted_id for signatures
             )
 
             if error:

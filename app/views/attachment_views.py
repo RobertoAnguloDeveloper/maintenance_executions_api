@@ -34,13 +34,21 @@ def create_attachment():
             return jsonify({"error": "No selected file"}), 400
 
         is_signature = request.form.get('is_signature', '').lower() == 'true'
+        
+        # Get answer_submitted_id for signatures
+        answer_submitted_id = None
+        if is_signature:
+            answer_submitted_id = request.form.get('answer_submitted_id')
+            if not answer_submitted_id:
+                logger.warning("Signature uploaded without answer_submitted_id")
 
         attachment, error = AttachmentController.validate_and_create_attachment(
             form_submission_id=int(form_submission_id),
             file=file,
             current_user=current_user,
             is_signature=is_signature,
-            user_role=user.role.name
+            user_role=user.role.name,
+            answer_submitted_id=int(answer_submitted_id) if answer_submitted_id else None
         )
 
         if error:

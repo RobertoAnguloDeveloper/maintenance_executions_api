@@ -10,6 +10,10 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, Flowable
+from PIL import Image as PILImage
+from reportlab.lib.utils import ImageReader
+import io
+from werkzeug.datastructures import FileStorage
 from werkzeug.exceptions import BadRequest
 from app.models.form_submission import FormSubmission
 from app.models.attachment import Attachment
@@ -17,24 +21,79 @@ from app.models.answer_submitted import AnswerSubmitted
 from app.models.form import Form
 from app.models.form_question import FormQuestion
 
+
 logger = logging.getLogger(__name__)
 
 class ExportSubmissionService:
     """Service for exporting form submissions to PDF"""
     
     @staticmethod
+    def _process_header_image(image_file: FileStorage, opacity: float = 1.0) -> Optional[BytesIO]:
+        """
+        Process a header image file applying the specified opacity
+        
+        Args:
+            image_file: The uploaded image file
+            opacity: Opacity value between 0.0 and 1.0
+            
+        Returns:
+            BytesIO: Processed image as BytesIO or None if processing fails
+        """
+        try:
+            # Validate opacity range
+            opacity = max(0.0, min(1.0, opacity))
+            
+            # Read image data
+            img_data = image_file.read()
+            img_file = io.BytesIO(img_data)
+            
+            # Open with PIL
+            img = PILImage.open(img_file)
+            
+            # Convert to RGBA if not already
+            if img.mode != 'RGBA':
+                img = img.convert('RGBA')
+            
+            # Apply opacity (multiply alpha channel)
+            pixels = img.load()
+            width, height = img.size
+            for y in range(height):
+                for x in range(width):
+                    r, g, b, a = pixels[x, y]
+                    pixels[x, y] = (r, g, b, int(a * opacity))
+            
+            # Save to BytesIO
+            result_io = io.BytesIO()
+            img.save(result_io, format='PNG')
+            result_io.seek(0)
+            
+            # Store dimensions for later use
+            result_io.img_width = img.width
+            result_io.img_height = img.height
+            
+            return result_io
+        
+        except Exception as e:
+            logger.error(f"Error processing header image: {str(e)}")
+            return None
+    
+    @staticmethod
     def export_submission_to_pdf(
         submission_id: int,
         upload_path: str,
-        include_signatures: bool = True
+        include_signatures: bool = True,
+        header_image: Optional[FileStorage] = None,
+        header_opacity: float = 1.0
     ) -> Tuple[Optional[BytesIO], Optional[str]]:
         """
-        Export a form submission to PDF with all answers and optional signatures
+        Export a form submission to PDF with all answers, optional signatures, and header image
         
         Args:
             submission_id: ID of the form submission
             upload_path: Path to uploads folder for retrieving signatures
             include_signatures: Whether to include signature images or not
+            header_image: Optional image to use as header
+            header_opacity: Opacity for the header image (0.0 to 1.0)
             
         Returns:
             Tuple containing BytesIO PDF buffer or None, and error message or None
@@ -66,7 +125,7 @@ class ExportSubmissionService:
                 buffer,
                 pagesize=letter,
                 rightMargin=0.75*inch,
-                leftMargin=0.5*inch,  # Reduced left margin to push everything more to the left
+                leftMargin=0.80*inch,
                 topMargin=0.75*inch,
                 bottomMargin=0.75*inch,
                 title=f"Form Submission - {form.title}"
@@ -85,7 +144,7 @@ class ExportSubmissionService:
                 name='Question',
                 parent=styles['Heading2'],
                 fontSize=12,
-                spaceAfter=6,
+                spaceAfter=1,
                 leftIndent=0  # Ensure questions start at left margin
             ))
             styles.add(ParagraphStyle(
@@ -107,11 +166,34 @@ class ExportSubmissionService:
             # Create the content
             story = []
             
-            # Add title and submission info
+            # Process and add header image if provided
+            if header_image:
+                processed_image = ExportSubmissionService._process_header_image(
+                    header_image, 
+                    opacity=header_opacity
+                )
+                
+                if processed_image and hasattr(processed_image, 'img_width') and hasattr(processed_image, 'img_height'):
+                    # Get image dimensions
+                    img_width = processed_image.img_width
+                    img_height = processed_image.img_height
+                    
+                    # Calculate aspect ratio and scale to fit page width
+                    max_width = 7.0 * inch  # Max width considering margins
+                    if img_width > max_width:
+                        scale_factor = max_width / img_width
+                        img_width = max_width
+                        img_height = img_height * scale_factor
+                    
+                    # Add image to story
+                    story.append(Image(processed_image, width=img_width, height=img_height))
+                    story.append(Spacer(1, 1))
+            
+            # Add title and description
             story.append(Paragraph(form.title, styles['FormTitle']))
             if form.description:
                 story.append(Paragraph(form.description, styles['Normal']))
-            story.append(Spacer(1, 12))
+            story.append(Spacer(1, 1))
             
             # Add submission info in a more organized way
             info_data = [
@@ -120,7 +202,7 @@ class ExportSubmissionService:
             ]
             
             # Create a table for submission info with proper styling
-            info_table = Table(info_data, colWidths=[1.5*inch, 4*inch])
+            info_table = Table(info_data, colWidths=[1.5*inch, 5.28*inch])
             info_table.setStyle(TableStyle([
                 ('ALIGN', (0, 0), (0, -1), 'LEFT'),
                 ('ALIGN', (1, 0), (1, -1), 'LEFT'),
@@ -132,7 +214,7 @@ class ExportSubmissionService:
             ]))
             
             story.append(info_table)
-            story.append(Spacer(1, 24))
+            story.append(Spacer(1, 1))
             
             # Get all answers excluding signature type questions
             answers = AnswerSubmitted.query.filter_by(
@@ -163,9 +245,9 @@ class ExportSubmissionService:
                 ).all()
                 
                 if attachments:
-                    story.append(Spacer(1, 24))
+                    story.append(Spacer(1, 1))
                     story.append(Paragraph("Signatures:", styles['Heading2']))
-                    story.append(Spacer(1, 6))
+                    story.append(Spacer(1, 1))
                     
                     for attachment in attachments:
                         file_path = os.path.join(upload_path, attachment.file_path)
@@ -210,31 +292,31 @@ class ExportSubmissionService:
                                 ]))
                                 
                                 story.append(sig_table)
-                                story.append(Spacer(1, 5))
+                                story.append(Spacer(1, 1))
                                 
                                 # 2. Next, add signature author below the image
                                 if signature_author:
+                                    story.append(Paragraph(f"<b>________________________________</b>", styles['Normal']))
                                     story.append(Paragraph(f"<b>Signed by:</b> {signature_author}", styles['Normal']))
-                                    story.append(Spacer(1, 3))
+                                    story.append(Spacer(1, 1))
                                 
                                 # 3. Finally, add signature position below the author
                                 if signature_position:
                                     story.append(Paragraph(f"<b>Position:</b> {signature_position}", styles['Normal']))
                                 
-                                story.append(Spacer(1, 16))
                                 
                             except Exception as img_error:
                                 logger.warning(f"Error adding signature image: {str(img_error)}")
                                 story.append(Paragraph("Image could not be loaded", styles['Normal']))
-                                story.append(Spacer(1, 12))
+                                story.append(Spacer(1, 1))
                         else:
                             # Add signature information even if image can't be found
                             if signature_author:
+                                story.append(Paragraph(f"<b>________________________________</b>", styles['Normal']))
                                 story.append(Paragraph(f"<b>Signed by:</b> {signature_author}", styles['Normal']))
-                                story.append(Spacer(1, 3))
                             if signature_position:
                                 story.append(Paragraph(f"<b>Position:</b> {signature_position}", styles['Normal']))
-                            story.append(Spacer(1, 12))
+                            story.append(Spacer(1, 1))
             
             # Build the PDF
             doc.build(story)

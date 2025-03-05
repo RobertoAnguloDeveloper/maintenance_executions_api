@@ -9,7 +9,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, Flowable
 from werkzeug.exceptions import BadRequest
 from app.models.form_submission import FormSubmission
 from app.models.attachment import Attachment
@@ -66,7 +66,7 @@ class ExportSubmissionService:
                 buffer,
                 pagesize=letter,
                 rightMargin=0.75*inch,
-                leftMargin=0.75*inch,
+                leftMargin=0.5*inch,  # Reduced left margin to push everything more to the left
                 topMargin=0.75*inch,
                 bottomMargin=0.75*inch,
                 title=f"Form Submission - {form.title}"
@@ -78,13 +78,15 @@ class ExportSubmissionService:
                 name='FormTitle',
                 parent=styles['Heading1'],
                 fontSize=16,
-                spaceAfter=12
+                spaceAfter=12,
+                alignment=1  # Center alignment for title
             ))
             styles.add(ParagraphStyle(
                 name='Question',
                 parent=styles['Heading2'],
                 fontSize=12,
-                spaceAfter=6
+                spaceAfter=6,
+                leftIndent=0  # Ensure questions start at left margin
             ))
             styles.add(ParagraphStyle(
                 name='Answer',
@@ -92,6 +94,14 @@ class ExportSubmissionService:
                 fontSize=11,
                 leftIndent=20,
                 spaceAfter=12
+            ))
+            styles.add(ParagraphStyle(
+                name='SignatureLabel',
+                parent=styles['Heading3'],
+                fontSize=11,
+                spaceAfter=3,
+                alignment=0,  # Left alignment for signature labels
+                leftIndent=0  # No indent for signature labels
             ))
             
             # Create the content
@@ -103,11 +113,25 @@ class ExportSubmissionService:
                 story.append(Paragraph(form.description, styles['Normal']))
             story.append(Spacer(1, 12))
             
-            story.append(Paragraph(f"Submitted by: {submission.submitted_by}", styles['Normal']))
-            story.append(Paragraph(
-                f"Date: {submission.submitted_at.strftime('%Y-%m-%d %H:%M:%S')}", 
-                styles['Normal']
-            ))
+            # Add submission info in a more organized way
+            info_data = [
+                ['Submitted by:', submission.submitted_by],
+                ['Date:', submission.submitted_at.strftime('%Y-%m-%d %H:%M:%S')]
+            ]
+            
+            # Create a table for submission info with proper styling
+            info_table = Table(info_data, colWidths=[1.5*inch, 4*inch])
+            info_table.setStyle(TableStyle([
+                ('ALIGN', (0, 0), (0, -1), 'LEFT'),
+                ('ALIGN', (1, 0), (1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+                ('FONTNAME', (1, 0), (1, -1), 'Helvetica'),
+                ('FONTSIZE', (0, 0), (-1, -1), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                ('LEFTPADDING', (0, 0), (0, -1), 0),  # No left padding for first column
+            ]))
+            
+            story.append(info_table)
             story.append(Spacer(1, 24))
             
             # Get all form questions with order
@@ -125,14 +149,17 @@ class ExportSubmissionService:
             ).all()
             
             # Sort answers to match form question order if possible
-            # This is a bit tricky since answers are stored without direct reference to form_questions
             sorted_answers = sorted(
                 answers, 
                 key=lambda a: a.question
             )
             
-            # Add questions and answers
+            # Add questions and answers, excluding signature type questions
             for answer in sorted_answers:
+                # Skip questions with question_type = 'signature'
+                if answer.question_type.lower() == 'signature':
+                    continue
+                    
                 q_text = f"{answer.question}"
                 story.append(Paragraph(q_text, styles['Question']))
                 
@@ -146,20 +173,42 @@ class ExportSubmissionService:
                 if signatures:
                     story.append(Spacer(1, 24))
                     story.append(Paragraph("Signatures:", styles['Heading2']))
-                    story.append(Spacer(1, 12))
+                    story.append(Spacer(1, 6))
                     
+                    # Process each signature individually for maximum left alignment
                     for sig in signatures:
                         if sig["exists"]:
                             try:
-                                img = Image(sig["path"], width=2.5*inch, height=1*inch)
-                                story.append(Paragraph(sig["label"], styles["Question"]))
-                                story.append(img)
-                                story.append(Spacer(1, 12))
+                                # Add the label with no indent
+                                story.append(Paragraph(sig["label"], styles["SignatureLabel"]))
+                                
+                                # Create image with no left padding
+                                img = Image(sig["path"], width=3.5*inch, height=1.4*inch)
+                                
+                                # Create a table with zero left padding to push image to the left
+                                sig_table = Table(
+                                    [[img]],
+                                    colWidths=[7*inch]
+                                )
+                                sig_table.setStyle(TableStyle([
+                                    ('ALIGN', (0, 0), (0, 0), 'LEFT'),
+                                    ('VALIGN', (0, 0), (0, 0), 'TOP'),
+                                    ('LEFTPADDING', (0, 0), (0, 0), 0),
+                                    ('RIGHTPADDING', (0, 0), (0, 0), 0),
+                                    ('TOPPADDING', (0, 0), (0, 0), 0),
+                                    ('BOTTOMPADDING', (0, 0), (0, 0), 0),
+                                ]))
+                                
+                                story.append(sig_table)
+                                story.append(Spacer(1, 16))
                             except Exception as img_error:
                                 logger.warning(f"Error adding signature image: {str(img_error)}")
-                                story.append(Paragraph(f"{sig['label']}: Image could not be loaded", styles['Normal']))
+                                story.append(Paragraph("Image could not be loaded", styles['Normal']))
+                                story.append(Spacer(1, 12))
                         else:
-                            story.append(Paragraph(f"{sig['label']}: Image not found", styles['Normal']))
+                            story.append(Paragraph(sig['label'], styles["SignatureLabel"]))
+                            story.append(Paragraph("Image not found", styles['Normal']))
+                            story.append(Spacer(1, 12))
             
             # Build the PDF
             doc.build(story)
@@ -169,8 +218,6 @@ class ExportSubmissionService:
         except Exception as e:
             logger.error(f"Error exporting submission to PDF: {str(e)}")
             return None, str(e)
-        
-    """Service for exporting form submissions to PDF"""
     
     @staticmethod
     def _get_signature_images(submission_id: int, upload_path: str) -> List[Dict]:
@@ -198,6 +245,9 @@ class ExportSubmissionService:
             form_submission_id=submission_id,
             is_deleted=False
         ).all()
+        
+        # Get signature type answers
+        signature_answers = [a for a in answers if a.question_type.lower() == 'signature']
         
         # Map signature attachments to questions when possible
         labeled_signatures = []

@@ -84,7 +84,13 @@ class ExportSubmissionController:
         current_user: str = None,
         user_role: str = None,
         header_image: FileStorage = None,
-        header_opacity: float = 1.0
+        header_opacity: float = 1.0,
+        header_size: float = None,
+        header_width: float = None,
+        header_height: float = None,
+        header_alignment: str = "center",
+        signatures_size: float = 100,
+        signatures_alignment: str = "vertical"
     ) -> Tuple[Optional[bytes], Optional[Dict], Optional[str]]:
         """
         Export a form submission to PDF with authorization checks and header image
@@ -95,6 +101,12 @@ class ExportSubmissionController:
             user_role: Role of the current user
             header_image: Optional image file for PDF header
             header_opacity: Opacity for header image (0.0 to 1.0)
+            header_size: Optional size percentage (keeping aspect ratio)
+            header_width: Optional specific width in pixels (ignores aspect ratio if height also provided)
+            header_height: Optional specific height in pixels (ignores aspect ratio if width also provided)
+            header_alignment: Alignment of the header image (left, center, right)
+            signatures_size: Size percentage for signature images (100 = original size)
+            signatures_alignment: Layout for signatures (vertical, horizontal)
             
         Returns:
             Tuple containing: 
@@ -124,7 +136,13 @@ class ExportSubmissionController:
                 upload_path=upload_path,
                 include_signatures=True,
                 header_image=header_image,
-                header_opacity=header_opacity
+                header_opacity=header_opacity,
+                header_size=header_size,
+                header_width=header_width,
+                header_height=header_height,
+                header_alignment=header_alignment,
+                signatures_size=signatures_size,
+                signatures_alignment=signatures_alignment
             )
             
             if error:

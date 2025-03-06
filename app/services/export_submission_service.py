@@ -24,17 +24,74 @@ from app.models.form_question import FormQuestion
 
 logger = logging.getLogger(__name__)
 
+# Global variables for PDF formatting
+# Page layout settings
+PAGE_MARGINS = {
+    'top': 0.75 * inch,
+    'bottom': 0.75 * inch,
+    'left': 0.80 * inch,
+    'right': 0.75 * inch
+}
+
+# Content spacing settings
+TITLE_SPACING = {
+    'before': 12,
+    'after': 18
+}
+
+# Question formatting
+QUESTION_FORMATTING = {
+    'font_size': 12,
+    'space_before': 8,
+    'space_after': 1,
+    'left_indent': 0
+}
+
+# Answer formatting
+ANSWER_FORMATTING = {
+    'font_size': 11,
+    'space_before': 2,
+    'space_after': 12,
+    'left_indent': 20
+}
+
+# Signature formatting
+SIGNATURE_FORMATTING = {
+    'section_space_before': 1,
+    'section_space_after': 1,
+    'image_width': 3.5 * inch,
+    'image_height': 1.4 * inch,
+    'space_between': 1,
+    'signature_space_after': 1
+}
+
+# Default image settings
+DEFAULT_IMAGE_SETTINGS = {
+    'max_width': 7.0 * inch,
+    'default_opacity': 1.0
+}
+
+
 class ExportSubmissionService:
     """Service for exporting form submissions to PDF"""
     
     @staticmethod
-    def _process_header_image(image_file: FileStorage, opacity: float = 1.0) -> Optional[BytesIO]:
+    def _process_header_image(
+        image_file: FileStorage, 
+        opacity: float = 1.0,
+        size: Optional[float] = None,
+        width: Optional[float] = None,
+        height: Optional[float] = None
+    ) -> Optional[BytesIO]:
         """
-        Process a header image file applying the specified opacity
+        Process a header image file applying the specified opacity and sizing
         
         Args:
             image_file: The uploaded image file
             opacity: Opacity value between 0.0 and 1.0
+            size: Optional size percentage (100 = original size, 200 = double size)
+            width: Optional specific width (ignores aspect ratio if height also provided)
+            height: Optional specific height (ignores aspect ratio if width also provided)
             
         Returns:
             BytesIO: Processed image as BytesIO or None if processing fails
@@ -49,6 +106,34 @@ class ExportSubmissionService:
             
             # Open with PIL
             img = PILImage.open(img_file)
+            
+            # Handle resizing based on provided parameters
+            orig_width, orig_height = img.size
+            new_width, new_height = orig_width, orig_height
+            
+            if width is not None and height is not None:
+                # Specific dimensions provided - ignore aspect ratio
+                new_width = width
+                new_height = height
+                img = img.resize((int(new_width), int(new_height)), PILImage.LANCZOS)
+            elif width is not None:
+                # Only width provided - maintain aspect ratio
+                aspect_ratio = orig_height / orig_width
+                new_width = width
+                new_height = width * aspect_ratio
+                img = img.resize((int(new_width), int(new_height)), PILImage.LANCZOS)
+            elif height is not None:
+                # Only height provided - maintain aspect ratio
+                aspect_ratio = orig_width / orig_height
+                new_height = height
+                new_width = height * aspect_ratio
+                img = img.resize((int(new_width), int(new_height)), PILImage.LANCZOS)
+            elif size is not None:
+                # Scale by percentage (100 = original size)
+                scale_factor = size / 100.0
+                new_width = orig_width * scale_factor
+                new_height = orig_height * scale_factor
+                img = img.resize((int(new_width), int(new_height)), PILImage.LANCZOS)
             
             # Convert to RGBA if not already
             if img.mode != 'RGBA':
@@ -68,8 +153,8 @@ class ExportSubmissionService:
             result_io.seek(0)
             
             # Store dimensions for later use
-            result_io.img_width = img.width
-            result_io.img_height = img.height
+            result_io.img_width = new_width
+            result_io.img_height = new_height
             
             return result_io
         
@@ -83,7 +168,13 @@ class ExportSubmissionService:
         upload_path: str,
         include_signatures: bool = True,
         header_image: Optional[FileStorage] = None,
-        header_opacity: float = 1.0
+        header_opacity: float = DEFAULT_IMAGE_SETTINGS['default_opacity'],
+        header_size: Optional[float] = None,
+        header_width: Optional[float] = None,
+        header_height: Optional[float] = None,
+        header_alignment: str = "center",
+        signatures_size: float = 100,
+        signatures_alignment: str = "vertical"
     ) -> Tuple[Optional[BytesIO], Optional[str]]:
         """
         Export a form submission to PDF with all answers, optional signatures, and header image
@@ -94,6 +185,12 @@ class ExportSubmissionService:
             include_signatures: Whether to include signature images or not
             header_image: Optional image to use as header
             header_opacity: Opacity for the header image (0.0 to 1.0)
+            header_size: Optional size percentage (keeping aspect ratio)
+            header_width: Optional specific width in pixels (ignores aspect ratio if height also provided)
+            header_height: Optional specific height in pixels (ignores aspect ratio if width also provided)
+            header_alignment: Alignment of the header image (left, center, right)
+            signatures_size: Size percentage for signature images (100 = original size)
+            signatures_alignment: Layout for signatures (vertical, horizontal)
             
         Returns:
             Tuple containing BytesIO PDF buffer or None, and error message or None
@@ -120,45 +217,47 @@ class ExportSubmissionService:
             # Create a buffer for the PDF
             buffer = BytesIO()
             
-            # Create document
+            # Create document using global settings
             doc = SimpleDocTemplate(
                 buffer,
                 pagesize=letter,
-                rightMargin=0.75*inch,
-                leftMargin=0.80*inch,
-                topMargin=0.75*inch,
-                bottomMargin=0.75*inch,
+                rightMargin=PAGE_MARGINS['right'],
+                leftMargin=PAGE_MARGINS['left'],
+                topMargin=PAGE_MARGINS['top'],
+                bottomMargin=PAGE_MARGINS['bottom'],
                 title=f"Form Submission - {form.title}"
             )
             
-            # Prepare styles
+            # Prepare styles using global settings
             styles = getSampleStyleSheet()
             styles.add(ParagraphStyle(
                 name='FormTitle',
                 parent=styles['Heading1'],
                 fontSize=16,
-                spaceAfter=12,
+                spaceAfter=TITLE_SPACING['after'],
                 alignment=1  # Center alignment for title
             ))
             styles.add(ParagraphStyle(
                 name='Question',
                 parent=styles['Heading2'],
-                fontSize=12,
-                spaceAfter=1,
-                leftIndent=0  # Ensure questions start at left margin
+                fontSize=QUESTION_FORMATTING['font_size'],
+                spaceBefore=QUESTION_FORMATTING['space_before'],
+                spaceAfter=QUESTION_FORMATTING['space_after'],
+                leftIndent=QUESTION_FORMATTING['left_indent']
             ))
             styles.add(ParagraphStyle(
                 name='Answer',
                 parent=styles['Normal'],
-                fontSize=11,
-                leftIndent=20,
-                spaceAfter=12
+                fontSize=ANSWER_FORMATTING['font_size'],
+                spaceBefore=ANSWER_FORMATTING['space_before'],
+                spaceAfter=ANSWER_FORMATTING['space_after'],
+                leftIndent=ANSWER_FORMATTING['left_indent']
             ))
             styles.add(ParagraphStyle(
                 name='SignatureLabel',
                 parent=styles['Heading3'],
                 fontSize=11,
-                spaceAfter=3,
+                spaceAfter=1,
                 alignment=0,  # Left alignment for signature labels
                 leftIndent=0  # No indent for signature labels
             ))
@@ -170,7 +269,10 @@ class ExportSubmissionService:
             if header_image:
                 processed_image = ExportSubmissionService._process_header_image(
                     header_image, 
-                    opacity=header_opacity
+                    opacity=header_opacity,
+                    size=header_size,
+                    width=header_width,
+                    height=header_height
                 )
                 
                 if processed_image and hasattr(processed_image, 'img_width') and hasattr(processed_image, 'img_height'):
@@ -178,22 +280,45 @@ class ExportSubmissionService:
                     img_width = processed_image.img_width
                     img_height = processed_image.img_height
                     
-                    # Calculate aspect ratio and scale to fit page width
-                    max_width = 7.0 * inch  # Max width considering margins
-                    if img_width > max_width:
-                        scale_factor = max_width / img_width
-                        img_width = max_width
-                        img_height = img_height * scale_factor
+                    # Calculate aspect ratio and scale to fit page width if not explicitly sized
+                    if header_width is None and header_height is None and header_size is None:
+                        max_width = DEFAULT_IMAGE_SETTINGS['max_width']
+                        if img_width > max_width:
+                            scale_factor = max_width / img_width
+                            img_width = max_width
+                            img_height = img_height * scale_factor
                     
-                    # Add image to story
-                    story.append(Image(processed_image, width=img_width, height=img_height))
+                    # Calculate alignment for image
+                    page_width = letter[0] - PAGE_MARGINS['left'] - PAGE_MARGINS['right']
+                    
+                    # Set horizontal alignment
+                    if header_alignment.lower() == "left":
+                        # Left alignment - no horizontal adjustment needed
+                        alignment = "LEFT"
+                    elif header_alignment.lower() == "right":
+                        # Right alignment
+                        alignment = "RIGHT"
+                    else:
+                        # Center alignment (default)
+                        alignment = "CENTER"
+                    
+                    # Create a table for the image with alignment
+                    img_table = Table(
+                        [[Image(processed_image, width=img_width, height=img_height)]],
+                        colWidths=[page_width]
+                    )
+                    img_table.setStyle(TableStyle([
+                        ('ALIGN', (0, 0), (0, 0), alignment),
+                        ('VALIGN', (0, 0), (0, 0), 'MIDDLE'),
+                    ]))
+                    story.append(img_table)
                     story.append(Spacer(1, 1))
             
             # Add title and description
             story.append(Paragraph(form.title, styles['FormTitle']))
             if form.description:
                 story.append(Paragraph(form.description, styles['Normal']))
-            story.append(Spacer(1, 1))
+            story.append(Spacer(1, 12))
             
             # Add submission info in a more organized way
             info_data = [
@@ -209,7 +334,7 @@ class ExportSubmissionService:
                 ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
                 ('FONTNAME', (1, 0), (1, -1), 'Helvetica'),
                 ('FONTSIZE', (0, 0), (-1, -1), 10),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 1),
                 ('LEFTPADDING', (0, 0), (0, -1), 0),  # No left padding for first column
             ]))
             
@@ -245,78 +370,200 @@ class ExportSubmissionService:
                 ).all()
                 
                 if attachments:
-                    story.append(Spacer(1, 1))
+                    story.append(Spacer(1, SIGNATURE_FORMATTING['section_space_before']))
                     story.append(Paragraph("Signatures:", styles['Heading2']))
                     story.append(Spacer(1, 1))
                     
-                    for attachment in attachments:
-                        file_path = os.path.join(upload_path, attachment.file_path)
-                        exists = os.path.exists(file_path)
+                    # Apply signature size scaling
+                    scale_factor = signatures_size / 100.0
+                    sig_width = SIGNATURE_FORMATTING['image_width'] * scale_factor
+                    sig_height = SIGNATURE_FORMATTING['image_height'] * scale_factor
+                    
+                    # Handle horizontal alignment (multiple signatures in a row)
+                    if signatures_alignment.lower() == "horizontal" and len(attachments) > 1:
+                        # Calculate available width
+                        available_width = letter[0] - PAGE_MARGINS['left'] - PAGE_MARGINS['right']
                         
-                        # Extract signature metadata
-                        signature_position = attachment.signature_position
-                        signature_author = attachment.signature_author
+                        # Calculate how many signatures can fit on one row
+                        # Use a smaller width to allow for spacing between columns
+                        sig_col_width = sig_width * 1.2  # Add 20% for spacing
+                        sigs_per_row = min(len(attachments), max(1, int(available_width / sig_col_width)))
                         
-                        # Try to extract from filename if not in attachment record
-                        if not signature_position or not signature_author:
-                            try:
-                                filename = os.path.basename(attachment.file_path)
-                                parts = filename.split('+')
-                                
-                                if len(parts) >= 4:
-                                    # Format: {form_submission_id}+{signature_position}+{signature_author}+{timestamp}
-                                    if not signature_position:
-                                        signature_position = parts[1].replace('_', ' ')
-                                    if not signature_author:
-                                        signature_author = parts[2].replace('_', ' ')
-                            except Exception as e:
-                                logger.warning(f"Could not parse signature metadata from filename: {str(e)}")
+                        # Prepare data for the table - group signatures into rows
+                        table_data = []
+                        current_row = []
                         
-                        if exists:
-                            try:
-                                # 1. First, add the signature image
-                                img = Image(file_path, width=3.5*inch, height=1.4*inch)
-                                
-                                # Create a table with zero left padding to push image to the left
-                                sig_table = Table(
-                                    [[img]],
-                                    colWidths=[7*inch]
-                                )
-                                sig_table.setStyle(TableStyle([
-                                    ('ALIGN', (0, 0), (0, 0), 'LEFT'),
-                                    ('VALIGN', (0, 0), (0, 0), 'TOP'),
-                                    ('LEFTPADDING', (0, 0), (0, 0), 0),
-                                    ('RIGHTPADDING', (0, 0), (0, 0), 0),
-                                    ('TOPPADDING', (0, 0), (0, 0), 0),
-                                    ('BOTTOMPADDING', (0, 0), (0, 0), 0),
-                                ]))
-                                
-                                story.append(sig_table)
-                                story.append(Spacer(1, 1))
-                                
-                                # 2. Next, add signature author below the image
+                        for idx, attachment in enumerate(attachments):
+                            file_path = os.path.join(upload_path, attachment.file_path)
+                            exists = os.path.exists(file_path)
+                            
+                            # Extract signature metadata
+                            signature_position = attachment.signature_position
+                            signature_author = attachment.signature_author
+                            
+                            # Try to extract from filename if not in attachment record
+                            if not signature_position or not signature_author:
+                                try:
+                                    filename = os.path.basename(attachment.file_path)
+                                    parts = filename.split('+')
+                                    
+                                    if len(parts) >= 4:
+                                        if not signature_position:
+                                            signature_position = parts[1].replace('_', ' ')
+                                        if not signature_author:
+                                            signature_author = parts[2].replace('_', ' ')
+                                except Exception as e:
+                                    logger.warning(f"Could not parse signature metadata from filename: {str(e)}")
+                            
+                            # Create a signature block
+                            sig_elements = []
+                            
+                            # Add the signature image if it exists - NO SPACER AFTER IMAGE
+                            if exists:
+                                try:
+                                    img = Image(file_path, width=sig_width, height=sig_height)
+                                    sig_elements.append(img)
+                                    # REMOVED SPACER HERE
+                                except Exception as img_error:
+                                    logger.warning(f"Error adding signature image: {str(img_error)}")
+                                    sig_elements.append(Paragraph("Image could not be loaded", styles['Normal']))
+                                    # REMOVED SPACER HERE
+                            
+                            # Add signature line and information
+                            sig_elements.append(Paragraph("<b>________________________________</b>", styles['Normal']))
+                            if signature_author:
+                                sig_elements.append(Paragraph(f"<b>Signed by:</b> {signature_author}", styles['Normal']))
+                            if signature_position:
+                                sig_elements.append(Paragraph(f"<b>Position:</b> {signature_position}", styles['Normal']))
+                            
+                            # Add to current row
+                            current_row.append(sig_elements)
+                            
+                            # If we've filled a row or this is the last attachment, add the row to the table data
+                            if len(current_row) == sigs_per_row or idx == len(attachments) - 1:
+                                # Pad row with empty cells if needed
+                                while len(current_row) < sigs_per_row:
+                                    current_row.append([])
+                                    
+                                table_data.append(current_row)
+                                current_row = []
+                        
+                        # Create column widths
+                        col_width = available_width / sigs_per_row
+                        col_widths = [col_width] * sigs_per_row
+                        
+                        # Create signature table
+                        for row in table_data:
+                            # Create a sub-table for each cell
+                            row_data = []
+                            for cell_elements in row:
+                                if cell_elements:  # Skip empty cells
+                                    # Create a nested table for each signature
+                                    sig_table = Table(
+                                        [[element] for element in cell_elements],
+                                        colWidths=[col_width * 0.95]  # Slightly smaller for margin
+                                    )
+                                    sig_table.setStyle(TableStyle([
+                                        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                                        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                                        # Tighten spacing within the signature block
+                                        ('TOPPADDING', (0, 0), (-1, -1), 0),
+                                        ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+                                    ]))
+                                    row_data.append(sig_table)
+                                else:
+                                    row_data.append("")  # Empty cell
+                            
+                            # Add row to story
+                            sig_row_table = Table(
+                                [row_data],
+                                colWidths=col_widths
+                            )
+                            sig_row_table.setStyle(TableStyle([
+                                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                                ('TOPPADDING', (0, 0), (-1, -1), 0),
+                                ('BOTTOMPADDING', (0, 0), (-1, -1), 1),
+                            ]))
+                            story.append(sig_row_table)
+                    
+                    else:
+                        # Vertical layout (default) - one signature per row
+                        for attachment in attachments:
+                            file_path = os.path.join(upload_path, attachment.file_path)
+                            exists = os.path.exists(file_path)
+                            
+                            # Extract signature metadata
+                            signature_position = attachment.signature_position
+                            signature_author = attachment.signature_author
+                            
+                            # Try to extract from filename if not in attachment record
+                            if not signature_position or not signature_author:
+                                try:
+                                    filename = os.path.basename(attachment.file_path)
+                                    parts = filename.split('+')
+                                    
+                                    if len(parts) >= 4:
+                                        # Format: {form_submission_id}+{signature_position}+{signature_author}+{timestamp}
+                                        if not signature_position:
+                                            signature_position = parts[1].replace('_', ' ')
+                                        if not signature_author:
+                                            signature_author = parts[2].replace('_', ' ')
+                                except Exception as e:
+                                    logger.warning(f"Could not parse signature metadata from filename: {str(e)}")
+                            
+                            if exists:
+                                try:
+                                    # 1. First, add the signature image with the new size
+                                    img = Image(file_path, 
+                                            width=sig_width, 
+                                            height=sig_height)
+                                    
+                                    # Create a table with zero left padding to push image to the left
+                                    sig_table = Table(
+                                        [[img]],
+                                        colWidths=[7*inch]
+                                    )
+                                    sig_table.setStyle(TableStyle([
+                                        ('ALIGN', (0, 0), (0, 0), 'LEFT'),
+                                        ('VALIGN', (0, 0), (0, 0), 'TOP'),
+                                        ('LEFTPADDING', (0, 0), (0, 0), 0),
+                                        ('RIGHTPADDING', (0, 0), (0, 0), 0),
+                                        ('TOPPADDING', (0, 0), (0, 0), 0),
+                                        ('BOTTOMPADDING', (0, 0), (0, 0), 0),
+                                    ]))
+                                    
+                                    story.append(sig_table)
+                                    # REMOVED SPACER HERE
+                                    
+                                    # 2. Next, add signature author below the image
+                                    if signature_author:
+                                        story.append(Paragraph(f"<b>________________________________</b>", styles['Normal']))
+                                        story.append(Paragraph(f"<b>Signed by:</b> {signature_author}", styles['Normal']))
+                                        # REMOVED SPACER HERE
+                                    
+                                    # 3. Finally, add signature position below the author
+                                    if signature_position:
+                                        story.append(Paragraph(f"<b>Position:</b> {signature_position}", styles['Normal']))
+                                    
+                                    # Add spacing after each signature
+                                    story.append(Spacer(1, SIGNATURE_FORMATTING['space_between']))
+                                    
+                                except Exception as img_error:
+                                    logger.warning(f"Error adding signature image: {str(img_error)}")
+                                    story.append(Paragraph("Image could not be loaded", styles['Normal']))
+                                    # REMOVED SPACER HERE
+                            else:
+                                # Add signature information even if image can't be found
                                 if signature_author:
                                     story.append(Paragraph(f"<b>________________________________</b>", styles['Normal']))
                                     story.append(Paragraph(f"<b>Signed by:</b> {signature_author}", styles['Normal']))
-                                    story.append(Spacer(1, 1))
-                                
-                                # 3. Finally, add signature position below the author
                                 if signature_position:
                                     story.append(Paragraph(f"<b>Position:</b> {signature_position}", styles['Normal']))
-                                
-                                
-                            except Exception as img_error:
-                                logger.warning(f"Error adding signature image: {str(img_error)}")
-                                story.append(Paragraph("Image could not be loaded", styles['Normal']))
-                                story.append(Spacer(1, 1))
-                        else:
-                            # Add signature information even if image can't be found
-                            if signature_author:
-                                story.append(Paragraph(f"<b>________________________________</b>", styles['Normal']))
-                                story.append(Paragraph(f"<b>Signed by:</b> {signature_author}", styles['Normal']))
-                            if signature_position:
-                                story.append(Paragraph(f"<b>Position:</b> {signature_position}", styles['Normal']))
-                            story.append(Spacer(1, 1))
+                                story.append(Spacer(1, SIGNATURE_FORMATTING['space_between']))
+                    
+                    # Add spacing after signature section
+                    story.append(Spacer(1, SIGNATURE_FORMATTING['section_space_after']))
             
             # Build the PDF
             doc.build(story)
@@ -326,7 +573,7 @@ class ExportSubmissionService:
         except Exception as e:
             logger.error(f"Error exporting submission to PDF: {str(e)}")
             return None, str(e)
-    
+
     @staticmethod
     def _get_signature_images(submission_id: int, upload_path: str) -> List[Dict]:
         """

@@ -14,7 +14,7 @@ from .attachment_views import attachment_bp
 from .role_permission_views import role_permission_bp
 from .form_question_views import form_question_bp
 from .form_answer_views import form_answer_bp
-from .frontend_views import frontend_bp
+#from .frontend_views import frontend_bp
 from .export_views import export_bp
 from .cmms_config_views import cmms_config_bp
 from .export_submission_views import export_submission_bp

@@ -36,7 +36,7 @@ def register_blueprints(app):
         (form_question_bp, '/api/form-questions'),
         (form_answer_bp, '/api/form-answers'),
         (export_bp, '/api/export'),
-        (frontend_bp, ''),
+        #(frontend_bp, ''),
         (cmms_config_bp,'/api/cmms-configs'),
         (export_submission_bp, '/api/export_submissions')
     ]

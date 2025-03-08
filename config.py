@@ -14,7 +14,8 @@ logger = logging.getLogger(__name__)
 class Config:
     """Application configuration class."""
     def __init__(self):
-        self.SECRET_KEY = os.environ.get('SECRET_KEY') or os.urandom(32)
+        #self.SECRET_KEY = os.environ.get('SECRET_KEY') or os.urandom(32)
+        self.SECRET_KEY = "cmm-dev-2024"
         self.JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY') or os.urandom(32)
         self.JWT_ACCESS_TOKEN_EXPIRES = 3600
         

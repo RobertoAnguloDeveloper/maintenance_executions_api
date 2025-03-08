@@ -113,8 +113,7 @@ class FormSubmissionService:
             query = (FormSubmission.query
                 .join(Form)
                 .filter(
-                    FormSubmission.is_deleted == False,
-                    Form.is_deleted == False
+                    FormSubmission.is_deleted == False
                 ))
             
             # Apply role-based filtering
@@ -235,13 +234,7 @@ class FormSubmissionService:
     @staticmethod
     def delete_submission(submission_id: int) -> Tuple[bool, Optional[str]]:
         """
-        Delete a submission with cascade soft delete
-        
-        Args:
-            submission_id: ID of the submission to delete
-            
-        Returns:
-            tuple: (Success boolean, Error message or None)
+        Delete a submission while preserving related answer and attachment data.
         """
         try:
             submission = FormSubmission.query.filter_by(
@@ -252,23 +245,12 @@ class FormSubmissionService:
             if not submission:
                 return False, "Submission not found"
 
-            # Start transaction for cascade soft delete
-            db.session.begin_nested()
-
-            # Soft delete answers
-            for answer in submission.answers_submitted:
-                if not answer.is_deleted:
-                    answer.soft_delete()
-
-            # Soft delete attachments
-            for attachment in submission.attachments:
-                if not attachment.is_deleted:
-                    attachment.soft_delete()
-
-            # Finally soft delete the submission
+            # Only soft delete the submission itself
+            # without touching related answers or attachments
             submission.soft_delete()
-            
             db.session.commit()
+            
+            logger.info(f"Submission {submission_id} marked as deleted while preserving related data")
             return True, None
 
         except Exception as e:

@@ -476,22 +476,54 @@ class FormService(BaseService):
 
     @classmethod
     def delete_form(cls, form_id: int) -> Tuple[bool, Union[Dict, str]]:
-        """Delete form and related data"""
+        """
+        Delete form while preserving related submission data.
+        This soft deletes the form but keeps submissions, attachments and submitted answers accessible.
+        """
         try:
             # Get the form with is_deleted=False check
             form = cls.get_form(form_id)
             if not form:
                 return False, "Form not found"
 
-            # Perform cascading soft delete
-            deletion_stats = cls._perform_cascading_delete(form)
-            
-            # Finally soft delete the form itself
-            form.soft_delete()
-            db.session.commit()
-            
-            logger.info(f"Form {form_id} and associated data deleted successfully")
-            return True, deletion_stats
+            # Start transaction
+            db.session.begin_nested()
+            try:
+                deletion_stats = {
+                    'form_questions': 0,
+                    'form_answers': 0
+                }
+                
+                # Soft delete form questions and their answers only
+                # NOT affecting submissions, attachments, or submitted answers
+                for form_question in FormQuestion.query.filter_by(
+                    form_id=form.id,
+                    is_deleted=False
+                ).all():
+                    form_question.soft_delete()
+                    deletion_stats['form_questions'] += 1
+
+                    # Soft delete form answers (template answers, not submitted answers)
+                    for form_answer in FormAnswer.query.filter_by(
+                        form_question_id=form_question.id,
+                        is_deleted=False
+                    ).all():
+                        form_answer.soft_delete()
+                        deletion_stats['form_answers'] += 1
+
+                # Soft delete the form itself only
+                form.soft_delete()
+                
+                # Commit changes
+                db.session.commit()
+                
+                logger.info(f"Form {form_id} deleted successfully while preserving submission data. "
+                        f"Stats: {deletion_stats}")
+                return True, deletion_stats
+                
+            except Exception as nested_exception:
+                db.session.rollback()
+                raise nested_exception
 
         except Exception as e:
             db.session.rollback()

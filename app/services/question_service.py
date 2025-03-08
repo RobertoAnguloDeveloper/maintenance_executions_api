@@ -319,7 +319,7 @@ class QuestionService:
                 is_deleted=False
             ).first():
                 # Only allow updating remarks if question is in use
-                if set(kwargs.keys()) - {'remarks'}:
+                if set(kwargs.keys()) - {'text'}:
                     return None, "Cannot modify question that is in use (except remarks)"
 
             # Start transaction

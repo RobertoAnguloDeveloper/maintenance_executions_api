@@ -14,10 +14,20 @@ logger = logging.getLogger(__name__)
 class Config:
     """Application configuration class."""
     def __init__(self):
-        #self.SECRET_KEY = os.environ.get('SECRET_KEY') or os.urandom(32)
-        self.SECRET_KEY = "cmm-dev-2024"
-        self.JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY') or os.urandom(32)
-        self.JWT_ACCESS_TOKEN_EXPIRES = 3600
+        # Get SECRET_KEY from environment or use a fixed fallback
+        self.SECRET_KEY = os.environ.get('SECRET_KEY')
+        if not self.SECRET_KEY:
+            logger.warning("SECRET_KEY not found in environment variables. Using fallback.")
+            self.SECRET_KEY = 'maintenance-executions-secret-key-2025'
+        
+        # Always use a consistent JWT secret key for all workers
+        self.JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY')
+        if not self.JWT_SECRET_KEY:
+            logger.warning("JWT_SECRET_KEY not found in environment variables. Using fallback.")
+            self.JWT_SECRET_KEY = 'cmm-dev-2024'  # Use the same value as in supervisor
+        
+        # Convert to int in case it comes from environment as string
+        self.JWT_ACCESS_TOKEN_EXPIRES = int(os.environ.get('JWT_ACCESS_TOKEN_EXPIRES', 3600))
         
         self.SQLALCHEMY_TRACK_MODIFICATIONS = False
         self.SQLALCHEMY_DATABASE_URI = self._get_database_uri()
@@ -26,8 +36,9 @@ class Config:
         self.UPLOAD_FOLDER = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'uploads')
         self.MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB max file size
         
-        print("Upload Folder")
-        print(self.UPLOAD_FOLDER)
+        logger.info(f"Using JWT_SECRET_KEY: {self.JWT_SECRET_KEY[:3]}...{self.JWT_SECRET_KEY[-3:] if len(self.JWT_SECRET_KEY) > 6 else ''}")
+        logger.info(f"JWT_ACCESS_TOKEN_EXPIRES: {self.JWT_ACCESS_TOKEN_EXPIRES}")
+        logger.info(f"Upload Folder: {self.UPLOAD_FOLDER}")
         
         # Ensure upload directory exists
         if not os.path.exists(self.UPLOAD_FOLDER):

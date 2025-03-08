@@ -5,23 +5,12 @@ from flask_jwt_extended import JWTManager
 from config import Config
 import logging
 import sys
+import os
 from sqlalchemy import inspect
 from flask_cors import CORS
-import logging
 import mimetypes
 
 mimetypes.init()
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# Initialize extensions
-db = SQLAlchemy()
-migrate = Migrate()
-jwt = JWTManager()
-
-
 
 # Configure logging
 logging.basicConfig(
@@ -29,6 +18,11 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Initialize extensions
+db = SQLAlchemy()
+migrate = Migrate()
+jwt = JWTManager()
 
 def check_db_initialized(db_instance):
     """
@@ -121,10 +115,31 @@ def create_app(config_class=None):
         # Load configuration
         app.config.from_object(config_class)
         
+        # Ensure JWT config is explicitly set at app level
+        app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'cmm-dev-2024')
+        app.config['JWT_ACCESS_TOKEN_EXPIRES'] = int(os.environ.get('JWT_ACCESS_TOKEN_EXPIRES', 3600))
+        logger.info(f"JWT configuration initialized with consistent key")
+        
         # Initialize extensions
         db.init_app(app)
         migrate.init_app(app, db)
         jwt.init_app(app)
+        
+        # Add JWT error handlers for better debugging
+        @jwt.invalid_token_loader
+        def invalid_token_callback(error_string):
+            logger.error(f"Invalid token: {error_string}")
+            return {"msg": error_string}, 422
+            
+        @jwt.expired_token_loader
+        def expired_token_callback(jwt_header, jwt_payload):
+            logger.warning(f"Expired token for user: {jwt_payload.get('sub', 'unknown')}")
+            return {"msg": "Token has expired"}, 401
+            
+        @jwt.unauthorized_loader
+        def missing_token_callback(error_string):
+            logger.warning(f"Missing token: {error_string}")
+            return {"msg": error_string}, 401
 
         with app.app_context():
             # Import models

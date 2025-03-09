@@ -71,7 +71,7 @@ class FormService(BaseService):
                 return query.order_by(Form.created_at.desc()).all()
             
             # For supervisors and site managers, see forms in their environment plus public forms
-            elif user.role.name in [RoleType.SUPERVISOR, RoleType.SITE_MANAGER]:
+            elif user.role.name in [RoleType.SUPERVISOR, RoleType.SITE_MANAGER, RoleType.TECHNICIAN]:
                 return (query.filter(
                     db.or_(
                         Form.is_public == True,

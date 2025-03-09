@@ -151,7 +151,7 @@ def get_question(question_id):
             return jsonify({"error": "Question not found"}), 404
 
         # Check environment access for non-admin users
-        if not user.role.is_super_user and question.environment_id != user.environment_id:
+        if not user.role.is_super_user:
             return jsonify({"error": "Unauthorized access"}), 403
 
         return jsonify(question.to_dict()), 200
@@ -208,10 +208,6 @@ def update_question(question_id):
         question = QuestionController.get_question(question_id)
         if not question:
             return jsonify({"error": "Question not found"}), 404
-
-        # Check environment access for non-admin users
-        if not user.role.is_super_user and question.environment_id != user.environment_id:
-            return jsonify({"error": "Unauthorized access"}), 403
 
         data = request.get_json()
         allowed_fields = ['text', 'question_type_id', 'remarks']

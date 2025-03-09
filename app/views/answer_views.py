@@ -149,10 +149,6 @@ def update_answer(answer_id):
         if not answer:
             return jsonify({"error": "Answer not found"}), 404
 
-        # Check environment access for non-admin users
-        if not user.role.is_super_user and answer.environment_id != user.environment_id:
-            return jsonify({"error": "Unauthorized access"}), 403
-
         data = request.get_json()
 
         updated_answer, error = AnswerController.update_answer(

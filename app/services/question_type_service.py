@@ -63,7 +63,7 @@ class QuestionTypeService:
         if not include_deleted:
             query = query.filter(QuestionType.is_deleted == False)
             
-        return query.order_by(QuestionType.type).all()
+        return query.order_by(QuestionType.id).all()
 
     @staticmethod
     def get_question_type(type_id: int) -> Optional[QuestionType]:

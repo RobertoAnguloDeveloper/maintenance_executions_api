@@ -437,28 +437,6 @@ def delete_form(form_id):
         if not form:
             return jsonify({"error": "Form not found"}), 404
 
-        # Access control checks
-        if not user.role.is_super_user:
-            # Check environment access
-            if form.creator.environment_id != user.environment_id:
-                return jsonify({
-                    "error": "Unauthorized",
-                    "message": "You can only delete forms in your environment"
-                }), 403
-
-        # Check for active submissions if user is not admin or site manager
-        if user.role.name not in [RoleType.ADMIN, RoleType.SITE_MANAGER]:
-            active_submissions = FormSubmission.query.filter_by(
-                form_id=form_id,
-                is_deleted=False
-            ).count()
-            
-            if active_submissions > 0:
-                return jsonify({
-                    "error": "Cannot delete form with active submissions",
-                    "active_submissions": active_submissions
-                }), 400
-
         success, result = FormController.delete_form(form_id)
         if success:
             logger.info(f"Form {form_id} and associated data deleted by {user.username}")

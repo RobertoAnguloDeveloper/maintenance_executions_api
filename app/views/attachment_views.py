@@ -171,6 +171,10 @@ def get_all_attachments():
         if signature_position:
             filters['signature_position'] = signature_position
             
+        environment_id = user.environment_id
+        if environment_id:
+            filters['signature_position'] = environment_id
+            
         attachments, error = AttachmentController.get_all_attachments(
             current_user=current_user,
             user_role=user.role.name,

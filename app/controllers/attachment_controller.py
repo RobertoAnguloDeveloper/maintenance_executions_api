@@ -201,12 +201,6 @@ class AttachmentController:
             if error:
                 logger.error(f"Error retrieving attachment {attachment_id}: {error}")
                 return None, error
-                    
-            # Access control
-            if user_role != RoleType.ADMIN:
-                if user_role in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                    attachment_data['record'].form_submission.submitted_by != current_user
-                    return None, "Unauthorized access"
                         
             return attachment_data, None
                 
@@ -227,14 +221,6 @@ class AttachmentController:
             submission = FormSubmissionService.get_submission(form_submission_id)
             if not submission:
                 return [], "Form submission not found"
-
-            # Access control
-            if user_role != RoleType.ADMIN:
-                if user_role in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                    if submission.form.creator.environment_id != current_user.environment_id:
-                        return [], "Unauthorized access"
-                elif submission.submitted_by != current_user:
-                    return [], "Unauthorized access"
 
             attachments = Attachment.query.filter_by(
                 form_submission_id=form_submission_id,

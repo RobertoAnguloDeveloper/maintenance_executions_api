@@ -294,19 +294,6 @@ class AttachmentController:
             if not attachment:
                 return None, "Attachment not found"
 
-            # Access control
-            if user_role != RoleType.ADMIN:
-                if user_role in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                    if attachment.form_submission.form.creator.environment_id != current_user.environment_id:
-                        return None, "Unauthorized access"
-                elif attachment.form_submission.submitted_by != current_user:
-                    return None, "Can only update own attachments"
-                    
-                # Check submission age for non-admin users
-                submission_age = datetime.utcnow() - attachment.form_submission.submitted_at
-                if submission_age.days > 7:
-                    return None, "Cannot update attachments older than 7 days"
-
             # Update attachment
             updated_attachment, error = AttachmentService.update_attachment(
                 attachment_id=attachment_id,

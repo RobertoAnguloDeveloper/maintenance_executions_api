@@ -59,14 +59,6 @@ def get_form(form_id):
         if not form:
             return jsonify({"error": "Form not found"}), 404
 
-        # Role-based access control using RoleType
-        if user.role.name == RoleType.TECHNICIAN:
-            if not form.is_public:
-                return jsonify({"error": "Unauthorized access"}), 403
-        elif user.role.name in [RoleType.SUPERVISOR, RoleType.SITE_MANAGER]:
-            if form.creator.environment_id != user.environment_id:
-                return jsonify({"error": "Unauthorized access"}), 403
-
         return jsonify(form.to_dict()), 200
         
     except Exception as e:

@@ -205,9 +205,7 @@ class AttachmentController:
             # Access control
             if user_role != RoleType.ADMIN:
                 if user_role in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                    if attachment_data['record'].form_submission.form.creator.environment_id != current_user.environment_id:
-                        return None, "Unauthorized access"
-                elif attachment_data['record'].form_submission.submitted_by != current_user:
+                    attachment_data['record'].form_submission.submitted_by != current_user
                     return None, "Unauthorized access"
                         
             return attachment_data, None

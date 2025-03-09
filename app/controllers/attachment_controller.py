@@ -33,14 +33,6 @@ class AttachmentController:
             if not submission:
                 return None, "Form submission not found"
 
-            # Access control
-            if user_role != RoleType.ADMIN:
-                if user_role in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                    if submission.form.creator.environment_id != current_user.environment_id:
-                        return None, "Unauthorized access"
-                elif submission.submitted_by != current_user:
-                    return None, "Can only add attachments to own submissions"
-
             # Validate file
             is_valid, mime_type_or_error = AttachmentService.validate_file(file, file.filename)
             if not is_valid:
@@ -84,14 +76,6 @@ class AttachmentController:
             submission = FormSubmissionService.get_submission(form_submission_id)
             if not submission:
                 return None, "Form submission not found"
-                
-            # Access control
-            if user_role != RoleType.ADMIN:
-                if user_role in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                    if submission.form.creator.environment_id != current_user.environment_id:
-                        return None, "Unauthorized access"
-                elif submission.submitted_by != current_user:
-                    return None, "Can only add attachments to own submissions"
             
             # Validate all files first
             for file_data in files:

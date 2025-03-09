@@ -45,10 +45,28 @@ class AttachmentService:
         
         # Special handling for signatures
         if is_signature and form_submission_id:
+            # Clean signature position and author by removing '~' characters
+            safe_position = None
+            safe_author = None
+            
+            if signature_position:
+                safe_position = signature_position.replace('~', '')
+                if safe_position != signature_position:
+                    logger.info(f"Removed '~' characters from signature_position: '{signature_position}' -> '{safe_position}'")
+            else:
+                safe_position = ""
+                
+            if signature_author:
+                safe_author = signature_author.replace('~', '')
+                if safe_author != signature_author:
+                    logger.info(f"Removed '~' characters from signature_author: '{signature_author}' -> '{safe_author}'")
+            else:
+                safe_author = ""
+                
             # Use the required format: {form_submission_id}+{signature_position}+{signature_author}+{timestamp}
             # Clean up any potentially problematic characters in position and author
-            safe_position = str(signature_position or '').replace(' ', '_').replace('/', '_').replace('\\', '_')
-            safe_author = str(signature_author or '').replace(' ', '_').replace('/', '_').replace('\\', '_')
+            safe_position = str(safe_position or '').replace(' ', '_').replace('/', '_').replace('\\', '_')
+            safe_author = str(safe_author or '').replace(' ', '_').replace('/', '_').replace('\\', '_')
             
             return f"{form_submission_id}+{safe_position}+{safe_author}+{timestamp}{extension}"
         
@@ -197,6 +215,26 @@ class AttachmentService:
                     return None, mime_type
                 file_type = mime_type
 
+            # Clean signature fields by removing '~' characters if this is a signature
+            cleaned_signature_position = None
+            cleaned_signature_author = None
+            
+            if is_signature:
+                if signature_position and '~' in signature_position:
+                    cleaned_signature_position = signature_position.replace('~', '')
+                    logger.info(f"Removed '~' characters from signature_position: '{signature_position}' -> '{cleaned_signature_position}'")
+                else:
+                    cleaned_signature_position = signature_position
+                
+                if signature_author and '~' in signature_author:
+                    cleaned_signature_author = signature_author.replace('~', '')
+                    logger.info(f"Removed '~' characters from signature_author: '{signature_author}' -> '{cleaned_signature_author}'")
+                else:
+                    cleaned_signature_author = signature_author
+            else:
+                cleaned_signature_position = signature_position
+                cleaned_signature_author = signature_author
+
             # Secure and uniquify filename
             secure_name = secure_filename(filename)
             unique_name = AttachmentService.get_unique_filename(
@@ -204,8 +242,8 @@ class AttachmentService:
                 is_signature=is_signature,
                 answer_submitted_id=answer_submitted_id,
                 form_submission_id=form_submission_id,
-                signature_position=signature_position,
-                signature_author=signature_author
+                signature_position=cleaned_signature_position,
+                signature_author=cleaned_signature_author
             )
             
             # Create path with just username folder
@@ -222,8 +260,8 @@ class AttachmentService:
                 file_type=file_type,
                 file_path=file_path,
                 is_signature=is_signature,
-                signature_position=signature_position if is_signature else None,
-                signature_author=signature_author if is_signature else None
+                signature_position=cleaned_signature_position if is_signature else None,
+                signature_author=cleaned_signature_author if is_signature else None
             )
             
             db.session.add(attachment)
@@ -275,6 +313,26 @@ class AttachmentService:
                     db.session.rollback()
                     return None, f"Invalid file {file.filename}: {mime_type_or_error}"
 
+                # Clean signature fields if needed
+                cleaned_signature_position = None
+                cleaned_signature_author = None
+                
+                if is_signature:
+                    if signature_position and '~' in signature_position:
+                        cleaned_signature_position = signature_position.replace('~', '')
+                        logger.info(f"Removed '~' characters from signature_position: '{signature_position}' -> '{cleaned_signature_position}'")
+                    else:
+                        cleaned_signature_position = signature_position
+                    
+                    if signature_author and '~' in signature_author:
+                        cleaned_signature_author = signature_author.replace('~', '')
+                        logger.info(f"Removed '~' characters from signature_author: '{signature_author}' -> '{cleaned_signature_author}'")
+                    else:
+                        cleaned_signature_author = signature_author
+                else:
+                    cleaned_signature_position = signature_position
+                    cleaned_signature_author = signature_author
+
                 # Generate unique filename with special handling for signatures
                 secure_name = secure_filename(file.filename)
                 unique_name = AttachmentService.get_unique_filename(
@@ -282,8 +340,8 @@ class AttachmentService:
                     is_signature=is_signature,
                     answer_submitted_id=answer_submitted_id,
                     form_submission_id=form_submission_id,
-                    signature_position=signature_position,
-                    signature_author=signature_author
+                    signature_position=cleaned_signature_position,
+                    signature_author=cleaned_signature_author
                 )
                 
                 file_path = os.path.join(username, unique_name)
@@ -304,8 +362,8 @@ class AttachmentService:
                     file_type=mime_type_or_error,
                     file_path=file_path,
                     is_signature=is_signature,
-                    signature_position=signature_position if is_signature else None,
-                    signature_author=signature_author if is_signature else None
+                    signature_position=cleaned_signature_position if is_signature else None,
+                    signature_author=cleaned_signature_author if is_signature else None
                 )
                 
                 db.session.add(attachment)
@@ -585,12 +643,27 @@ class AttachmentService:
             if not attachment:
                 return None, "Attachment not found"
                 
-            # Update signature fields if provided
+            # Clean signature fields if needed
+            cleaned_signature_position = None
+            cleaned_signature_author = None
+            
             if signature_position is not None:
-                attachment.signature_position = signature_position
+                if '~' in signature_position:
+                    cleaned_signature_position = signature_position.replace('~', '')
+                    logger.info(f"Removed '~' characters from signature_position during update: '{signature_position}' -> '{cleaned_signature_position}'")
+                else:
+                    cleaned_signature_position = signature_position
+                
+                attachment.signature_position = cleaned_signature_position
                 
             if signature_author is not None:
-                attachment.signature_author = signature_author
+                if '~' in signature_author:
+                    cleaned_signature_author = signature_author.replace('~', '')
+                    logger.info(f"Removed '~' characters from signature_author during update: '{signature_author}' -> '{cleaned_signature_author}'")
+                else:
+                    cleaned_signature_author = signature_author
+                
+                attachment.signature_author = cleaned_signature_author
                 
             if is_signature is not None:
                 attachment.is_signature = is_signature

@@ -46,6 +46,12 @@ class AnswerSubmittedService:
             if not form_submission:
                 return None, "Form submission not found"
 
+            # Remove '~' characters from question_text if it's a signature
+            if is_signature and '~' in question_text:
+                cleaned_question_text = question_text.replace('~', '')
+                logger.info(f"Removed '~' characters from signature question text: '{question_text}' -> '{cleaned_question_text}'")
+                question_text = cleaned_question_text
+
             # Create answer submission
             answer_submitted = AnswerSubmitted(
                 form_submission_id=form_submission_id,
@@ -108,9 +114,18 @@ class AnswerSubmittedService:
             db.session.begin_nested()
 
             for data in answers_data:
+                # Check if this is a signature question and clean the text if needed
+                is_signature = data.get('is_signature', False)
+                question_text = data['question_text']
+                
+                if is_signature and '~' in question_text:
+                    cleaned_question_text = question_text.replace('~', '')
+                    logger.info(f"Removed '~' characters from signature question text: '{question_text}' -> '{cleaned_question_text}'")
+                    question_text = cleaned_question_text
+                
                 answer_submitted = AnswerSubmitted(
                     form_submission_id=form_submission_id,
-                    question=data['question_text'],
+                    question=question_text,
                     question_type=data['question_type_text'],
                     answer=data['answer_text']
                 )

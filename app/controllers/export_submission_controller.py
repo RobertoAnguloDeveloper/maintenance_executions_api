@@ -36,15 +36,7 @@ class ExportSubmissionController:
             submission = FormSubmissionService.get_submission(submission_id)
             if not submission:
                 return None, None, "Submission not found"
-                
-            # Access control
-            if user_role != RoleType.ADMIN:
-                if user_role in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                    if submission.form.creator.environment_id != current_user.environment_id:
-                        return None, None, "Unauthorized access"
-                elif submission.submitted_by != current_user:
-                    return None, None, "Unauthorized access"
-            
+                            
             upload_path = current_app.config['UPLOAD_FOLDER']
             
             # Call the service
@@ -119,14 +111,6 @@ class ExportSubmissionController:
             submission = FormSubmissionService.get_submission(submission_id)
             if not submission:
                 return None, None, "Submission not found"
-                
-            # Access control
-            if user_role != RoleType.ADMIN:
-                if user_role in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                    if submission.form.creator.environment_id != current_user.environment_id:
-                        return None, None, "Unauthorized access"
-                elif submission.submitted_by != current_user:
-                    return None, None, "Unauthorized access"
             
             upload_path = current_app.config['UPLOAD_FOLDER']
             

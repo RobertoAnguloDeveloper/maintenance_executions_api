@@ -29,12 +29,24 @@ def register_user():
         required_fields = ['first_name', 'last_name', 'email', 'contact_number', 'username', 'password', 'role_id', 'environment_id']
         if not all(field in data for field in required_fields):
             return jsonify({"error": "Missing required fields"}), 400
+        
+        # Validate username
+        if data['username'].isspace():
+            return jsonify({"error": "Please write a username"}), 400
+        
+        # Validate username
+        if len(data['username']) < 4:
+            return jsonify({"error": "Please write a valid username"}), 400
+        
+        # Validate password
+        if data['password'].isspace():
+            return jsonify({"error": "Please write a password"}), 400
 
         # Validate password
         if len(data['password']) < 8:
             return jsonify({"error": "Password must be at least 8 characters long"}), 400
-
-        # Role-based validation
+        
+                # Role-based validation
         if not current_user_obj.role.is_super_user:
             # Site Managers can only create users in their environment
             if data['environment_id'] != current_user_obj.environment_id:

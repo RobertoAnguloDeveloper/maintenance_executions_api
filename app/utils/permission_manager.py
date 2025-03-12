@@ -67,7 +67,7 @@ class PermissionManager:
     },
     Role.SUPERVISOR: {
         "permissions": [
-            "view_forms", "create_forms", "update_forms", "delete_forms",
+            "view_forms",
             "view_environments",  # Added environment view permission
             "view_submissions", "update_submissions"
         ],

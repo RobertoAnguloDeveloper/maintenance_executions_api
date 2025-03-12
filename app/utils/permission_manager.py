@@ -57,7 +57,7 @@ class PermissionManager:
     },
     Role.SITE_MANAGER: {
         "permissions": [
-            "view_users", "update_users", "delete_users",
+            "view_users", "update_users",
             "view_forms", "create_forms", "update_forms", "delete_forms",
             "view_environments",  # Added environment permissions
             "view_questions", "create_questions", "update_questions", "delete_questions",
@@ -110,19 +110,19 @@ class PermissionManager:
 
     @classmethod
     def has_permission(cls, user, action: str, entity_type: EntityType = None, 
-                      own_resource: bool = False) -> bool:
+                    own_resource: bool = False) -> bool:
         """Check if user has specific permission"""
         try:
             if user.role.is_super_user:
                 return True
 
-            #role_config = cls.ROLE_PERMISSIONS.get(Role(user.role.name))
+            role_config = cls.ROLE_PERMISSIONS.get(Role(user.role.name))
             
-            # if not role_config:
-            #     return False
+            if not role_config:
+                return False
 
-            # if role_config["permissions"] == "*":
-            #     return True
+            if role_config["permissions"] == "*":
+                return True
 
             permission_name = f"{action}"
             if own_resource:
@@ -130,9 +130,8 @@ class PermissionManager:
             if entity_type:
                 permission_name = f"{permission_name}_{entity_type.value}"
                 
-            return permission_name
-
-            # return permission_name in role_config["permissions"]
+            # Return whether the permission exists in the role's permissions list
+            return permission_name in role_config["permissions"]
         except Exception as e:
             logger.error(f"Error checking permission: {str(e)}")
             return False

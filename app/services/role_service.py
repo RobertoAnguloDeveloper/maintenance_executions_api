@@ -34,10 +34,10 @@ class RoleService(BaseService):
             db.session.rollback()
             if "unique constraint" in str(e.orig).lower():
                 return None, "Role name already exists"
-            return None, str(e)
+            return None, "Role name already exists"
         except Exception as e:
             db.session.rollback()
-            return None, str(e)
+            return None, "Error creating role"
 
     @staticmethod
     def get_role(role_id: int) -> Optional[Role]:

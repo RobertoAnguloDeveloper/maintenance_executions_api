@@ -39,7 +39,7 @@ class EntityType(Enum):
     QUESTIONS = "questions"
     QUESTION_TYPES = "question_types"
     ANSWERS = "answers"
-    SUBMISSIONS = "submissions"
+    SUBMISSIONS = "form_submissions"
     ATTACHMENTS = "attachments"
     ENVIRONMENTS = "environments"
 

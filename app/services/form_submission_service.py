@@ -121,7 +121,6 @@ class FormSubmissionService:
                 if user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
                     # Can only see submissions in their environment
                     query = (query
-                        .join(User, User.id == Form.user_id)
                         .filter(User.environment_id == user.environment_id))
                 else:
                     # Regular users can only see their own submissions

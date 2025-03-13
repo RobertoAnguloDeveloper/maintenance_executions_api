@@ -76,7 +76,7 @@ def bulk_create_questions():
                 question_type = QuestionTypeController.get_question_type(
                     question.get('question_type_id')
                 )
-                if not question_type or question_type.environment_id != user.environment_id:
+                if not question_type:
                     return jsonify({
                         "error": "Unauthorized access to one or more question types"
                     }), 403

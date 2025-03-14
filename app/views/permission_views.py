@@ -25,7 +25,7 @@ def create_permission():
 
         for field in required_fields:
             if field not in data or not data[field]:
-                return jsonify({"error": "Name is required"}), 400
+                return jsonify({"error": f"{field} is required"}), 400
 
         # Validate permission name format
         if not data['name'].islower() or ' ' in data['name']:
@@ -33,7 +33,7 @@ def create_permission():
                 "error": "Permission name must be lowercase without spaces"
             }), 400
 
-        new_permission, error = PermissionController.create_permission(data['name'], description)
+        new_permission, error = PermissionController.create_permission(data['name'],data['action'],data['entity'], description)
         if error:
             return jsonify({"error": error}), 400
 

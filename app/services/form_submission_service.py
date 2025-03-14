@@ -199,7 +199,6 @@ class FormSubmissionService:
     def get_submissions_by_user(username: str, filters: Dict = None) -> List[FormSubmission]:
         """
         Get all submissions for a specific user with optional filtering.
-        
         Args:
             username: Username of the submitter
             filters: Optional dictionary containing filters

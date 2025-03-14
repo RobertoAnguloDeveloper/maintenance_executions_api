@@ -128,8 +128,7 @@ def get_questions_by_type_id(type_id):
         current_user = get_jwt_identity()
         user = AuthService.get_current_user(current_user)
 
-        if user.role.is_super_user:
-            questions = QuestionController.get_questions_by_type(type_id)
+        questions = QuestionController.get_questions_by_type(type_id)
 
         return jsonify([q.to_dict() for q in questions]), 200
 

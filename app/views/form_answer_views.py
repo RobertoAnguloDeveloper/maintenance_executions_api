@@ -132,16 +132,7 @@ def get_all_form_answers():
         current_user = get_jwt_identity()
         user = AuthService.get_current_user(current_user)
                 
-        # Use RoleType constants instead of Role enum
-        if user.role.name == RoleType.TECHNICIAN:
-            # Technicians can only see public forms
-            return None
-        elif user.role.name in [RoleType.SUPERVISOR, RoleType.SITE_MANAGER]:
-            # Supervisors and Site Managers see forms in their environment
-            return None
-        else:
-            # Admins see all forms
-            form_answers = FormAnswerController.get_all_form_answers()
+        form_answers = FormAnswerController.get_all_form_answers()
         
         return jsonify([form_answers.to_dict() for form_answers in form_answers]), 200
         

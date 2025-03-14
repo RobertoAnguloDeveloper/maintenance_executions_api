@@ -164,6 +164,65 @@ class FormSubmissionController:
         except Exception as e:
             logger.error(f"Error getting submission answers: {str(e)}")
             return [], str(e)
+        
+    @staticmethod
+    def update_submission(
+        submission_id: int,
+        current_user: str,
+        user_role: str,
+        update_data: Dict,
+        answers_data: Optional[List[Dict]] = None
+    ) -> Tuple[Optional[FormSubmission], Optional[str]]:
+        """
+        Update an existing form submission with validation and access control
+        
+        Args:
+            submission_id: ID of the submission to update
+            current_user: Username of current user
+            user_role: Role of current user
+            update_data: Dictionary of fields to update
+            answers_data: Optional list of updated answer data
+            
+        Returns:
+            tuple: (Updated FormSubmission or None, Error message or None)
+        """
+        try:
+            # Verify submission exists
+            submission = FormSubmissionService.get_submission(submission_id)
+            if not submission:
+                return None, "Submission not found"
+
+            # Access control
+            if user_role != RoleType.ADMIN:
+                if user_role in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
+                    if submission.form.creator.environment_id != submission.form.creator.environment_id:
+                        return None, "Unauthorized access"
+                elif submission.submitted_by != current_user:
+                    return None, "Can only update own submissions"
+
+                # Check submission age for non-admin users
+                submission_age = datetime.utcnow() - submission.submitted_at
+                if submission_age.days > 7:  # Configurable timeframe
+                    return None, "Cannot update submissions older than 7 days"
+
+            # Get upload path for signatures
+            upload_path = current_app.config.get('UPLOAD_FOLDER')
+
+            submission, error = FormSubmissionService.update_submission(
+                submission_id=submission_id,
+                update_data=update_data,
+                answers_data=answers_data,
+                upload_path=upload_path
+            )
+            
+            if error:
+                return None, error
+
+            return submission, None
+
+        except Exception as e:
+            logger.error(f"Error in update_submission controller: {str(e)}")
+            return None, str(e)
 
     @staticmethod
     def delete_submission(

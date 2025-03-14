@@ -175,6 +175,50 @@ def get_my_submissions():
     except Exception as e:
         logger.error(f"Error getting user submissions: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
+    
+@form_submission_bp.route('/<int:submission_id>', methods=['PUT'])
+@jwt_required()
+@PermissionManager.require_permission(action="update", entity_type=EntityType.SUBMISSIONS)
+def update_submission(submission_id):
+    """Update an existing form submission"""
+    try:
+        current_user = get_jwt_identity()
+        user = AuthService.get_current_user(current_user)
+
+        # Handle multipart/form-data for signatures
+        data = request.form.to_dict() if request.form else request.get_json()
+        files = request.files.to_dict()
+
+        if not data:
+            return jsonify({"error": "No update data provided"}), 400
+
+        # Process answers data
+        answers_data = data.get('answers', [])
+        for answer in answers_data:
+            if answer.get('is_signature'):
+                file_key = f"signature_{answer.get('question_id')}"
+                if file_key in files:
+                    answer['signature_file'] = files[file_key]
+
+        submission, error = FormSubmissionController.update_submission(
+            submission_id=submission_id,
+            current_user=current_user,
+            user_role=user.role.name,
+            update_data=data,
+            answers_data=answers_data
+        )
+
+        if error:
+            return jsonify({"error": error}), 400
+
+        return jsonify({
+            "message": "Form submission updated successfully",
+            "submission": submission.to_dict()
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error updating submission {submission_id}: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
 
 @form_submission_bp.route('/<int:submission_id>', methods=['DELETE'])
 @jwt_required()

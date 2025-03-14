@@ -229,6 +229,123 @@ class FormSubmissionService:
         except Exception as e:
             logger.error(f"Error getting submissions for user {username}: {str(e)}")
             return []
+        
+    @staticmethod
+    def update_submission(
+        submission_id: int,
+        update_data: Dict,
+        answers_data: List[Dict] = None,
+        upload_path: Optional[str] = None
+    ) -> Tuple[Optional[FormSubmission], Optional[str]]:
+        """
+        Update an existing form submission with answers and handle signatures
+        
+        Args:
+            submission_id: ID of the submission to update
+            update_data: Dictionary of fields to update
+            answers_data: List of answer data dictionaries
+            upload_path: Base path for file uploads
+            
+        Returns:
+            tuple: (Updated FormSubmission object or None, Error message or None)
+        """
+        try:
+            # Retrieve the submission
+            submission = FormSubmission.query.filter_by(id=submission_id, is_deleted=False).first()
+            if not submission:
+                return None, "Submission not found"
+
+            # Update submission timestamp
+            submission.updated_at = datetime.utcnow()
+            
+            # Process status update if provided
+            if 'status' in update_data:
+                submission.status = update_data['status']
+
+            # Update answers if provided
+            if answers_data:
+                # Keep track of processed answer IDs
+                processed_answer_ids = []
+                
+                for answer_data in answers_data:
+                    answer_id = answer_data.get('id')
+                    
+                    if answer_id:
+                        # Update existing answer
+                        answer = AnswerSubmitted.query.filter_by(
+                            id=answer_id,
+                            form_submission_id=submission_id,
+                            is_deleted=False
+                        ).first()
+                        
+                        if answer:
+                            answer.answer = answer_data.get('answer_text', answer.answer)
+                            answer.updated_at = datetime.utcnow()
+                            processed_answer_ids.append(answer_id)
+                    else:
+                        # Create new answer
+                        answer = AnswerSubmitted(
+                            form_submission_id=submission_id,
+                            question=answer_data['question_text'],
+                            answer=answer_data['answer_text']
+                        )
+                        db.session.add(answer)
+                        db.session.flush()
+                        processed_answer_ids.append(answer.id)
+                    
+                    # Handle signature if required
+                    if answer_data.get('is_signature') and answer_data.get('signature_file'):
+                        if not upload_path:
+                            return None, "Upload path not provided for signature file"
+
+                        # Create signature directory
+                        signature_dir = os.path.join(upload_path, 'signatures', str(submission_id))
+                        os.makedirs(signature_dir, exist_ok=True)
+
+                        # Save signature file
+                        signature_file = answer_data['signature_file']
+                        filename = f"signature_{datetime.now().strftime('%Y%m%d_%H%M%S')}{os.path.splitext(signature_file.filename)[1]}"
+                        file_path = os.path.join('signatures', str(submission_id), filename)
+                        signature_file.save(os.path.join(upload_path, file_path))
+
+                        # Check if there's an existing signature attachment
+                        existing_signature = Attachment.query.filter_by(
+                            form_submission_id=submission_id,
+                            is_signature=True,
+                            is_deleted=False
+                        ).first()
+                        
+                        if existing_signature:
+                            # Soft delete the old signature
+                            existing_signature.soft_delete()
+                        
+                        # Create new attachment record
+                        attachment = Attachment(
+                            form_submission_id=submission_id,
+                            file_type=signature_file.content_type,
+                            file_path=file_path,
+                            is_signature=True
+                        )
+                        db.session.add(attachment)
+                
+                # If deletion flag is provided in update_data, handle removal of unprocessed answers
+                if update_data.get('delete_unprocessed_answers'):
+                    unprocessed_answers = AnswerSubmitted.query.filter(
+                        AnswerSubmitted.form_submission_id == submission_id,
+                        AnswerSubmitted.is_deleted == False,
+                        ~AnswerSubmitted.id.in_(processed_answer_ids)
+                    ).all()
+                    
+                    for answer in unprocessed_answers:
+                        answer.soft_delete()
+
+            db.session.commit()
+            return submission, None
+
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"Error updating form submission: {str(e)}")
+            return None, str(e)
 
     @staticmethod
     def delete_submission(submission_id: int) -> Tuple[bool, Optional[str]]:

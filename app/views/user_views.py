@@ -202,16 +202,35 @@ def search_users():
 
 @user_bp.route('/<int:user_id>', methods=['GET'])
 @jwt_required()
+@PermissionManager.require_permission(action="view", entity_type=EntityType.USERS)
 def get_user(user_id):
-    user = UserController.get_user(user_id)
-    if user:
-        return jsonify({
-            "id": user.id,
-            "username": user.username,
-            "role_id": user.role_id,
-            "environment_id": user.environment_id
-        }), 200
-    return jsonify({"error": "User not found"}), 404
+    """Get user with complete details"""
+    try:
+        current_user = get_jwt_identity()
+        current_user_obj = AuthService.get_current_user(current_user)
+        
+        user = UserController.get_user(user_id)
+        if not user:
+            return jsonify({"error": "User not found"}), 404
+            
+        # Role-based access control
+        if not current_user_obj.role.is_super_user:
+            # Can only view users in same environment
+            if user.environment_id != current_user_obj.environment_id:
+                return jsonify({"error": "Cannot view users from other environments"}), 403
+                
+        # Include details based on role
+        include_details = True
+        include_deleted = current_user_obj.role.is_super_user
+        
+        return jsonify(user.to_dict(
+            include_details=include_details,
+            include_deleted=include_deleted
+        )), 200
+            
+    except Exception as e:
+        logger.error(f"Error getting user {user_id}: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
 
 @user_bp.route('/<int:user_id>', methods=['PUT'])
 @jwt_required()

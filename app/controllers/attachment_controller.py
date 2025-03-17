@@ -7,6 +7,7 @@ import os
 
 from app.models.attachment import Attachment
 from app.services.attachment_service import AttachmentService
+from app.services.auth_service import AuthService
 from app.services.form_submission_service import FormSubmissionService
 from app.utils.permission_manager import RoleType
 
@@ -120,7 +121,7 @@ class AttachmentController:
         Get all attachments with role-based access control
         
         Args:
-            current_user: Username of current user
+            current_user: Username of current user (string)
             user_role: Role of current user
             filters: Optional filters
             
@@ -131,11 +132,16 @@ class AttachmentController:
             # Initialize filters if None
             filters = filters or {}
             
-            # Apply role-based filtering
+            # Apply role-based filterin
             if user_role != RoleType.ADMIN:
                 if user_role in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                    # Filter by environment
-                    filters['environment_id'] = current_user.environment_id
+                    # Get user object first - current_user is a username string, not a User object
+                    user_obj = AuthService.get_current_user(current_user)
+                    if not user_obj:
+                        return [], "User not found"
+                    
+                    # Filter by environment using the user object
+                    filters['environment_id'] = user_obj.environment_id
                 else:
                     # Regular users can only see their own submissions
                     filters['submitted_by'] = current_user

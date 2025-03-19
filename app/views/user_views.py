@@ -133,6 +133,71 @@ def get_all_users():
         logger.error(f"Error in get_all_users: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
     
+@user_bp.route('/users-compact-list', methods=['GET'])
+@jwt_required()
+@PermissionManager.require_permission(action="view", entity_type=EntityType.USERS)
+def get_all_users_compact_list():
+    """Get all users with details but without permissions"""
+    try:
+        current_user = get_jwt_identity()
+        current_user_obj = AuthService.get_current_user(current_user)
+        if not current_user_obj:
+            return jsonify({"error": "User not found"}), 404
+
+        # Only admins can see deleted users
+        include_deleted = (current_user_obj.role.is_super_user and 
+                         request.args.get('include_deleted', '').lower() == 'true')
+
+        try:
+            if current_user_obj.role.is_super_user:
+                users = UserController.get_users_compact_list(include_deleted=include_deleted)
+            else:
+                # Non-admin users only see active users in their environment
+                users = UserController.get_users_by_environment(current_user_obj.environment_id)
+                
+            # Create compact representation manually
+            compact_users = []
+            for user in users:
+                active_role = user.role if user.role and not user.role.is_deleted else None
+                active_environment = user.environment if user.environment and not user.environment.is_deleted else None
+                
+                user_dict = {
+                    'id': user.id,
+                    'username': user.username,
+                    'first_name': user.first_name,
+                    'last_name': user.last_name,
+                    'full_name': f"{user.first_name} {user.last_name}",
+                    'email': user.email,
+                    'contact_number': user.contact_number,
+                    'role': {
+                        'id': active_role.id if active_role else None,
+                        'name': active_role.name if active_role else None,
+                        'description': active_role.description if active_role else None,
+                        'is_super_user': active_role.is_super_user if active_role else None
+                    },
+                    'environment': {
+                        'id': active_environment.id if active_environment else None,
+                        'name': active_environment.name if active_environment else None,
+                        'description': active_environment.description if active_environment else None
+                    }
+                }
+                
+                # Include deleted status for admins
+                if current_user_obj.role.is_super_user:
+                    user_dict['is_deleted'] = user.is_deleted
+                
+                compact_users.append(user_dict)
+                
+            return jsonify(compact_users), 200
+
+        except Exception as e:
+            logger.error(f"Database error while fetching users: {str(e)}")
+            return jsonify({"error": f"Database error: {str(e)}"}), 500
+
+    except Exception as e:
+        logger.error(f"Error in get_all_users_compact_list: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
+    
 @user_bp.route('/byRole/<int:role_id>', methods=['GET'])
 @jwt_required()
 @PermissionManager.require_permission(action="view", entity_type=EntityType.USERS)

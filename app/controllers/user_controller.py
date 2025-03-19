@@ -21,6 +21,11 @@ class UserController:
         return UserService.get_all_users_with_relations(include_deleted=include_deleted)
     
     @staticmethod
+    def get_users_compact_list(include_deleted=False):
+        """Get all users for compact list (without permissions)"""
+        return UserService.get_users_compact_list(include_deleted=include_deleted)
+    
+    @staticmethod
     def search_users(id=None, username=None, role_id=None, environment_id=None):
         return UserService.search_users(id, username, role_id, environment_id)
 

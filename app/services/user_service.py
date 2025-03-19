@@ -85,6 +85,23 @@ class UserService(BaseService):
         except Exception as e:
             logger.error(f"Database error getting users: {str(e)}", exc_info=True)
             raise
+        
+    @staticmethod
+    def get_users_compact_list(include_deleted=False):
+        """Get all users for compact list view (without permissions)"""
+        try:
+            query = User.query.options(
+                joinedload(User.role),
+                joinedload(User.environment)
+            )
+            
+            if not include_deleted:
+                query = query.filter(User.is_deleted == False)
+                
+            return query.order_by(User.username).all()
+        except Exception as e:
+            logger.error(f"Database error getting compact users list: {str(e)}", exc_info=True)
+            raise
     
     @staticmethod
     def get_all_users_with_relations(include_deleted=False):

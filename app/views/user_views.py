@@ -133,7 +133,7 @@ def get_all_users():
         logger.error(f"Error in get_all_users: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
     
-@user_bp.route('/users-compact-list', methods=['GET'])
+@user_bp.route('/compact-list', methods=['GET'])
 @jwt_required()
 @PermissionManager.require_permission(action="view", entity_type=EntityType.USERS)
 def get_all_users_compact_list():

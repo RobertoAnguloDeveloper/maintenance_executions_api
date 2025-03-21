@@ -89,7 +89,7 @@ def get_all_submissions():
         logger.error(f"Error getting submissions: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
     
-@form_submission_bp.route('/form-submissions-compact-list', methods=['GET'])
+@form_submission_bp.route('/compact-list', methods=['GET'])
 @jwt_required()
 @PermissionManager.require_permission(action="view", entity_type=EntityType.SUBMISSIONS)
 def get_all_submissions_compact_list():

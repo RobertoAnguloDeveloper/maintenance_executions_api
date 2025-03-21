@@ -167,6 +167,99 @@ class FormSubmissionService:
         except Exception as e:
             logger.error(f"Error getting submissions: {str(e)}")
             return []
+        
+    @staticmethod
+    def get_all_submissions_compact(user: User, filters: Optional[Dict] = None) -> List[Dict]:
+        """
+        Get all form submissions in a compact format with minimal information.
+        
+        Args:
+            user: Current user object for role-based access
+            filters: Optional dictionary containing filters:
+                - form_id: Filter by specific form
+                - date_range: Dict with 'start' and 'end' dates
+                - environment_id: Filter by environment
+                - submitted_by: Filter by submitter username
+                
+        Returns:
+            List[Dict]: List of compact form submissions
+        """
+        try:
+            # Base query with proper joins and filters
+            query = (FormSubmission.query
+                .join(Form)
+                .filter(
+                    FormSubmission.is_deleted == False
+                ))
+            
+            # Apply role-based filtering
+            if not user.role.is_super_user:
+                if user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
+                    # Can only see submissions in their environment
+                    query = (query
+                        .join(User, User.id == Form.user_id)
+                        .filter(User.environment_id == user.environment_id))
+                else:
+                    # Regular users can only see their own submissions
+                    query = query.filter(FormSubmission.submitted_by == user.username)
+
+            # Apply optional filters
+            if filters:
+                if 'form_id' in filters:
+                    query = query.filter(FormSubmission.form_id == filters['form_id'])
+                    
+                if 'environment_id' in filters:
+                    query = (query
+                        .join(User, User.id == Form.user_id)
+                        .filter(User.environment_id == filters['environment_id']))
+                        
+                if 'submitted_by' in filters:
+                    query = query.filter(
+                        FormSubmission.submitted_by == filters['submitted_by']
+                    )
+                    
+                if 'date_range' in filters:
+                    date_range = filters['date_range']
+                    if date_range.get('start'):
+                        query = query.filter(
+                            FormSubmission.submitted_at >= date_range['start']
+                        )
+                    if date_range.get('end'):
+                        query = query.filter(
+                            FormSubmission.submitted_at <= date_range['end']
+                        )
+
+            # Add eager loading for related data (but only what we need)
+            query = (query.options(
+                joinedload(FormSubmission.form),
+                joinedload(FormSubmission.answers_submitted),
+                joinedload(FormSubmission.attachments)
+            ))
+
+            # Order by submission date, most recent first
+            submissions = query.order_by(FormSubmission.submitted_at.desc()).all()
+            
+            # Transform to compact format
+            compact_submissions = []
+            for submission in submissions:
+                compact_submissions.append({
+                    'id': submission.id,
+                    'form_id': submission.form_id,
+                    'form': {
+                        'id': submission.form.id,
+                        'title': submission.form.title
+                    } if submission.form else None,
+                    'submitted_at': submission.submitted_at.isoformat() if submission.submitted_at else None,
+                    'submitted_by': submission.submitted_by,
+                    'answers_count': len([answer for answer in submission.answers_submitted if not answer.is_deleted]),
+                    'attachments_count': len([attachment for attachment in submission.attachments if not attachment.is_deleted])
+                })
+                
+            return compact_submissions
+
+        except Exception as e:
+            logger.error(f"Error getting compact submissions: {str(e)}")
+            return []
 
     @staticmethod
     def get_submission(submission_id: int) -> Optional[FormSubmission]:

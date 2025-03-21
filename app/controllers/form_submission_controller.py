@@ -87,6 +87,38 @@ class FormSubmissionController:
         except Exception as e:
             logger.error(f"Error in get_all_submissions controller: {str(e)}")
             return []
+        
+    @staticmethod
+    def get_all_submissions_compact(
+        user: User,
+        filters: Dict = None
+    ) -> List[Dict]:
+        """
+        Get a compact list of all submissions with minimal information
+        
+        Args:
+            user: Current user object
+            filters: Optional filters dictionary
+            
+        Returns:
+            List[Dict]: List of compact form submissions
+        """
+        try:
+            if not filters:
+                filters = {}
+
+            # Apply role-based filtering
+            if not user.role.is_super_user:
+                if user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
+                    filters['environment_id'] = user.environment_id
+                else:
+                    filters['submitted_by'] = user.username
+
+            return FormSubmissionService.get_all_submissions_compact(user, filters)
+
+        except Exception as e:
+            logger.error(f"Error in get_all_submissions_compact controller: {str(e)}")
+            return []
 
     @staticmethod
     def get_submission(submission_id: int) -> Optional[FormSubmission]:

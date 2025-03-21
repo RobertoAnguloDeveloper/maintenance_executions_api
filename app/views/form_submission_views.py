@@ -88,6 +88,45 @@ def get_all_submissions():
     except Exception as e:
         logger.error(f"Error getting submissions: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
+    
+@form_submission_bp.route('/form-submissions-compact-list', methods=['GET'])
+@jwt_required()
+@PermissionManager.require_permission(action="view", entity_type=EntityType.SUBMISSIONS)
+def get_all_submissions_compact_list():
+    """Get a compact list of submissions with minimal information"""
+    try:
+        current_user = get_jwt_identity()
+        user = AuthService.get_current_user(current_user)
+
+        # Build filters from query parameters
+        filters = {}
+        
+        # Form filter
+        form_id = request.args.get('form_id', type=int)
+        if form_id:
+            filters['form_id'] = form_id
+
+        # Date range filters
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        if start_date and end_date:
+            filters['date_range'] = {
+                'start': start_date,
+                'end': end_date
+            }
+            
+        # Get submissions using the new compact service method
+        compact_submissions = FormSubmissionController.get_all_submissions_compact(user, filters)
+
+        return jsonify({
+            'total_count': len(compact_submissions),
+            'filters_applied': filters,
+            'submissions': compact_submissions
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error getting compact submissions list: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
 
 @form_submission_bp.route('/<int:submission_id>', methods=['GET'])
 @jwt_required()

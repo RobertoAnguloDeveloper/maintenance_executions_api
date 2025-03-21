@@ -115,7 +115,7 @@ def get_all_submissions_compact_list():
                 'end': end_date
             }
             
-        # Get submissions using the new compact service method
+        # Get compact submissions list
         compact_submissions = FormSubmissionController.get_all_submissions_compact(user, filters)
 
         return jsonify({

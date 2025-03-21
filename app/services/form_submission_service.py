@@ -182,7 +182,7 @@ class FormSubmissionService:
                 - submitted_by: Filter by submitter username
                 
         Returns:
-            List[Dict]: List of compact form submissions
+            List[Dict]: List of compact form submissions with specific field order
         """
         try:
             # Base query with proper joins and filters
@@ -229,7 +229,7 @@ class FormSubmissionService:
                             FormSubmission.submitted_at <= date_range['end']
                         )
 
-            # Add eager loading for related data (but only what we need)
+            # Add eager loading for related data
             query = (query.options(
                 joinedload(FormSubmission.form),
                 joinedload(FormSubmission.answers_submitted),
@@ -239,10 +239,11 @@ class FormSubmissionService:
             # Order by submission date, most recent first
             submissions = query.order_by(FormSubmission.submitted_at.desc()).all()
             
-            # Transform to compact format
+            # Transform to compact format with fields in exact order specified
             compact_submissions = []
             for submission in submissions:
-                compact_submissions.append({
+                # Create dict with keys in the exact order required
+                submission_dict = {
                     'id': submission.id,
                     'form_id': submission.form_id,
                     'form': {
@@ -253,7 +254,8 @@ class FormSubmissionService:
                     'submitted_by': submission.submitted_by,
                     'answers_count': len([answer for answer in submission.answers_submitted if not answer.is_deleted]),
                     'attachments_count': len([attachment for attachment in submission.attachments if not attachment.is_deleted])
-                })
+                }
+                compact_submissions.append(submission_dict)
                 
             return compact_submissions
 

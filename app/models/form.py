@@ -53,9 +53,6 @@ class Form(TimestampMixin, SoftDeleteMixin, db.Model):
         from app.models.form_submission import FormSubmission
         return FormSubmission.query.filter_by(form_id=str(self.id), is_deleted=False).count()
 
-
-    # app/models/form.py
-
     def _get_question_answers(self, form_question) -> List[Dict[str, Any]]:
         """
         Get possible answers for a specific form question through form_answers.

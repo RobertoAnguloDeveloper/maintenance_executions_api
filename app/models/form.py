@@ -73,6 +73,10 @@ class Form(TimestampMixin, SoftDeleteMixin, db.Model):
             ).filter_by(
                 form_question_id=form_question.id,
                 is_deleted=False  # Add soft delete filter
+            ).join(
+                Answer, FormAnswer.answer_id == Answer.id  # Join with Answer table
+            ).order_by(
+                Answer.id  # Order by Answer ID to maintain consistent order
             ).all()
 
             # Create a dictionary of unique answers based on answer_id
@@ -85,7 +89,8 @@ class Form(TimestampMixin, SoftDeleteMixin, db.Model):
                         'value': form_answer.answer.value
                     }
 
-            return list(unique_answers.values())
+            # Return a list of answers ordered by answer ID
+            return [unique_answers[answer_id] for answer_id in sorted(unique_answers.keys())]
 
         except Exception as e:
             logger.error(f"Error getting answers for question {form_question.id}: {str(e)}")

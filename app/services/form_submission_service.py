@@ -194,23 +194,21 @@ class FormSubmissionService:
             
             # Apply role-based filtering
             if not user.role.is_super_user:
-                if user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                    # Can only see submissions in their environment
-                    query = (query
-                        .join(User, User.id == Form.user_id)
-                        .filter(User.environment_id == user.environment_id))
-                else:
-                    # Regular users can only see their own submissions
+                if user.role.name == RoleType.TECHNICIAN:
+                    # Technicians can only see their own submissions
                     query = query.filter(FormSubmission.submitted_by == user.username)
-
+                # We don't apply environment filtering here directly for supervisors/managers
+                # It will be applied through the filters dictionary below
+            
             # Apply optional filters
             if filters:
                 if 'form_id' in filters:
                     query = query.filter(FormSubmission.form_id == filters['form_id'])
                     
                 if 'environment_id' in filters:
+                    # This is the correct way to filter by environment
                     query = (query
-                        .join(User, User.id == Form.user_id)
+                        .join(User, User.id == Form.user_id, isouter=True)
                         .filter(User.environment_id == filters['environment_id']))
                         
                 if 'submitted_by' in filters:

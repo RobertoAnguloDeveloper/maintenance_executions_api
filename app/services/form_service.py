@@ -88,6 +88,77 @@ class FormService(BaseService):
         except Exception as e:
             logger.error(f"Error in get_all_forms: {str(e)}")
             raise
+        
+    @staticmethod
+    def get_batch(page=1, per_page=50, **filters):
+        """
+        Get batch of forms with pagination directly from database
+        
+        Args:
+            page: Page number (starts from 1)
+            per_page: Number of items per page
+            **filters: Optional filters
+            
+        Returns:
+            tuple: (total_count, forms)
+        """
+        try:
+            # Calculate offset
+            offset = (page - 1) * per_page if page > 0 and per_page > 0 else 0
+            
+            # Build base query with joins for efficiency
+            query = Form.query.options(
+                joinedload(Form.creator).joinedload(User.environment),
+                joinedload(Form.form_questions).joinedload(FormQuestion.question).joinedload(Question.question_type)
+            )
+            
+            # Apply filters
+            include_deleted = filters.get('include_deleted', False)
+            if not include_deleted:
+                query = query.filter(Form.is_deleted == False)
+            
+            is_public = filters.get('is_public')
+            if is_public is not None:
+                query = query.filter(Form.is_public == is_public)
+                
+            user_id = filters.get('user_id')
+            if user_id:
+                query = query.filter(Form.user_id == user_id)
+                
+            environment_id = filters.get('environment_id')
+            if environment_id:
+                query = query.join(User, User.id == Form.user_id).filter(User.environment_id == environment_id)
+            
+            # Apply role-based access control
+            current_user = filters.get('current_user')
+            if current_user:
+                if not current_user.role.is_super_user:
+                    if current_user.role.name == RoleType.TECHNICIAN:
+                        # Technicians can only see public forms
+                        query = query.filter(Form.is_public == True)
+                    elif current_user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
+                        # Site managers and supervisors can see public forms and forms from their environment
+                        query = query.filter(
+                            db.or_(
+                                Form.is_public == True,
+                                Form.creator.has(User.environment_id == current_user.environment_id)
+                            )
+                        )
+            
+            # Get total count
+            total_count = query.count()
+            
+            # Apply pagination
+            forms = query.order_by(Form.id).offset(offset).limit(per_page).all()
+            
+            # Convert to dictionary representation
+            forms_data = [form.to_dict() for form in forms]
+            
+            return total_count, forms_data
+            
+        except Exception as e:
+            logger.error(f"Error in form batch pagination service: {str(e)}")
+            return 0, []
 
     @staticmethod
     def get_form(form_id: int) -> Optional[Form]:

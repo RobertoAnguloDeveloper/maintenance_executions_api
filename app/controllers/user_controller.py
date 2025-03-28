@@ -21,6 +21,21 @@ class UserController:
         return UserService.get_all_users_with_relations(include_deleted=include_deleted)
     
     @staticmethod
+    def get_batch(page=1, per_page=50, **filters):
+        """
+        Get batch of users with pagination
+        
+        Args:
+            page: Page number (starts from 1)
+            per_page: Number of items per page
+            **filters: Optional filters
+            
+        Returns:
+            tuple: (total_count, users)
+        """
+        return UserService.get_batch(page, per_page, **filters)
+    
+    @staticmethod
     def get_users_compact_list(include_deleted=False):
         """Get all users for compact list (without permissions)"""
         return UserService.get_users_compact_list(include_deleted=include_deleted)

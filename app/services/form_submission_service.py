@@ -260,6 +260,86 @@ class FormSubmissionService:
         except Exception as e:
             logger.error(f"Error getting compact submissions: {str(e)}")
             return []
+        
+    @staticmethod
+    def get_batch(page=1, per_page=50, **filters):
+        """
+        Get batch of form submissions with pagination directly from database
+        
+        Args:
+            page: Page number (starts from 1)
+            per_page: Number of items per page
+            **filters: Optional filters
+            
+        Returns:
+            tuple: (total_count, form_submissions)
+        """
+        try:
+            # Calculate offset
+            offset = (page - 1) * per_page if page > 0 and per_page > 0 else 0
+            
+            # Build base query with joins for efficiency
+            query = FormSubmission.query.options(
+                joinedload(FormSubmission.form),
+                joinedload(FormSubmission.answers_submitted),
+                joinedload(FormSubmission.attachments)
+            )
+            
+            # Apply filters
+            include_deleted = filters.get('include_deleted', False)
+            if not include_deleted:
+                query = query.filter(FormSubmission.is_deleted == False)
+            
+            form_id = filters.get('form_id')
+            if form_id:
+                query = query.filter(FormSubmission.form_id == form_id)
+                
+            submitted_by = filters.get('submitted_by')
+            if submitted_by:
+                query = query.filter(FormSubmission.submitted_by == submitted_by)
+                
+            date_range = filters.get('date_range')
+            if date_range:
+                if date_range.get('start'):
+                    query = query.filter(FormSubmission.submitted_at >= date_range['start'])
+                if date_range.get('end'):
+                    query = query.filter(FormSubmission.submitted_at <= date_range['end'])
+            
+            # Apply role-based access control
+            current_user = filters.get('current_user')
+            if current_user:
+                if not current_user.role.is_super_user:
+                    if current_user.role.name == RoleType.TECHNICIAN:
+                        # Technicians can only see their own submissions
+                        query = query.filter(FormSubmission.submitted_by == current_user.username)
+                    elif current_user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
+                        # Site managers and supervisors can see submissions in their environment
+                        query = query.join(
+                            Form, 
+                            Form.id == FormSubmission.form_id
+                        ).join(
+                            User, 
+                            User.id == Form.user_id
+                        ).filter(
+                            User.environment_id == current_user.environment_id
+                        )
+            
+            # Get total count
+            total_count = query.count()
+            
+            # Apply pagination
+            form_submissions = query.order_by(
+                FormSubmission.submitted_at.desc()
+            ).offset(offset).limit(per_page).all()
+            
+            # Convert to dictionary representation
+            form_submissions_data = [fs.to_dict() for fs in form_submissions]
+            
+            return total_count, form_submissions_data
+            
+        except Exception as e:
+            logger.error(f"Error in form submission batch pagination service: {str(e)}")
+            return 0, []
 
     @staticmethod
     def get_submission(submission_id: int) -> Optional[FormSubmission]:

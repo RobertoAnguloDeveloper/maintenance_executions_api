@@ -174,6 +174,78 @@ class FormAnswerService:
             query = query.filter(FormAnswer.is_deleted == False)
             
         return query.order_by(FormAnswer.id).all()
+    
+    @staticmethod
+    def get_batch(page=1, per_page=50, **filters):
+        """
+        Get batch of form answers with pagination directly from database
+        
+        Args:
+            page: Page number (starts from 1)
+            per_page: Number of items per page
+            **filters: Optional filters
+            
+        Returns:
+            tuple: (total_count, form_answers)
+        """
+        try:
+            # Calculate offset
+            offset = (page - 1) * per_page if page > 0 and per_page > 0 else 0
+            
+            # Build base query with joins for efficiency
+            query = FormAnswer.query.options(
+                joinedload(FormAnswer.form_question).joinedload(FormQuestion.form),
+                joinedload(FormAnswer.form_question).joinedload(FormQuestion.question),
+                joinedload(FormAnswer.answer)
+            )
+            
+            # Apply filters
+            include_deleted = filters.get('include_deleted', False)
+            if not include_deleted:
+                query = query.filter(FormAnswer.is_deleted == False)
+            
+            form_question_id = filters.get('form_question_id')
+            if form_question_id:
+                query = query.filter(FormAnswer.form_question_id == form_question_id)
+                
+            answer_id = filters.get('answer_id')
+            if answer_id:
+                query = query.filter(FormAnswer.answer_id == answer_id)
+            
+            # Apply role-based access control
+            current_user = filters.get('current_user')
+            if current_user and not current_user.role.is_super_user:
+                # Non-admin users can only see form answers from their environment
+                query = query.join(
+                    FormQuestion, 
+                    FormQuestion.id == FormAnswer.form_question_id
+                ).join(
+                    Form, 
+                    Form.id == FormQuestion.form_id
+                ).join(
+                    User, 
+                    User.id == Form.user_id
+                ).filter(
+                    db.or_(
+                        Form.is_public == True,
+                        User.environment_id == current_user.environment_id
+                    )
+                )
+            
+            # Get total count
+            total_count = query.count()
+            
+            # Apply pagination
+            form_answers = query.order_by(FormAnswer.id).offset(offset).limit(per_page).all()
+            
+            # Convert to dictionary representation
+            form_answers_data = [fa.to_dict() for fa in form_answers]
+            
+            return total_count, form_answers_data
+            
+        except Exception as e:
+            logger.error(f"Error in form answer batch pagination service: {str(e)}")
+            return 0, []
 
     @staticmethod
     def get_form_answer(form_answer_id: int) -> Optional[FormAnswer]:

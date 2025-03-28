@@ -23,6 +23,57 @@ class RolePermissionService(BaseService):
         return RolePermission.query.filter_by(is_deleted=False).all()
     
     @staticmethod
+    def get_batch(page=1, per_page=50, **filters):
+        """
+        Get batch of role permissions with pagination directly from database
+        
+        Args:
+            page: Page number (starts from 1)
+            per_page: Number of items per page
+            **filters: Optional filters
+            
+        Returns:
+            tuple: (total_count, role_permissions)
+        """
+        try:
+            # Calculate offset
+            offset = (page - 1) * per_page if page > 0 and per_page > 0 else 0
+            
+            # Build base query with joins for efficiency
+            query = RolePermission.query.options(
+                joinedload(RolePermission.role),
+                joinedload(RolePermission.permission)
+            )
+            
+            # Apply filters
+            include_deleted = filters.get('include_deleted', False)
+            if not include_deleted:
+                query = query.filter(RolePermission.is_deleted == False)
+            
+            role_id = filters.get('role_id')
+            if role_id:
+                query = query.filter(RolePermission.role_id == role_id)
+                
+            permission_id = filters.get('permission_id')
+            if permission_id:
+                query = query.filter(RolePermission.permission_id == permission_id)
+            
+            # Get total count
+            total_count = query.count()
+            
+            # Apply pagination
+            role_permissions = query.order_by(RolePermission.id).offset(offset).limit(per_page).all()
+            
+            # Convert to dictionary representation
+            role_permissions_data = [rp.to_dict() for rp in role_permissions]
+            
+            return total_count, role_permissions_data
+            
+        except Exception as e:
+            logger.error(f"Error in role permission batch pagination service: {str(e)}")
+            return 0, []
+    
+    @staticmethod
     def get_roles_by_permission(permission_id: int) -> Tuple[Optional[Permission], Optional[List[Role]]]:
         """
         Get all roles associated with a specific permission.

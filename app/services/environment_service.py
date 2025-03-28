@@ -69,6 +69,59 @@ class EnvironmentService(BaseService):
         except Exception as e:
             logger.error(f"Database error getting environments: {str(e)}", exc_info=True)
             raise
+        
+    @staticmethod
+    def get_batch(page=1, per_page=50, **filters):
+        """
+        Get batch of environments with pagination directly from database
+        
+        Args:
+            page: Page number (starts from 1)
+            per_page: Number of items per page
+            **filters: Optional filters
+            
+        Returns:
+            tuple: (total_count, environments)
+        """
+        try:
+            # Calculate offset
+            offset = (page - 1) * per_page if page > 0 and per_page > 0 else 0
+            
+            # Build base query with joins for efficiency
+            query = Environment.query.options(
+                joinedload(Environment.users)
+            )
+            
+            # Apply filters
+            include_deleted = filters.get('include_deleted', False)
+            if not include_deleted:
+                query = query.filter(Environment.is_deleted == False)
+            
+            # Apply role-based access control
+            current_user = filters.get('current_user')
+            if current_user and not current_user.role.is_super_user:
+                # Non-admin users can only see their own environment
+                query = query.filter(Environment.id == current_user.environment_id)
+            
+            # Get total count
+            total_count = query.count()
+            
+            # Apply pagination
+            environments = query.order_by(Environment.id).offset(offset).limit(per_page).all()
+            
+            # Convert to dictionary representation
+            environments_data = [
+                env.to_dict(
+                    include_details=True, 
+                    include_deleted=include_deleted
+                ) for env in environments
+            ]
+            
+            return total_count, environments_data
+            
+        except Exception as e:
+            logger.error(f"Error in environment batch pagination service: {str(e)}")
+            return 0, []
 
     @staticmethod
     def update_environment(environment_id, **kwargs):

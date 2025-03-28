@@ -16,6 +16,21 @@ class RolePermissionController:
         return RolePermissionService.get_all_role_permissions()
     
     @staticmethod
+    def get_batch(page=1, per_page=50, **filters):
+        """
+        Get batch of role permissions with pagination
+        
+        Args:
+            page: Page number (starts from 1)
+            per_page: Number of items per page
+            **filters: Optional filters
+            
+        Returns:
+            tuple: (total_count, role_permissions)
+        """
+        return RolePermissionService.get_batch(page, per_page, **filters)
+    
+    @staticmethod
     def get_roles_by_permission(permission_id: int) -> Tuple[Optional[Dict], Optional[List[Dict]]]:
         """
         Get all roles associated with a specific permission.

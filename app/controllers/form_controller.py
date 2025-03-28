@@ -70,6 +70,21 @@ class FormController:
         except Exception as e:
             logger.error(f"Error in get_all_forms controller: {str(e)}")
             return []
+        
+    @staticmethod
+    def get_batch(page=1, per_page=50, **filters):
+        """
+        Get batch of forms with pagination
+        
+        Args:
+            page: Page number (starts from 1)
+            per_page: Number of items per page
+            **filters: Optional filters
+            
+        Returns:
+            tuple: (total_count, forms)
+        """
+        return FormService.get_batch(page, per_page, **filters)
 
     @staticmethod
     def update_form(form_id: int, **kwargs) -> Dict[str, Any]:

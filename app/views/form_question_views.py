@@ -115,6 +115,55 @@ def get_all_form_questions():
             "error": "Internal server error",
             "details": str(e)
         }), 500
+        
+@form_question_bp.route('/batch', methods=['GET'])
+@jwt_required()
+@PermissionManager.require_permission(action="view", entity_type=EntityType.FORMS)
+def get_batch_form_questions():
+    """Get batch of form questions with pagination"""
+    try:
+        # Get pagination parameters
+        page = request.args.get('page', type=int, default=1)
+        per_page = request.args.get('per_page', type=int, default=50)
+        
+        # Get filter parameters
+        include_deleted = request.args.get('include_deleted', '').lower() == 'true'
+        form_id = request.args.get('form_id', type=int)
+        question_id = request.args.get('question_id', type=int)
+        
+        # Apply role-based access control
+        current_user = get_jwt_identity()
+        user = AuthService.get_current_user(current_user)
+        
+        # Call controller method with pagination
+        total_count, form_questions = FormQuestionController.get_batch(
+            page=page,
+            per_page=per_page,
+            include_deleted=include_deleted,
+            form_id=form_id,
+            question_id=question_id,
+            current_user=user
+        )
+        
+        # Calculate total pages
+        total_pages = (total_count + per_page - 1) // per_page if per_page > 0 else 0
+        
+        return jsonify({
+            "metadata": {
+                "total_items": total_count,
+                "total_pages": total_pages,
+                "current_page": page,
+                "per_page": per_page,
+            },
+            "items": form_questions
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error getting batch of form questions: {str(e)}")
+        return jsonify({
+            "error": "Internal server error",
+            "details": str(e)
+        }), 500
 
 @form_question_bp.route('/form/<int:form_id>', methods=['GET'])
 @jwt_required()

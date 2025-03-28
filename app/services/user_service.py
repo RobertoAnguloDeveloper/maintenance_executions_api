@@ -87,6 +87,62 @@ class UserService(BaseService):
             raise
         
     @staticmethod
+    def get_batch(page=1, per_page=50, **filters):
+        """
+        Get batch of users with pagination directly from database
+        
+        Args:
+            page: Page number (starts from 1)
+            per_page: Number of items per page
+            **filters: Optional filters
+            
+        Returns:
+            tuple: (total_count, users)
+        """
+        try:
+            # Calculate offset
+            offset = (page - 1) * per_page if page > 0 and per_page > 0 else 0
+            
+            # Build base query with joins for efficiency
+            query = User.query.options(
+                joinedload(User.role),
+                joinedload(User.environment)
+            )
+            
+            # Apply filters
+            include_deleted = filters.get('include_deleted', False)
+            if not include_deleted:
+                query = query.filter(User.is_deleted == False)
+            
+            role_id = filters.get('role_id')
+            if role_id:
+                query = query.filter(User.role_id == role_id)
+                
+            environment_id = filters.get('environment_id')
+            if environment_id:
+                query = query.filter(User.environment_id == environment_id)
+            
+            # Get total count
+            total_count = query.count()
+            
+            # Apply pagination
+            users = query.order_by(User.id).offset(offset).limit(per_page).all()
+            
+            # Convert to dictionary representation
+            users_data = [
+                user.to_dict(
+                    include_details=True, 
+                    include_deleted=include_deleted
+                ) for user in users
+            ]
+            
+            return total_count, users_data
+            
+        except Exception as e:
+            logger.error(f"Error in user batch pagination service: {str(e)}")
+            return 0, []
+        
+    @staticmethod
     def get_users_compact_list(include_deleted=False):
         """Get all users for compact list view (without permissions)"""
         try:

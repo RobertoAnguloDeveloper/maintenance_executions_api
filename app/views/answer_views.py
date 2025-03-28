@@ -94,6 +94,46 @@ def get_all_answers():
     except Exception as e:
         logger.error(f"Error getting answers: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
+    
+@answer_bp.route('/batch', methods=['GET'])
+@jwt_required()
+@PermissionManager.require_permission(action="view", entity_type=EntityType.ANSWERS)
+def get_batch_answers():
+    """Get batch of answers with pagination"""
+    try:
+        # Get pagination parameters
+        page = request.args.get('page', type=int, default=1)
+        per_page = request.args.get('per_page', type=int, default=50)
+        
+        # Get filter parameters
+        include_deleted = request.args.get('include_deleted', '').lower() == 'true'
+        
+        # Call controller method with pagination
+        total_count, answers = AnswerController.get_batch(
+            page=page,
+            per_page=per_page,
+            include_deleted=include_deleted
+        )
+        
+        # Calculate total pages
+        total_pages = (total_count + per_page - 1) // per_page if per_page > 0 else 0
+        
+        return jsonify({
+            "metadata": {
+                "total_items": total_count,
+                "total_pages": total_pages,
+                "current_page": page,
+                "per_page": per_page,
+            },
+            "items": answers
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error getting batch of answers: {str(e)}")
+        return jsonify({
+            "error": "Internal server error",
+            "details": str(e)
+        }), 500
 
 @answer_bp.route('/<int:answer_id>', methods=['GET'])
 @jwt_required()

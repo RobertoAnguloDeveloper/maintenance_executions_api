@@ -133,6 +133,58 @@ def get_all_users():
         logger.error(f"Error in get_all_users: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
     
+@user_bp.route('/batch', methods=['GET'])
+@jwt_required()
+@PermissionManager.require_permission(action="view", entity_type=EntityType.USERS)
+def get_batch_users():
+    """Get batch of users with pagination"""
+    try:
+        # Get pagination parameters
+        page = request.args.get('page', type=int, default=1)
+        per_page = request.args.get('per_page', type=int, default=50)
+        
+        # Get filter parameters
+        include_deleted = request.args.get('include_deleted', '').lower() == 'true'
+        role_id = request.args.get('role_id', type=int)
+        environment_id = request.args.get('environment_id', type=int)
+        
+        # Apply role-based access control
+        current_user = get_jwt_identity()
+        user = AuthService.get_current_user(current_user)
+        
+        if not user.role.is_super_user:
+            # Non-admin users can only see users in their environment
+            environment_id = user.environment_id
+        
+        # Call controller method with pagination
+        total_count, users = UserController.get_batch(
+            page=page,
+            per_page=per_page,
+            include_deleted=include_deleted,
+            role_id=role_id,
+            environment_id=environment_id
+        )
+        
+        # Calculate total pages
+        total_pages = (total_count + per_page - 1) // per_page if per_page > 0 else 0
+        
+        return jsonify({
+            "metadata": {
+                "total_items": total_count,
+                "total_pages": total_pages,
+                "current_page": page,
+                "per_page": per_page,
+            },
+            "items": users
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error getting batch of users: {str(e)}")
+        return jsonify({
+            "error": "Internal server error",
+            "details": str(e)
+        }), 500
+    
 @user_bp.route('/compact-list', methods=['GET'])
 @jwt_required()
 @PermissionManager.require_permission(action="view", entity_type=EntityType.USERS)

@@ -62,6 +62,46 @@ class AnswerService:
             query = query.filter(Answer.is_deleted == False)
             
         return query.order_by(Answer.id).all()
+    
+    @staticmethod
+    def get_batch(page=1, per_page=50, **filters):
+        """
+        Get batch of answers with pagination directly from database
+        
+        Args:
+            page: Page number (starts from 1)
+            per_page: Number of items per page
+            **filters: Optional filters
+            
+        Returns:
+            tuple: (total_count, answers)
+        """
+        try:
+            # Calculate offset
+            offset = (page - 1) * per_page if page > 0 and per_page > 0 else 0
+            
+            # Build base query
+            query = Answer.query
+            
+            # Apply filters
+            include_deleted = filters.get('include_deleted', False)
+            if not include_deleted:
+                query = query.filter(Answer.is_deleted == False)
+            
+            # Get total count
+            total_count = query.count()
+            
+            # Apply pagination
+            answers = query.order_by(Answer.id).offset(offset).limit(per_page).all()
+            
+            # Convert to dictionary representation
+            answers_data = [answer.to_dict() for answer in answers]
+            
+            return total_count, answers_data
+            
+        except Exception as e:
+            logger.error(f"Error in answer batch pagination service: {str(e)}")
+            return 0, []
 
     @staticmethod
     def update_answer(

@@ -127,6 +127,72 @@ def get_all_submissions_compact_list():
     except Exception as e:
         logger.error(f"Error getting compact submissions list: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
+    
+@form_submission_bp.route('/batch', methods=['GET'])
+@jwt_required()
+@PermissionManager.require_permission(action="view", entity_type=EntityType.SUBMISSIONS)
+def get_batch_form_submissions():
+    """Get batch of form submissions with pagination"""
+    try:
+        # Get pagination parameters
+        page = request.args.get('page', type=int, default=1)
+        per_page = request.args.get('per_page', type=int, default=50)
+        
+        # Get filter parameters
+        include_deleted = request.args.get('include_deleted', '').lower() == 'true'
+        form_id = request.args.get('form_id', type=int)
+        submitted_by = request.args.get('submitted_by')
+        
+        # Date range filters
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        date_range = None
+        if start_date and end_date:
+            date_range = {
+                'start': start_date,
+                'end': end_date
+            }
+        
+        # Apply role-based access control
+        current_user = get_jwt_identity()
+        user = AuthService.get_current_user(current_user)
+        
+        # Call controller method with pagination
+        total_count, form_submissions = FormSubmissionController.get_batch(
+            page=page,
+            per_page=per_page,
+            include_deleted=include_deleted,
+            form_id=form_id,
+            submitted_by=submitted_by,
+            date_range=date_range,
+            current_user=user
+        )
+        
+        # Calculate total pages
+        total_pages = (total_count + per_page - 1) // per_page if per_page > 0 else 0
+        
+        return jsonify({
+            "metadata": {
+                "total_items": total_count,
+                "total_pages": total_pages,
+                "current_page": page,
+                "per_page": per_page,
+                "filters_applied": {
+                    "form_id": form_id,
+                    "submitted_by": submitted_by,
+                    "start_date": start_date,
+                    "end_date": end_date
+                }
+            },
+            "items": form_submissions
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error getting batch of form submissions: {str(e)}")
+        return jsonify({
+            "error": "Internal server error",
+            "details": str(e)
+        }), 500
 
 @form_submission_bp.route('/<int:submission_id>', methods=['GET'])
 @jwt_required()

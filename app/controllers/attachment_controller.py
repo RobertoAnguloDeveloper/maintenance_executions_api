@@ -154,6 +154,21 @@ class AttachmentController:
         except Exception as e:
             logger.error(f"Error getting attachments in controller: {str(e)}")
             return [], str(e)
+        
+    @staticmethod
+    def get_batch(page=1, per_page=50, **filters):
+        """
+        Get batch of attachments with pagination
+        
+        Args:
+            page: Page number (starts from 1)
+            per_page: Number of items per page
+            **filters: Optional filters
+            
+        Returns:
+            tuple: (total_count, attachments)
+        """
+        return AttachmentService.get_batch(page, per_page, **filters)
 
     @staticmethod
     def get_attachment(

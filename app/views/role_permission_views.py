@@ -25,6 +25,50 @@ def get_all_role_permissions():
         logger.error(f"Error getting role permissions: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
     
+@role_permission_bp.route('/batch', methods=['GET'])
+@jwt_required()
+@PermissionManager.require_role(RoleType.ADMIN)
+def get_batch_role_permissions():
+    """Get batch of role permissions with pagination - Admin only"""
+    try:
+        # Get pagination parameters
+        page = request.args.get('page', type=int, default=1)
+        per_page = request.args.get('per_page', type=int, default=50)
+        
+        # Get filter parameters
+        include_deleted = request.args.get('include_deleted', '').lower() == 'true'
+        role_id = request.args.get('role_id', type=int)
+        permission_id = request.args.get('permission_id', type=int)
+        
+        # Call controller method with pagination
+        total_count, role_permissions = RolePermissionController.get_batch(
+            page=page,
+            per_page=per_page,
+            include_deleted=include_deleted,
+            role_id=role_id,
+            permission_id=permission_id
+        )
+        
+        # Calculate total pages
+        total_pages = (total_count + per_page - 1) // per_page if per_page > 0 else 0
+        
+        return jsonify({
+            "metadata": {
+                "total_items": total_count,
+                "total_pages": total_pages,
+                "current_page": page,
+                "per_page": per_page,
+            },
+            "items": role_permissions
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error getting batch of role permissions: {str(e)}")
+        return jsonify({
+            "error": "Internal server error",
+            "details": str(e)
+        }), 500
+    
 @role_permission_bp.route('/roles_with_permissions', methods=['GET'])
 @jwt_required()
 @PermissionManager.require_permission(action="view", entity_type=EntityType.ROLES)

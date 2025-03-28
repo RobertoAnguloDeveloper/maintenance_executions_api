@@ -2,12 +2,17 @@ from typing import Dict, List, Optional, Tuple
 from app import db
 from app.models.answer_submitted import AnswerSubmitted
 from app.models.attachment import Attachment
+from app.models.form import Form
 from app.models.form_submission import FormSubmission
 from app.models.question import Question
 from datetime import datetime
 from werkzeug.datastructures import FileStorage
+from sqlalchemy.orm import joinedload
 import os
 import logging
+
+from app.models.user import User
+from app.utils.permission_manager import RoleType
 
 logger = logging.getLogger(__name__)
 
@@ -158,6 +163,81 @@ class AnswerSubmittedService:
                 query = query.filter_by(form_submission_id=filters['form_submission_id'])
         
         return query.order_by(AnswerSubmitted.created_at.desc()).all()
+    
+    @staticmethod
+    def get_batch(page=1, per_page=50, **filters):
+        """
+        Get batch of submitted answers with pagination directly from database
+        
+        Args:
+            page: Page number (starts from 1)
+            per_page: Number of items per page
+            **filters: Optional filters
+            
+        Returns:
+            tuple: (total_count, answers_submitted)
+        """
+        try:
+            # Calculate offset
+            offset = (page - 1) * per_page if page > 0 and per_page > 0 else 0
+            
+            # Build base query with joins for efficiency
+            query = AnswerSubmitted.query.options(
+                joinedload(AnswerSubmitted.form_submission).joinedload(FormSubmission.form)
+            )
+            
+            # Apply filters
+            include_deleted = filters.get('include_deleted', False)
+            if not include_deleted:
+                query = query.filter(AnswerSubmitted.is_deleted == False)
+            
+            form_submission_id = filters.get('form_submission_id')
+            if form_submission_id:
+                query = query.filter(AnswerSubmitted.form_submission_id == form_submission_id)
+                
+            question_type = filters.get('question_type')
+            if question_type:
+                query = query.filter(AnswerSubmitted.question_type == question_type)
+            
+            # Apply role-based access control
+            current_user = filters.get('current_user')
+            if current_user:
+                if not current_user.role.is_super_user:
+                    if current_user.role.name == RoleType.TECHNICIAN:
+                        # Technicians can only see their own submissions
+                        query = query.join(
+                            FormSubmission, 
+                            FormSubmission.id == AnswerSubmitted.form_submission_id
+                        ).filter(FormSubmission.submitted_by == current_user.username)
+                    elif current_user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
+                        # Site managers and supervisors can see submissions in their environment
+                        query = query.join(
+                            FormSubmission, 
+                            FormSubmission.id == AnswerSubmitted.form_submission_id
+                        ).join(
+                            Form, 
+                            Form.id == FormSubmission.form_id
+                        ).join(
+                            User, 
+                            User.id == Form.user_id
+                        ).filter(
+                            User.environment_id == current_user.environment_id
+                        )
+            
+            # Get total count
+            total_count = query.count()
+            
+            # Apply pagination
+            answers_submitted = query.order_by(AnswerSubmitted.id).offset(offset).limit(per_page).all()
+            
+            # Convert to dictionary representation
+            answers_submitted_data = [answer.to_dict() for answer in answers_submitted]
+            
+            return total_count, answers_submitted_data
+            
+        except Exception as e:
+            logger.error(f"Error in answers submitted batch pagination service: {str(e)}")
+            return 0, []
 
     @staticmethod
     def get_answers_by_submission(submission_id: int) -> Tuple[List[AnswerSubmitted], Optional[str]]:

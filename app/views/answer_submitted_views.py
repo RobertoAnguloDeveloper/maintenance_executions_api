@@ -141,6 +141,59 @@ def get_all_answers_submitted():
     except Exception as e:
         logger.error(f"Error getting answers submitted: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
+    
+@answer_submitted_bp.route('/batch', methods=['GET'])
+@jwt_required()
+@PermissionManager.require_permission(action="view", entity_type=EntityType.SUBMISSIONS)
+def get_batch_answers_submitted():
+    """Get batch of submitted answers with pagination"""
+    try:
+        # Get pagination parameters
+        page = request.args.get('page', type=int, default=1)
+        per_page = request.args.get('per_page', type=int, default=50)
+        
+        # Get filter parameters
+        include_deleted = request.args.get('include_deleted', '').lower() == 'true'
+        form_submission_id = request.args.get('form_submission_id', type=int)
+        question_type = request.args.get('question_type')
+        
+        # Apply role-based access control
+        current_user = get_jwt_identity()
+        user = AuthService.get_current_user(current_user)
+        
+        # Call controller method with pagination
+        total_count, answers_submitted = AnswerSubmittedController.get_batch(
+            page=page,
+            per_page=per_page,
+            include_deleted=include_deleted,
+            form_submission_id=form_submission_id,
+            question_type=question_type,
+            current_user=user
+        )
+        
+        # Calculate total pages
+        total_pages = (total_count + per_page - 1) // per_page if per_page > 0 else 0
+        
+        return jsonify({
+            "metadata": {
+                "total_items": total_count,
+                "total_pages": total_pages,
+                "current_page": page,
+                "per_page": per_page,
+                "filters_applied": {
+                    "form_submission_id": form_submission_id,
+                    "question_type": question_type
+                }
+            },
+            "items": answers_submitted
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error getting batch of submitted answers: {str(e)}")
+        return jsonify({
+            "error": "Internal server error",
+            "details": str(e)
+        }), 500
 
 @answer_submitted_bp.route('/<int:answer_submitted_id>', methods=['GET'])
 @jwt_required()

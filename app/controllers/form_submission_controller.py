@@ -119,6 +119,21 @@ class FormSubmissionController:
         except Exception as e:
             logger.error(f"Error in get_all_submissions_compact controller: {str(e)}")
             return []
+        
+    @staticmethod
+    def get_batch(page=1, per_page=50, **filters):
+        """
+        Get batch of form submissions with pagination
+        
+        Args:
+            page: Page number (starts from 1)
+            per_page: Number of items per page
+            **filters: Optional filters
+            
+        Returns:
+            tuple: (total_count, form_submissions)
+        """
+        return FormSubmissionService.get_batch(page, per_page, **filters)
 
     @staticmethod
     def get_submission(submission_id: int) -> Optional[FormSubmission]:

@@ -11,6 +11,9 @@ from app.models.form import Form
 from app.models.form_submission import FormSubmission
 from sqlalchemy.orm import joinedload
 
+from app.models.user import User
+from app.utils.permission_manager import RoleType
+
 logger = logging.getLogger(__name__)
 
 class AttachmentService:
@@ -423,6 +426,85 @@ class AttachmentService:
         except Exception as e:
             logger.error(f"Error getting attachments: {str(e)}")
             raise
+        
+    @staticmethod
+    def get_batch(page=1, per_page=50, **filters):
+        """
+        Get batch of attachments with pagination directly from database
+        
+        Args:
+            page: Page number (starts from 1)
+            per_page: Number of items per page
+            **filters: Optional filters
+            
+        Returns:
+            tuple: (total_count, attachments)
+        """
+        try:
+            # Calculate offset
+            offset = (page - 1) * per_page if page > 0 and per_page > 0 else 0
+            
+            # Build base query with joins for efficiency
+            query = Attachment.query.options(
+                joinedload(Attachment.form_submission).joinedload(FormSubmission.form)
+            )
+            
+            # Apply filters
+            include_deleted = filters.get('include_deleted', False)
+            if not include_deleted:
+                query = query.filter(Attachment.is_deleted == False)
+            
+            form_submission_id = filters.get('form_submission_id')
+            if form_submission_id:
+                query = query.filter(Attachment.form_submission_id == form_submission_id)
+                
+            is_signature = filters.get('is_signature')
+            if is_signature is not None:
+                query = query.filter(Attachment.is_signature == is_signature)
+                
+            file_type = filters.get('file_type')
+            if file_type:
+                query = query.filter(Attachment.file_type == file_type)
+            
+            # Apply role-based access control
+            current_user = filters.get('current_user')
+            if current_user:
+                if not current_user.role.is_super_user:
+                    if current_user.role.name == RoleType.TECHNICIAN:
+                        # Technicians can only see their own submissions
+                        query = query.join(
+                            FormSubmission, 
+                            FormSubmission.id == Attachment.form_submission_id
+                        ).filter(FormSubmission.submitted_by == current_user.username)
+                    elif current_user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
+                        # Site managers and supervisors can see submissions in their environment
+                        query = query.join(
+                            FormSubmission, 
+                            FormSubmission.id == Attachment.form_submission_id
+                        ).join(
+                            Form, 
+                            Form.id == FormSubmission.form_id
+                        ).join(
+                            User, 
+                            User.id == Form.user_id
+                        ).filter(
+                            User.environment_id == current_user.environment_id
+                        )
+            
+            # Get total count
+            total_count = query.count()
+            
+            # Apply pagination
+            attachments = query.order_by(Attachment.id).offset(offset).limit(per_page).all()
+            
+            # Convert to dictionary representation
+            attachments_data = [attachment.to_dict() for attachment in attachments]
+            
+            return total_count, attachments_data
+            
+        except Exception as e:
+            logger.error(f"Error in attachment batch pagination service: {str(e)}")
+            return 0, []
         
     @staticmethod
     def get_attachment(attachment_id: int) -> Optional[Attachment]:

@@ -21,6 +21,21 @@ class QuestionTypeController:
         Get all question types
         """
         return QuestionTypeService.get_all_question_types()
+    
+    @staticmethod
+    def get_batch(page=1, per_page=50, **filters):
+        """
+        Get batch of question types with pagination
+        
+        Args:
+            page: Page number (starts from 1)
+            per_page: Number of items per page
+            **filters: Optional filters
+            
+        Returns:
+            tuple: (total_count, question_types)
+        """
+        return QuestionTypeService.get_batch(page, per_page, **filters)
 
     @staticmethod
     def get_question_type_by_name(type_name):

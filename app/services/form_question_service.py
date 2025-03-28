@@ -106,6 +106,77 @@ class FormQuestionService:
             return None
         
     @staticmethod
+    def get_batch(page=1, per_page=50, **filters):
+        """
+        Get batch of form questions with pagination directly from database
+        
+        Args:
+            page: Page number (starts from 1)
+            per_page: Number of items per page
+            **filters: Optional filters
+            
+        Returns:
+            tuple: (total_count, form_questions)
+        """
+        try:
+            # Calculate offset
+            offset = (page - 1) * per_page if page > 0 and per_page > 0 else 0
+            
+            # Build base query with joins for efficiency
+            query = FormQuestion.query.options(
+                joinedload(FormQuestion.form).joinedload(Form.creator),
+                joinedload(FormQuestion.question).joinedload(Question.question_type)
+            )
+            
+            # Apply filters
+            include_deleted = filters.get('include_deleted', False)
+            if not include_deleted:
+                query = query.filter(FormQuestion.is_deleted == False)
+            
+            form_id = filters.get('form_id')
+            if form_id:
+                query = query.filter(FormQuestion.form_id == form_id)
+                
+            question_id = filters.get('question_id')
+            if question_id:
+                query = query.filter(FormQuestion.question_id == question_id)
+            
+            # Apply role-based access control
+            current_user = filters.get('current_user')
+            if current_user and not current_user.role.is_super_user:
+                # Non-admin users can only see form questions from their environment
+                query = query.join(
+                    Form, 
+                    Form.id == FormQuestion.form_id
+                ).join(
+                    User, 
+                    User.id == Form.user_id
+                ).filter(
+                    db.or_(
+                        Form.is_public == True,
+                        User.environment_id == current_user.environment_id
+                    )
+                )
+            
+            # Get total count
+            total_count = query.count()
+            
+            # Apply pagination
+            form_questions = query.order_by(
+                FormQuestion.form_id, 
+                FormQuestion.order_number
+            ).offset(offset).limit(per_page).all()
+            
+            # Convert to dictionary representation
+            form_questions_data = [fq.to_dict() for fq in form_questions]
+            
+            return total_count, form_questions_data
+            
+        except Exception as e:
+            logger.error(f"Error in form question batch pagination service: {str(e)}")
+            return 0, []
+        
+    @staticmethod
     def get_form_question_with_relations(form_question_id: int) -> Optional[FormQuestion]:
         """
         Get a specific form question with all its relationships loaded

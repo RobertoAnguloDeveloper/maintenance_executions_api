@@ -79,8 +79,8 @@ class FormController:
         Args:
             page: Page number (starts from 1)
             per_page: Number of items per page
-            **filters: Optional filters
-            
+            **filters: Optional filters including only_editable
+                
         Returns:
             tuple: (total_count, forms)
         """

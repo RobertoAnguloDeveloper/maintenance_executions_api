@@ -97,15 +97,12 @@ class FormService(BaseService):
         Args:
             page: Page number (starts from 1)
             per_page: Number of items per page
-            **filters: Optional filters
-            
+            **filters: Optional filters including only_editable
+                
         Returns:
             tuple: (total_count, forms)
         """
         try:
-            # Calculate offset
-            offset = (page - 1) * per_page if page > 0 and per_page > 0 else 0
-            
             # Build base query with joins for efficiency
             query = Form.query.options(
                 joinedload(Form.creator).joinedload(User.environment),
@@ -131,8 +128,13 @@ class FormService(BaseService):
             
             # Apply role-based access control
             current_user = filters.get('current_user')
+            only_editable = filters.get('only_editable', False)
+            
             if current_user:
-                if not current_user.role.is_super_user:
+                if only_editable:
+                    # When only_editable is True, only show forms created by the current user
+                    query = query.filter(Form.user_id == current_user.id)
+                elif not current_user.role.is_super_user:
                     if current_user.role.name == RoleType.TECHNICIAN:
                         # Technicians can only see public forms
                         query = query.filter(Form.is_public == True)
@@ -148,14 +150,28 @@ class FormService(BaseService):
             # Get total count
             total_count = query.count()
             
-            # Apply pagination
+            # Calculate total pages
+            total_pages = (total_count + per_page - 1) // per_page if per_page > 0 else 0
+            
+            # Ensure requested page is valid
+            if page > total_pages and total_pages > 0:
+                # If requested page exceeds total pages, use the last page
+                page = total_pages
+            elif page < 1:
+                # If page is less than 1, use the first page
+                page = 1
+                
+            # Calculate offset based on adjusted page number
+            offset = (page - 1) * per_page
+            
+            # Apply pagination with adjusted page
             forms = query.order_by(Form.id).offset(offset).limit(per_page).all()
             
             # Convert to dictionary representation
             forms_data = [form.to_dict() for form in forms]
             
             return total_count, forms_data
-            
+                
         except Exception as e:
             logger.error(f"Error in form batch pagination service: {str(e)}")
             return 0, []

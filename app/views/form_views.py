@@ -61,6 +61,7 @@ def get_batch_forms():
         is_public = request.args.get('is_public', type=lambda v: v.lower() == 'true')
         user_id = request.args.get('user_id', type=int)
         environment_id = request.args.get('environment_id', type=int)
+        only_editable = request.args.get('only_editable', '').lower() == 'true'
         
         # Apply role-based access control
         current_user = get_jwt_identity()
@@ -74,7 +75,8 @@ def get_batch_forms():
             is_public=is_public,
             user_id=user_id,
             environment_id=environment_id,
-            current_user=user
+            current_user=user,
+            only_editable=only_editable
         )
         
         # Calculate total pages

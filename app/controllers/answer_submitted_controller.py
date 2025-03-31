@@ -192,8 +192,11 @@ class AnswerSubmittedController:
 
             # Access control
             if current_user and user_role != RoleType.ADMIN:
+                # Get the current user object to check environment_id
+                user_obj = user.User.query.filter_by(username=current_user).first()
+                
                 if user_role in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                    if submission.form.creator.environment_id != user.environment_id:
+                    if submission.form.creator.environment_id != user_obj.environment_id:
                         return [], "Unauthorized access"
                 elif submission.submitted_by != current_user:
                     return [], "Unauthorized access"

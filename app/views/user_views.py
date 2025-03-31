@@ -137,7 +137,7 @@ def get_all_users():
 @jwt_required()
 @PermissionManager.require_permission(action="view", entity_type=EntityType.USERS)
 def get_batch_users():
-    """Get batch of users with pagination"""
+    """Get batch of users with pagination using compact format"""
     try:
         # Get pagination parameters
         page = request.args.get('page', type=int, default=1)
@@ -155,15 +155,46 @@ def get_batch_users():
         if not user.role.is_super_user:
             # Non-admin users can only see users in their environment
             environment_id = user.environment_id
+            include_deleted = False
         
         # Call controller method with pagination
-        total_count, users = UserController.get_batch(
+        total_count, users_data = UserController.get_batch(
             page=page,
             per_page=per_page,
             include_deleted=include_deleted,
             role_id=role_id,
             environment_id=environment_id
         )
+        
+        # Transform the data to match the compact-list format
+        compact_users = []
+        for user in users_data:
+            compact_user = {
+                'id': user['id'],
+                'username': user['username'],
+                'first_name': user['first_name'],
+                'last_name': user['last_name'],
+                'full_name': f"{user['first_name']} {user['last_name']}",
+                'email': user['email'],
+                'contact_number': user['contact_number'],
+                'role': {
+                    'id': user['role']['id'] if user['role'] else None,
+                    'name': user['role']['name'] if user['role'] else None,
+                    'description': user['role']['description'] if user['role'] else None,
+                    'is_super_user': user['role']['is_super_user'] if user['role'] else None
+                },
+                'environment': {
+                    'id': user['environment']['id'] if user['environment'] else None,
+                    'name': user['environment']['name'] if user['environment'] else None,
+                    'description': user['environment']['description'] if user['environment'] else None
+                }
+            }
+            
+            # Include deleted status for admins
+            if user.get('is_deleted') is not None and user.role.is_super_user:
+                compact_user['is_deleted'] = user['is_deleted']
+                
+            compact_users.append(compact_user)
         
         # Calculate total pages
         total_pages = (total_count + per_page - 1) // per_page if per_page > 0 else 0
@@ -175,7 +206,7 @@ def get_batch_users():
                 "current_page": page,
                 "per_page": per_page,
             },
-            "items": users
+            "items": compact_users
         }), 200
 
     except Exception as e:

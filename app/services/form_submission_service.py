@@ -264,20 +264,17 @@ class FormSubmissionService:
     @staticmethod
     def get_batch(page=1, per_page=50, **filters):
         """
-        Get batch of form submissions with pagination directly from database
+        Get batch of form submissions with pagination in compact format
         
         Args:
             page: Page number (starts from 1)
             per_page: Number of items per page
             **filters: Optional filters
-            
+                
         Returns:
             tuple: (total_count, form_submissions)
         """
         try:
-            # Calculate offset
-            offset = (page - 1) * per_page if page > 0 and per_page > 0 else 0
-            
             # Build base query with joins for efficiency
             query = FormSubmission.query.options(
                 joinedload(FormSubmission.form),
@@ -308,6 +305,7 @@ class FormSubmissionService:
             # Apply role-based access control
             current_user = filters.get('current_user')
             if current_user:
+                # Normal role-based filtering for viewing submissions
                 if not current_user.role.is_super_user:
                     if current_user.role.name == RoleType.TECHNICIAN:
                         # Technicians can only see their own submissions
@@ -327,46 +325,67 @@ class FormSubmissionService:
             # Get total count
             total_count = query.count()
             
-            # Apply pagination
+            # Calculate total pages
+            total_pages = (total_count + per_page - 1) // per_page if per_page > 0 else 0
+            
+            # Ensure requested page is valid
+            if page > total_pages and total_pages > 0:
+                # If requested page exceeds total pages, use the last page
+                page = total_pages
+            elif page < 1:
+                # If page is less than 1, use the first page
+                page = 1
+                
+            # Calculate offset based on adjusted page number
+            offset = (page - 1) * per_page
+            
+            # Apply pagination with adjusted page
             form_submissions = query.order_by(
                 FormSubmission.submitted_at.desc()
             ).offset(offset).limit(per_page).all()
             
-            # Convert to dictionary representation
-            form_submissions_data = [fs.to_dict() for fs in form_submissions]
+            # Transform to compact format with fields in exact order specified
+            compact_submissions = []
+            for submission in form_submissions:
+                # Create dict with keys in the exact order required
+                submission_dict = {
+                    'id': submission.id,
+                    'form_id': submission.form_id,
+                    'form': {
+                        'id': submission.form.id,
+                        'title': submission.form.title
+                    } if submission.form else None,
+                    'submitted_at': submission.submitted_at.isoformat() if submission.submitted_at else None,
+                    'submitted_by': submission.submitted_by,
+                    'answers_count': len([answer for answer in submission.answers_submitted if not answer.is_deleted]),
+                    'attachments_count': len([attachment for attachment in submission.attachments if not attachment.is_deleted]),
+                    'is_editable': False  # Default value, will be updated below
+                }
+                
+                # Add "is_editable" flag based on role and age
+                if current_user:
+                    submitted_at = submission.submitted_at
+                    if current_user.role.is_super_user:
+                        # Admins can edit all submissions
+                        submission_dict['is_editable'] = True
+                    elif current_user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
+                        # Site managers and supervisors can edit submissions in their environment
+                        # that are less than 7 days old
+                        if submitted_at and (datetime.utcnow() - submitted_at).days <= 7:
+                            if submission.form and submission.form.creator and submission.form.creator.environment_id == current_user.environment_id:
+                                submission_dict['is_editable'] = True
+                    elif submission.submitted_by == current_user.username:
+                        # Regular users can edit their own submissions that are less than 7 days old
+                        if submitted_at and (datetime.utcnow() - submitted_at).days <= 7:
+                            submission_dict['is_editable'] = True
+                
+                compact_submissions.append(submission_dict)
             
-            return total_count, form_submissions_data
-            
+            return total_count, compact_submissions
+                
         except Exception as e:
             logger.error(f"Error in form submission batch pagination service: {str(e)}")
             return 0, []
-
-    @staticmethod
-    def get_submission(submission_id: int) -> Optional[FormSubmission]:
-        """
-        Get a specific form submission with all related data
-        
-        Args:
-            submission_id: ID of the submission
-            
-        Returns:
-            Optional[FormSubmission]: FormSubmission object if found, None otherwise
-        """
-        try:
-            return (FormSubmission.query
-                .filter_by(
-                    id=submission_id,
-                    is_deleted=False
-                )
-                .options(
-                    joinedload(FormSubmission.form),
-                    joinedload(FormSubmission.answers_submitted),
-                    joinedload(FormSubmission.attachments)
-                )
-                .first())
-        except Exception as e:
-            logger.error(f"Error retrieving submission {submission_id}: {str(e)}")
-            return None
         
     @staticmethod
     def get_submissions_by_user(username: str, filters: Dict = None) -> List[FormSubmission]:

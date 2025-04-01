@@ -128,12 +128,21 @@ class FormSubmissionController:
         Args:
             page: Page number (starts from 1)
             per_page: Number of items per page
-            **filters: Optional filters
-            
+            **filters: Optional filters including:
+                - include_deleted: Whether to include deleted submissions
+                - form_id: Filter by specific form
+                - submitted_by: Filter by submitter username
+                - date_range: Dict with 'start' and 'end' dates
+                - current_user: Current user object for role-based access
+                
         Returns:
             tuple: (total_count, form_submissions)
         """
-        return FormSubmissionService.get_batch(page, per_page, **filters)
+        try:
+            return FormSubmissionService.get_batch(page, per_page, **filters)
+        except Exception as e:
+            logger.error(f"Error in get_batch controller: {str(e)}")
+            return 0, []
 
     @staticmethod
     def get_submission(submission_id: int) -> Optional[FormSubmission]:

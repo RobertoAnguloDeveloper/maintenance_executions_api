@@ -186,7 +186,6 @@ def get_batch_form_submissions():
             },
             "items": form_submissions
         }), 200
-
     except Exception as e:
         logger.error(f"Error getting batch of form submissions: {str(e)}")
         return jsonify({

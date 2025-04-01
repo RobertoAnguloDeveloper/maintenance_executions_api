@@ -388,6 +388,33 @@ class FormSubmissionService:
             return 0, []
         
     @staticmethod
+    def get_submission(submission_id: int) -> Optional[FormSubmission]:
+        """
+        Get a specific form submission with all related data
+        
+        Args:
+            submission_id: ID of the submission
+            
+        Returns:
+            Optional[FormSubmission]: FormSubmission object if found, None otherwise
+        """
+        try:
+            return (FormSubmission.query
+                .filter_by(
+                    id=submission_id,
+                    is_deleted=False
+                )
+                .options(
+                    joinedload(FormSubmission.form),
+                    joinedload(FormSubmission.answers_submitted),
+                    joinedload(FormSubmission.attachments)
+                )
+                .first())
+        except Exception as e:
+            logger.error(f"Error retrieving submission {submission_id}: {str(e)}")
+            return None
+        
+    @staticmethod
     def get_submissions_by_user(username: str, filters: Dict = None) -> List[FormSubmission]:
         """
         Get all submissions for a specific user with optional filtering.

@@ -48,10 +48,24 @@ class Form(TimestampMixin, SoftDeleteMixin, db.Model):
                             }
         }
 
+    def _get_simplified_creator_dict(self) -> Dict[str, Any]:
+        """Get simplified creator information as a dictionary for batch responses."""
+        if not self.creator:
+            return None
+            
+        return {
+            'id': self.creator.id,
+            'fullname': self.creator.first_name+" "+self.creator.last_name
+        }
+
     def _get_submissions_count(self) -> int:
         """Get count of submissions for this form."""
         from app.models.form_submission import FormSubmission
         return FormSubmission.query.filter_by(form_id=str(self.id), is_deleted=False).count()
+
+    def _get_questions_count(self) -> int:
+        """Get count of non-deleted questions for this form."""
+        return len([q for q in self.form_questions if not q.is_deleted])
 
     def _get_question_answers(self, form_question) -> List[Dict[str, Any]]:
         """
@@ -139,6 +153,24 @@ class Form(TimestampMixin, SoftDeleteMixin, db.Model):
             'created_by': self._get_creator_dict(),
             'questions': self._get_questions_list(),
             'submissions_count': self._get_submissions_count()
+        }
+        
+    def to_batch_dict(self) -> Dict[str, Any]:
+        """
+        Convert form to simplified dictionary representation for batch responses.
+        Returns only the essential attributes needed for the forms/batch endpoint.
+        """
+        return {
+            'id': self.id,
+            'title': self.title,
+            'description': self.description,
+            'is_public': self.is_public,
+            'created_at': self._format_timestamp(self.created_at),
+            'updated_at': self._format_timestamp(self.updated_at),
+            'created_by': self._get_simplified_creator_dict(),
+            'questions_count': self._get_questions_count(),
+            'submissions_count': self._get_submissions_count()
+            # 'is_editable' will be added in the controller/service
         }
 
     @classmethod

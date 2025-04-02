@@ -172,8 +172,8 @@ class FormService(BaseService):
             # Apply pagination with adjusted page
             forms = query.order_by(Form.id).offset(offset).limit(per_page).all()
             
-            # Convert to dictionary representation
-            forms_data = [form.to_dict() for form in forms]
+            # Convert to simplified dictionary representation using the new to_batch_dict method
+            forms_data = [form.to_batch_dict() for form in forms]
             
             # Add editable flag to each form
             for form_data in forms_data:

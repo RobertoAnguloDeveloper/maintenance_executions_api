@@ -50,7 +50,19 @@ def get_all_forms():
 @jwt_required()
 @PermissionManager.require_permission(action="view", entity_type=EntityType.FORMS)
 def get_batch_forms():
-    """Get batch of forms with pagination"""
+    """
+    Get batch of forms with pagination
+    
+    Query Parameters:
+    - page: Page number (default: 1)
+    - per_page: Number of items per page (default: 50)
+    - include_deleted: Include deleted forms (default: false)
+    - is_public: Filter by public status (optional)
+    - user_id: Filter by creator user ID (optional)
+    - environment_id: Filter by environment ID (optional)
+    - only_editable: Return only forms that the user can edit (default: false)
+                     For admin users, this returns all forms; for other users, only their own forms
+    """
     try:
         # Get pagination parameters
         page = request.args.get('page', type=int, default=1)

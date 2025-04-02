@@ -132,8 +132,13 @@ class FormService(BaseService):
             
             if current_user:
                 if only_editable:
-                    # When only_editable is True, only show forms created by the current user
-                    query = query.filter(Form.user_id == current_user.id)
+                    # For admin users with only_editable=True, show all forms
+                    if current_user.role.is_super_user:
+                        # No additional filter needed, admins can edit all forms
+                        pass
+                    else:
+                        # Non-admin users can only edit their own forms
+                        query = query.filter(Form.user_id == current_user.id)
                 elif not current_user.role.is_super_user:
                     if current_user.role.name == RoleType.TECHNICIAN:
                         # Technicians can only see public forms
@@ -169,6 +174,15 @@ class FormService(BaseService):
             
             # Convert to dictionary representation
             forms_data = [form.to_dict() for form in forms]
+            
+            # Add editable flag to each form
+            for form_data in forms_data:
+                if current_user.role.is_super_user:
+                    # Admin users can edit all forms
+                    form_data['is_editable'] = True
+                else:
+                    # Non-admin users can only edit their own forms
+                    form_data['is_editable'] = form_data['created_by']['id'] == current_user.id
             
             return total_count, forms_data
                 

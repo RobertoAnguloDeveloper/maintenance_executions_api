@@ -77,6 +77,9 @@ def get_all_submissions():
                 'end': end_date
             }
 
+        # Add flag to consider public forms
+        filters['consider_public'] = True
+
         submissions = FormSubmissionController.get_all_submissions(user, filters)
 
         return jsonify({
@@ -114,6 +117,9 @@ def get_all_submissions_compact_list():
                 'start': start_date,
                 'end': end_date
             }
+        
+        # Add flag to consider public forms    
+        filters['consider_public'] = True
             
         # Get compact submissions list
         compact_submissions = FormSubmissionController.get_all_submissions_compact(user, filters)
@@ -157,7 +163,7 @@ def get_batch_form_submissions():
         current_user = get_jwt_identity()
         user = AuthService.get_current_user(current_user)
         
-        # Call controller method with pagination
+        # Call controller method with pagination and consider_public flag
         total_count, form_submissions = FormSubmissionController.get_batch(
             page=page,
             per_page=per_page,
@@ -165,7 +171,8 @@ def get_batch_form_submissions():
             form_id=form_id,
             submitted_by=submitted_by,
             date_range=date_range,
-            current_user=user
+            current_user=user,
+            consider_public=True  # Add parameter to consider public forms
         )
         
         # Calculate total pages
@@ -206,19 +213,29 @@ def get_submission(submission_id):
         if not submission:
             return jsonify({"error": "Submission not found"}), 404
 
-        # Access control
+        # Access control with special handling for public forms
+        # If the form is public, allow access based on user role
         if not user.role.is_super_user:
-            if user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                if submission.form.creator.environment_id != user.environment_id:
+            if submission.form.is_public:
+                # For public forms, regular users can only see their own submissions
+                if submission.submitted_by != current_user:
+                    # Site managers and supervisors can see all submissions in public forms
+                    if user.role.name not in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
+                        return jsonify({"error": "Unauthorized access"}), 403
+            else:
+                # For private forms, apply normal environment and ownership checks
+                if user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
+                    if submission.form.creator.environment_id != user.environment_id:
+                        return jsonify({"error": "Unauthorized access"}), 403
+                elif submission.submitted_by != current_user:
                     return jsonify({"error": "Unauthorized access"}), 403
-            elif submission.submitted_by != current_user:
-                return jsonify({"error": "Unauthorized access"}), 403
 
-        # Get answers with access control
+        # Get answers with updated access control
         answers, error = FormSubmissionController.get_submission_answers(
             submission_id=submission_id,
             current_user=current_user,
-            user_role=user.role.name
+            user_role=user.role.name,
+            is_public_form=submission.form.is_public  # New parameter
         )
 
         if error:
@@ -258,6 +275,8 @@ def get_my_submissions():
         if form_id:
             filters['form_id'] = form_id
 
+        # No need to modify this endpoint for public forms
+        # since it only returns the current user's submissions
         submissions, error = FormSubmissionController.get_user_submissions(
             username=current_user,
             filters=filters
@@ -279,6 +298,7 @@ def get_my_submissions():
     except Exception as e:
         logger.error(f"Error getting user submissions: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
+
     
 @form_submission_bp.route('/<int:submission_id>', methods=['PUT'])
 @jwt_required()
@@ -360,10 +380,18 @@ def get_submission_answers(submission_id):
         current_user = get_jwt_identity()
         user = AuthService.get_current_user(current_user)
 
+        # First get the submission to check if its form is public
+        submission = FormSubmissionController.get_submission(submission_id)
+        if not submission:
+            return jsonify({"error": "Submission not found"}), 404
+            
+        is_public_form = submission.form.is_public if submission.form else False
+
         answers, error = FormSubmissionController.get_submission_answers(
             submission_id=submission_id,
             current_user=current_user,
-            user_role=user.role.name
+            user_role=user.role.name,
+            is_public_form=is_public_form  # Pass the public form flag
         )
 
         if error:

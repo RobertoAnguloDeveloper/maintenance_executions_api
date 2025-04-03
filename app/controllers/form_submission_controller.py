@@ -76,11 +76,16 @@ class FormSubmissionController:
                 filters = {}
 
             # Apply role-based filtering
+            consider_public = filters.get('consider_public', False)
+            
             if not user.role.is_super_user:
                 if user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
                     filters['environment_id'] = user.environment_id
+                    filters['consider_public'] = consider_public
                 else:
                     filters['submitted_by'] = user.username
+                    # Regular users can only see their own submissions
+                    # so no need to consider public forms
 
             return FormSubmissionService.get_all_submissions(user, filters)
 
@@ -108,11 +113,15 @@ class FormSubmissionController:
                 filters = {}
 
             # Apply role-based filtering
+            consider_public = filters.get('consider_public', False)
+            
             if not user.role.is_super_user:
                 if user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
                     filters['environment_id'] = user.environment_id
+                    filters['consider_public'] = consider_public
                 else:
                     filters['submitted_by'] = user.username
+                    # Regular users only see their own submissions
 
             return FormSubmissionService.get_all_submissions_compact(user, filters)
 
@@ -134,6 +143,7 @@ class FormSubmissionController:
                 - submitted_by: Filter by submitter username
                 - date_range: Dict with 'start' and 'end' dates
                 - current_user: Current user object for role-based access
+                - consider_public: Whether to include public forms
                 
         Returns:
             tuple: (total_count, form_submissions)
@@ -189,7 +199,8 @@ class FormSubmissionController:
     def get_submission_answers(
         submission_id: int,
         current_user: str,
-        user_role: str
+        user_role: str,
+        is_public_form: bool = False
     ) -> Tuple[List[Dict], Optional[str]]:
         """
         Get all answers for a submission with access control
@@ -198,6 +209,7 @@ class FormSubmissionController:
             submission_id: ID of the submission
             current_user: Username of current user
             user_role: Role of current user
+            is_public_form: Whether the form is public
             
         Returns:
             tuple: (List of answer dictionaries, Error message or None)
@@ -208,9 +220,23 @@ class FormSubmissionController:
                 return [], "Submission not found"
 
             # Access control
-            if user_role != RoleType.ADMIN:
+            if user_role == RoleType.ADMIN:
+                # Admins can see everything
+                pass
+            elif is_public_form:
+                # For public forms
                 if user_role in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                    if submission.form.creator.environment_id != submission.form.creator.environment_id:
+                    # Site managers and supervisors can see all public form submissions
+                    pass
+                elif submission.submitted_by != current_user:
+                    # Regular users can only see their own submissions
+                    return [], "Unauthorized access"
+            else:
+                # For private forms
+                if user_role in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
+                    form_env_id = submission.form.creator.environment_id if submission.form.creator else None
+                    user_env_id = FormSubmissionService.get_user_environment_id(current_user)
+                    if form_env_id != user_env_id:
                         return [], "Unauthorized access"
                 elif submission.submitted_by != current_user:
                     return [], "Unauthorized access"

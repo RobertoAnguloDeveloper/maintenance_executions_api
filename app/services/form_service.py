@@ -140,10 +140,7 @@ class FormService(BaseService):
                         # Non-admin users can only edit their own forms
                         query = query.filter(Form.user_id == current_user.id)
                 elif not current_user.role.is_super_user:
-                    if current_user.role.name == RoleType.TECHNICIAN:
-                        # Technicians can only see public forms
-                        query = query.filter(Form.is_public == True)
-                    elif current_user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
+                    if current_user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR, RoleType.TECHNICIAN]:
                         # Site managers and supervisors can see public forms and forms from their environment
                         query = query.filter(
                             db.or_(

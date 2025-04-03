@@ -104,7 +104,6 @@ class FormSubmissionService:
                 - date_range: Dict with 'start' and 'end' dates
                 - environment_id: Filter by environment
                 - submitted_by: Filter by submitter username
-                - consider_public: Consider public forms across environments
                 
         Returns:
             List[FormSubmission]: List of form submissions matching criteria
@@ -118,25 +117,12 @@ class FormSubmissionService:
                 ))
             
             # Apply role-based filtering
-            consider_public = filters.get('consider_public', False) if filters else False
-            
             if not user.role.is_super_user:
                 if user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
                     # Can only see submissions in their environment
-                    # Plus public forms if consider_public is True
-                    if consider_public:
-                        query = (query
-                            .join(User, User.id == Form.user_id)
-                            .filter(
-                                db.or_(
-                                    User.environment_id == user.environment_id,
-                                    Form.is_public == True
-                                )
-                            ))
-                    else:
-                        query = (query
-                            .join(User, User.id == Form.user_id)
-                            .filter(User.environment_id == user.environment_id))
+                    query = (query
+                        .join(User, User.id == Form.user_id)
+                        .filter(User.environment_id == user.environment_id))
                 else:
                     # Regular users can only see their own submissions
                     query = query.filter(FormSubmission.submitted_by == user.username)
@@ -146,9 +132,7 @@ class FormSubmissionService:
                 if 'form_id' in filters:
                     query = query.filter(FormSubmission.form_id == filters['form_id'])
                     
-                if 'environment_id' in filters and not consider_public:
-                    # Only apply environment filter if not considering public forms
-                    # or if explicitly handling public forms in the query above
+                if 'environment_id' in filters:
                     query = (query
                         .join(User, User.id == Form.user_id, isouter=True)
                         .filter(User.environment_id == filters['environment_id']))
@@ -197,7 +181,6 @@ class FormSubmissionService:
                 - date_range: Dict with 'start' and 'end' dates
                 - environment_id: Filter by environment
                 - submitted_by: Filter by submitter username
-                - consider_public: Consider public forms across environments
                 
         Returns:
             List[Dict]: List of compact form submissions with specific field order
@@ -211,30 +194,14 @@ class FormSubmissionService:
                 ))
             
             # Apply role-based filtering
-            consider_public = filters.get('consider_public', False) if filters else False
-            
             if not user.role.is_super_user:
-                if user.role.name == RoleType.TECHNICIAN:
-                    # Technicians can only see their own submissions
-                    query = query.filter(FormSubmission.submitted_by == user.username)
-                elif user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                    # Site managers and supervisors can see submissions in their environment
-                    # Plus public forms if consider_public is True
-                    if consider_public:
-                        query = (query
-                            .join(User, User.id == Form.user_id)
-                            .filter(
-                                db.or_(
-                                    User.environment_id == user.environment_id,
-                                    Form.is_public == True
-                                )
-                            ))
-                    else:
-                        query = (query
-                            .join(User, User.id == Form.user_id)
-                            .filter(User.environment_id == user.environment_id))
+                if user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
+                    # Can only see submissions in their environment
+                    query = (query
+                        .join(User, User.id == Form.user_id, isouter=True)
+                        .filter(User.environment_id == user.environment_id))
                 else:
-                    # Other roles can only see their own submissions
+                    # Regular users can only see their own submissions
                     query = query.filter(FormSubmission.submitted_by == user.username)
             
             # Apply optional filters
@@ -242,9 +209,7 @@ class FormSubmissionService:
                 if 'form_id' in filters:
                     query = query.filter(FormSubmission.form_id == filters['form_id'])
                     
-                if 'environment_id' in filters and not consider_public:
-                    # Only apply environment filter if not considering public forms
-                    # or if explicitly handling public forms in the query above
+                if 'environment_id' in filters:
                     query = (query
                         .join(User, User.id == Form.user_id, isouter=True)
                         .filter(User.environment_id == filters['environment_id']))
@@ -342,8 +307,6 @@ class FormSubmissionService:
             
             # Apply role-based access control
             current_user = filters.get('current_user')
-            consider_public = filters.get('consider_public', False)
-            
             if current_user:
                 # Normal role-based filtering for viewing submissions
                 if not current_user.role.is_super_user:
@@ -352,30 +315,15 @@ class FormSubmissionService:
                         query = query.filter(FormSubmission.submitted_by == current_user.username)
                     elif current_user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
                         # Site managers and supervisors can see submissions in their environment
-                        # Plus public forms if consider_public is True
-                        if consider_public:
-                            query = query.join(
-                                Form, 
-                                Form.id == FormSubmission.form_id
-                            ).join(
-                                User, 
-                                User.id == Form.user_id
-                            ).filter(
-                                db.or_(
-                                    User.environment_id == current_user.environment_id,
-                                    Form.is_public == True
-                                )
-                            )
-                        else:
-                            query = query.join(
-                                Form, 
-                                Form.id == FormSubmission.form_id
-                            ).join(
-                                User, 
-                                User.id == Form.user_id
-                            ).filter(
-                                User.environment_id == current_user.environment_id
-                            )
+                        query = query.join(
+                            Form, 
+                            Form.id == FormSubmission.form_id
+                        ).join(
+                            User, 
+                            User.id == Form.user_id
+                        ).filter(
+                            User.environment_id == current_user.environment_id
+                        )
             
             # Get total count
             total_count = query.count()
@@ -425,11 +373,9 @@ class FormSubmissionService:
                         submission_dict['is_editable'] = True
                     elif current_user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
                         # Site managers and supervisors can edit submissions in their environment
-                        # or public forms that are less than 7 days old
+                        # that are less than 7 days old
                         if submitted_at and (datetime.utcnow() - submitted_at).days <= 7:
-                            is_public = submission.form.is_public if submission.form else False
-                            if is_public or (submission.form and submission.form.creator and 
-                                            submission.form.creator.environment_id == current_user.environment_id):
+                            if submission.form and submission.form.creator and submission.form.creator.environment_id == current_user.environment_id:
                                 submission_dict['is_editable'] = True
                     elif submission.submitted_by == current_user.username:
                         # Regular users can edit their own submissions that are less than 7 days old

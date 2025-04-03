@@ -1,6 +1,8 @@
 from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.controllers.answer_submitted_controller import AnswerSubmittedController
+from app.controllers.form_submission_controller import FormSubmissionController
+from app.models.user import User
 from app.services.auth_service import AuthService
 from app.utils.permission_manager import PermissionManager, EntityType, RoleType
 import logging
@@ -227,6 +229,22 @@ def get_answers_by_submission(submission_id):
     try:
         current_user = get_jwt_identity()
         user = AuthService.get_current_user(current_user)
+
+        # First verify submission exists and check access
+        submission = FormSubmissionController.get_submission(submission_id)
+        if not submission:
+            return jsonify({"error": "Form submission not found"}), 404
+
+        # Access control
+        if not user.role.is_super_user:
+            if user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
+                # Verify submitter is in the same environment
+                submitter = User.query.filter_by(username=submission.submitted_by).first()
+                if not submitter or submitter.environment_id != user.environment_id:
+                    return jsonify({"error": "Unauthorized access"}), 403
+            elif submission.submitted_by != current_user:
+                # Regular users can only see their own submissions
+                return jsonify({"error": "Unauthorized access"}), 403
 
         answers, error = AnswerSubmittedController.get_answers_by_submission(
             submission_id=submission_id,

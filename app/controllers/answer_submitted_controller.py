@@ -108,7 +108,7 @@ class AnswerSubmittedController:
             # Apply role-based filtering
             if not user.role.is_super_user:
                 if user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                    # Can only see answers in their environment
+                    # Can only see answers from users in their environment
                     filters['environment_id'] = user.environment_id
                 else:
                     # Regular users can only see their own submissions
@@ -162,13 +162,17 @@ class AnswerSubmittedController:
 
             # Access control
             if current_user and user_role != RoleType.ADMIN:
-                # Get the current user object to check environment_id
+                # Get the submitter to check environment_id
+                submitter = user.User.query.filter_by(username=answer.form_submission.submitted_by).first()
+                # Get the current user object
                 user_obj = user.User.query.filter_by(username=current_user).first()
                 
                 if user_role in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                    if answer.form_submission.form.creator.environment_id != user_obj.environment_id:
+                    # Check if submitter is in the same environment
+                    if not submitter or submitter.environment_id != user_obj.environment_id:
                         return None, "Unauthorized access"
                 elif answer.form_submission.submitted_by != current_user:
+                    # Regular users can only see their own submissions
                     return None, "Unauthorized access"
 
             return answer.to_dict(), None
@@ -192,13 +196,17 @@ class AnswerSubmittedController:
 
             # Access control
             if current_user and user_role != RoleType.ADMIN:
-                # Get the current user object to check environment_id
+                # Get the submitter to check environment_id
+                submitter = user.User.query.filter_by(username=submission.submitted_by).first()
+                # Get the current user object
                 user_obj = user.User.query.filter_by(username=current_user).first()
                 
                 if user_role in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                    if submission.form.creator.environment_id != user_obj.environment_id:
+                    # Check if submitter is in the same environment
+                    if not submitter or submitter.environment_id != user_obj.environment_id:
                         return [], "Unauthorized access"
                 elif submission.submitted_by != current_user:
+                    # Regular users can only see their own submissions
                     return [], "Unauthorized access"
 
             answers, error = AnswerSubmittedService.get_answers_by_submission(submission_id)

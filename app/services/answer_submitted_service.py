@@ -156,13 +156,37 @@ class AnswerSubmittedService:
     @staticmethod
     def get_all_answers_submitted(filters: Optional[Dict] = None) -> List[AnswerSubmitted]:
         """Get all submitted answers with optional filtering"""
-        query = AnswerSubmitted.query.filter_by(is_deleted=False)
-        
-        if filters:
-            if 'form_submission_id' in filters:
-                query = query.filter_by(form_submission_id=filters['form_submission_id'])
-        
-        return query.order_by(AnswerSubmitted.created_at.desc()).all()
+        try:
+            query = AnswerSubmitted.query.filter_by(is_deleted=False)
+            
+            if filters:
+                if 'form_submission_id' in filters:
+                    query = query.filter_by(form_submission_id=filters['form_submission_id'])
+                    
+                if 'environment_id' in filters:
+                    # Join tables to filter by environment
+                    query = query.join(
+                        FormSubmission, 
+                        FormSubmission.id == AnswerSubmitted.form_submission_id
+                    ).join(
+                        User, 
+                        User.username == FormSubmission.submitted_by
+                    ).filter(
+                        User.environment_id == filters['environment_id']
+                    )
+                    
+                if 'submitted_by' in filters:
+                    query = query.join(
+                        FormSubmission, 
+                        FormSubmission.id == AnswerSubmitted.form_submission_id
+                    ).filter(
+                        FormSubmission.submitted_by == filters['submitted_by']
+                    )
+            
+            return query.order_by(AnswerSubmitted.created_at.desc()).all()
+        except Exception as e:
+            logger.error(f"Error in get_all_answers_submitted service: {str(e)}")
+            return []
     
     @staticmethod
     def get_batch(page=1, per_page=50, **filters):
@@ -210,16 +234,13 @@ class AnswerSubmittedService:
                             FormSubmission.id == AnswerSubmitted.form_submission_id
                         ).filter(FormSubmission.submitted_by == current_user.username)
                     elif current_user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                        # Site managers and supervisors can see submissions in their environment
+                        # Site managers and supervisors can see submissions from users in their environment
                         query = query.join(
                             FormSubmission, 
                             FormSubmission.id == AnswerSubmitted.form_submission_id
                         ).join(
-                            Form, 
-                            Form.id == FormSubmission.form_id
-                        ).join(
                             User, 
-                            User.id == Form.user_id
+                            User.username == FormSubmission.submitted_by
                         ).filter(
                             User.environment_id == current_user.environment_id
                         )

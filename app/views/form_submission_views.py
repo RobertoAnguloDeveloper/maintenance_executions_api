@@ -2,6 +2,7 @@ from datetime import datetime
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.controllers.form_submission_controller import FormSubmissionController
+from app.models.user import User
 from app.services.auth_service import AuthService
 from app.utils.permission_manager import PermissionManager, EntityType, RoleType
 import logging
@@ -206,19 +207,21 @@ def get_submission(submission_id):
         if not submission:
             return jsonify({"error": "Submission not found"}), 404
 
-        # Access control based on role
+        # Access control
+        # 1. Technicians can only see their own submissions
+        # 2. Site managers and supervisors can see all submissions in their environment
+        # 3. Admin users can see all submissions
         if not user.role.is_super_user:
             if user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                # Managers/Supervisors can see submissions from their environment
-                form_creator_env_id = submission.form.creator.environment_id if submission.form.creator else None
-                if form_creator_env_id != user.environment_id:
+                # Site managers and supervisors can only see submissions from users in their environment
+                submitter = User.query.filter_by(username=submission.submitted_by).first()
+                if not submitter or submitter.environment_id != user.environment_id:
                     return jsonify({"error": "Unauthorized access"}), 403
-            else:
-                # Regular users (technicians) can only see their own submissions
-                if submission.submitted_by != current_user:
-                    return jsonify({"error": "Unauthorized access"}), 403
+            elif submission.submitted_by != current_user:
+                # Regular users can only see their own submissions
+                return jsonify({"error": "Unauthorized access"}), 403
 
-        # Get answers
+        # Get answers with access control
         answers, error = FormSubmissionController.get_submission_answers(
             submission_id=submission_id,
             current_user=current_user,
@@ -262,6 +265,7 @@ def get_my_submissions():
         if form_id:
             filters['form_id'] = form_id
 
+        # This endpoint is for current user's submissions only
         submissions, error = FormSubmissionController.get_user_submissions(
             username=current_user,
             filters=filters
@@ -284,6 +288,49 @@ def get_my_submissions():
         logger.error(f"Error getting user submissions: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
 
+@form_submission_bp.route('/<int:submission_id>/answers', methods=['GET'])
+@jwt_required()
+@PermissionManager.require_permission(action="view", entity_type=EntityType.SUBMISSIONS)
+def get_submission_answers(submission_id):
+    """Get all answers for a specific submission"""
+    try:
+        current_user = get_jwt_identity()
+        user = AuthService.get_current_user(current_user)
+
+        # First get the submission to perform access control
+        submission = FormSubmissionController.get_submission(submission_id)
+        if not submission:
+            return jsonify({"error": "Submission not found"}), 404
+            
+        # Access control
+        if not user.role.is_super_user:
+            if user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
+                # Site managers and supervisors can only see submissions from users in their environment
+                submitter = User.query.filter_by(username=submission.submitted_by).first()
+                if not submitter or submitter.environment_id != user.environment_id:
+                    return jsonify({"error": "Unauthorized access"}), 403
+            elif submission.submitted_by != current_user:
+                # Regular users can only see their own submissions
+                return jsonify({"error": "Unauthorized access"}), 403
+
+        answers, error = FormSubmissionController.get_submission_answers(
+            submission_id=submission_id,
+            current_user=current_user,
+            user_role=user.role.name
+        )
+
+        if error:
+            return jsonify({"error": error}), 400
+
+        return jsonify({
+            'submission_id': submission_id,
+            'total_answers': len(answers),
+            'answers': answers
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error getting submission answers: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
     
 @form_submission_bp.route('/<int:submission_id>', methods=['PUT'])
 @jwt_required()
@@ -354,49 +401,4 @@ def delete_submission(submission_id):
 
     except Exception as e:
         logger.error(f"Error deleting submission {submission_id}: {str(e)}")
-        return jsonify({"error": "Internal server error"}), 500
-
-@form_submission_bp.route('/<int:submission_id>/answers', methods=['GET'])
-@jwt_required()
-@PermissionManager.require_permission(action="view", entity_type=EntityType.SUBMISSIONS)
-def get_submission_answers(submission_id):
-    """Get all answers for a specific submission"""
-    try:
-        current_user = get_jwt_identity()
-        user = AuthService.get_current_user(current_user)
-
-        # First get the submission to check access rights
-        submission = FormSubmissionController.get_submission(submission_id)
-        if not submission:
-            return jsonify({"error": "Submission not found"}), 404
-            
-        # Apply access control
-        if not user.role.is_super_user:
-            if user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                # Managers/Supervisors can see submissions from their environment
-                form_creator_env_id = submission.form.creator.environment_id if submission.form.creator else None
-                if form_creator_env_id != user.environment_id:
-                    return jsonify({"error": "Unauthorized access"}), 403
-            else:
-                # Regular users (technicians) can only see their own submissions
-                if submission.submitted_by != current_user:
-                    return jsonify({"error": "Unauthorized access"}), 403
-
-        answers, error = FormSubmissionController.get_submission_answers(
-            submission_id=submission_id,
-            current_user=current_user,
-            user_role=user.role.name
-        )
-
-        if error:
-            return jsonify({"error": error}), 400
-
-        return jsonify({
-            'submission_id': submission_id,
-            'total_answers': len(answers),
-            'answers': answers
-        }), 200
-
-    except Exception as e:
-        logger.error(f"Error getting submission answers: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500

@@ -78,7 +78,7 @@ class FormSubmissionController:
             # Apply role-based filtering
             if not user.role.is_super_user:
                 if user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                    # Site managers and supervisors see submissions from their environment
+                    # Site managers and supervisors can see all submissions in their environment
                     filters['environment_id'] = user.environment_id
                 else:
                     # Regular users can only see their own submissions
@@ -112,7 +112,7 @@ class FormSubmissionController:
             # Apply role-based filtering
             if not user.role.is_super_user:
                 if user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                    # Site managers and supervisors see submissions from their environment
+                    # Site managers and supervisors can see all submissions in their environment
                     filters['environment_id'] = user.environment_id
                 else:
                     # Regular users can only see their own submissions
@@ -212,8 +212,19 @@ class FormSubmissionController:
             if not submission:
                 return [], "Submission not found"
 
-            # Access control is handled at the route level
-            # Service method just retrieves the answers
+            # Access control
+            if user_role == RoleType.ADMIN:
+                # Admins can see everything
+                pass
+            elif user_role in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
+                # Site managers and supervisors can see submissions from users in their environment
+                submitter = User.query.filter_by(username=submission.submitted_by).first()
+                if not submitter or submitter.environment_id != FormSubmissionService.get_user_environment_id(current_user):
+                    return [], "Unauthorized access"
+            elif submission.submitted_by != current_user:
+                # Regular users can only see their own submissions
+                return [], "Unauthorized access"
+
             return FormSubmissionService.get_submission_answers(submission_id)
 
         except Exception as e:

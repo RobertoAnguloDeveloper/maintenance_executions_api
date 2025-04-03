@@ -116,12 +116,12 @@ class FormSubmissionService:
                     FormSubmission.is_deleted == False
                 ))
             
-            # Apply role-based filtering
+            # Apply role-based filtering based on environments
             if not user.role.is_super_user:
                 if user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                    # Can only see submissions in their environment
+                    # Join with submitters to filter by environment
                     query = (query
-                        .join(User, User.id == Form.user_id)
+                        .join(User, User.username == FormSubmission.submitted_by)
                         .filter(User.environment_id == user.environment_id))
                 else:
                     # Regular users can only see their own submissions
@@ -131,11 +131,6 @@ class FormSubmissionService:
             if filters:
                 if 'form_id' in filters:
                     query = query.filter(FormSubmission.form_id == filters['form_id'])
-                    
-                if 'environment_id' in filters:
-                    query = (query
-                        .join(User, User.id == Form.user_id, isouter=True)
-                        .filter(User.environment_id == filters['environment_id']))
                         
                 if 'submitted_by' in filters:
                     query = query.filter(
@@ -193,12 +188,12 @@ class FormSubmissionService:
                     FormSubmission.is_deleted == False
                 ))
             
-            # Apply role-based filtering
+            # Apply role-based filtering based on environments
             if not user.role.is_super_user:
                 if user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                    # Can only see submissions in their environment
+                    # Join with submitters to filter by environment
                     query = (query
-                        .join(User, User.id == Form.user_id, isouter=True)
+                        .join(User, User.username == FormSubmission.submitted_by)
                         .filter(User.environment_id == user.environment_id))
                 else:
                     # Regular users can only see their own submissions
@@ -208,11 +203,6 @@ class FormSubmissionService:
             if filters:
                 if 'form_id' in filters:
                     query = query.filter(FormSubmission.form_id == filters['form_id'])
-                    
-                if 'environment_id' in filters:
-                    query = (query
-                        .join(User, User.id == Form.user_id, isouter=True)
-                        .filter(User.environment_id == filters['environment_id']))
                         
                 if 'submitted_by' in filters:
                     query = query.filter(
@@ -314,13 +304,10 @@ class FormSubmissionService:
                         # Technicians can only see their own submissions
                         query = query.filter(FormSubmission.submitted_by == current_user.username)
                     elif current_user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                        # Site managers and supervisors can see submissions in their environment
+                        # Site managers and supervisors can see submissions from users in their environment
                         query = query.join(
-                            Form, 
-                            Form.id == FormSubmission.form_id
-                        ).join(
-                            User, 
-                            User.id == Form.user_id
+                            User,
+                            User.username == FormSubmission.submitted_by
                         ).filter(
                             User.environment_id == current_user.environment_id
                         )
@@ -375,7 +362,8 @@ class FormSubmissionService:
                         # Site managers and supervisors can edit submissions in their environment
                         # that are less than 7 days old
                         if submitted_at and (datetime.utcnow() - submitted_at).days <= 7:
-                            if submission.form and submission.form.creator and submission.form.creator.environment_id == current_user.environment_id:
+                            submitter = User.query.filter_by(username=submission.submitted_by).first()
+                            if submitter and submitter.environment_id == current_user.environment_id:
                                 submission_dict['is_editable'] = True
                     elif submission.submitted_by == current_user.username:
                         # Regular users can edit their own submissions that are less than 7 days old

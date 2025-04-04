@@ -34,10 +34,19 @@ def create_submission():
                 if file_key in files:
                     answer['signature_file'] = files[file_key]
 
+        # Get submitted_at from request or use current time
+        submitted_at = None
+        if 'submitted_at' in data:
+            try:
+                submitted_at = datetime.fromisoformat(data['submitted_at'])
+            except (ValueError, TypeError):
+                return jsonify({"error": "Invalid submitted_at format. Use ISO format (YYYY-MM-DDTHH:MM:SS)"}), 400
+
         submission, error = FormSubmissionController.create_submission(
             form_id=int(data['form_id']),
             username=current_user,
-            answers_data=answers_data
+            answers_data=answers_data,
+            submitted_at=submitted_at
         )
 
         if error:

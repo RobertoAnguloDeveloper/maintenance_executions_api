@@ -78,39 +78,47 @@ def create_app(config_class=None):
     app = Flask(__name__)
     CORS(app, resources={
         r"/api/*": {
-            "origins": ["*"],
+            "origins": "*",
             "methods": ["OPTIONS", "GET", "POST", "PUT", "DELETE"],
             "allow_headers": [
-            "Content-Type", 
-            "Authorization",
-            "Access-Control-Allow-Origin",
-            "Access-Control-Allow-Credentials",
-            "Accept-Encoding"
-        ],
-        "supports_credentials": True,
-        "expose_headers": ["Content-Type", "Authorization","Content-Length",
-                "Content-Range","Accept-Ranges"]
+                "Content-Type", 
+                "Authorization",
+                "Access-Control-Allow-Origin",
+                "Access-Control-Allow-Credentials",
+                "Accept-Encoding",
+                "X-Requested-With",
+                "Origin"
+            ],
+            "supports_credentials": True,
+            "expose_headers": [
+                "Content-Type", 
+                "Authorization",
+                "Content-Length",
+                "Content-Range",
+                "Accept-Ranges"
+            ]
         }
     })
     
     @app.after_request
     def after_request(response):
-        # Allow file downloads from any origin
-        if request.path.startswith('/api/cmms-configs/file/'):
+        # For non-OPTIONS requests
+        if request.method != 'OPTIONS':
             response.headers.add('Access-Control-Allow-Origin', '*')
             response.headers.add('Access-Control-Allow-Headers', 
-                'Content-Type, Authorization, X-Requested-With, Accept, Cache-Control, Accept-Encoding')
-            response.headers.add('Access-Control-Allow-Methods', 'GET, OPTIONS')
-            response.headers.add('Access-Control-Expose-Headers',
-                'Content-Length, Content-Range, Accept-Ranges')
+                'Content-Type, Authorization, X-Requested-With, Origin')
+            response.headers.add('Access-Control-Allow-Methods', 
+                'GET, POST, PUT, DELETE, OPTIONS')
             
-            # Add specific headers for file downloads
-            response.headers.add('Accept-Ranges', 'bytes')
+        # For OPTIONS preflight requests
+        if request.method == 'OPTIONS':
+            response.headers.add('Access-Control-Allow-Origin', '*')
+            response.headers.add('Access-Control-Allow-Headers', 
+                'Content-Type, Authorization, X-Requested-With, Origin')
+            response.headers.add('Access-Control-Allow-Methods', 
+                'GET, POST, PUT, DELETE, OPTIONS')
+            response.headers.add('Access-Control-Max-Age', '86400')  # 24 hours
             
-            # Remove any problematic headers
-            if 'Accept-Encoding' in response.headers:
-                del response.headers['Accept-Encoding']
-                
         return response
     
     try:

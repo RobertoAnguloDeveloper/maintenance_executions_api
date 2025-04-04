@@ -15,7 +15,8 @@ class FormSubmissionController:
     def create_submission(
         form_id: int,
         username: str,
-        answers_data: Optional[List[Dict]] = None
+        answers_data: Optional[List[Dict]] = None,
+        submitted_at: Optional[datetime] = None
     ) -> Tuple[Optional[FormSubmission], Optional[str]]:
         """
         Create a new form submission with validation and access control
@@ -24,6 +25,7 @@ class FormSubmissionController:
             form_id: ID of the form
             username: Username of submitter
             answers_data: Optional list of answer data
+            submitted_at: Optional timestamp for when the form was submitted
             
         Returns:
             tuple: (Created FormSubmission or None, Error message or None)
@@ -34,9 +36,6 @@ class FormSubmissionController:
             if not form:
                 return None, "Form not found"
 
-            # if not form.is_public and not form.creator.username == username:
-            #     return None, "Unauthorized access to form"
-
             # Get upload path for signatures
             upload_path = current_app.config.get('UPLOAD_FOLDER')
 
@@ -44,7 +43,8 @@ class FormSubmissionController:
                 form_id=form_id,
                 username=username,
                 answers_data=answers_data,
-                upload_path=upload_path
+                upload_path=upload_path,
+                submitted_at=submitted_at
             )
             
             if error:

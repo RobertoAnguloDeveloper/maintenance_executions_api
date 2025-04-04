@@ -20,7 +20,8 @@ class FormSubmissionService:
         form_id: int,
         username: str,
         answers_data: List[Dict] = None,
-        upload_path: Optional[str] = None
+        upload_path: Optional[str] = None,
+        submitted_at: Optional[datetime] = None
     ) -> Tuple[Optional[FormSubmission], Optional[str]]:
         """
         Create a new form submission with answers and handle signatures
@@ -30,6 +31,7 @@ class FormSubmissionService:
             username: Username of the submitter
             answers_data: List of answer data dictionaries
             upload_path: Base path for file uploads
+            submitted_at: Optional timestamp for when the form was submitted
             
         Returns:
             tuple: (Created FormSubmission object or None, Error message or None)
@@ -44,7 +46,7 @@ class FormSubmissionService:
             submission = FormSubmission(
                 form_id=form_id,
                 submitted_by=username,
-                submitted_at=datetime.utcnow()
+                submitted_at=submitted_at or datetime.utcnow()
             )
             db.session.add(submission)
             db.session.flush()

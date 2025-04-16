@@ -1,5 +1,6 @@
 # app/views/__init__.py
 
+# Import existing blueprints
 from .user_views import user_bp
 from .role_views import role_bp
 from .permission_views import permission_bp
@@ -19,6 +20,10 @@ from .export_views import export_bp
 from .cmms_config_views import cmms_config_bp
 from .export_submission_views import export_submission_bp
 from .count_views import count_bp
+
+# Import the new entity basic blueprint
+from .entity_basic_views import entity_basic_bp
+
 from flask import jsonify
 
 # Define the standalone ping function
@@ -47,7 +52,9 @@ def register_blueprints(app):
         (health_bp, '/api/health'),
         (cmms_config_bp,'/api/cmms-configs'),
         (export_submission_bp, '/api/export_submissions'),
-        (count_bp, '/api/counts')  # Added count blueprint
+        (count_bp, '/api/counts'),
+        # Add the new entity basic blueprint
+        (entity_basic_bp, '/api/entity_basic')
     ]
 
     for blueprint, url_prefix in blueprints:

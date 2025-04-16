@@ -29,6 +29,20 @@ class Form(TimestampMixin, SoftDeleteMixin, db.Model):
 
     def __repr__(self) -> str:
         return f'<Form {self.title}>'
+    
+    def to_dict_basic(self) -> dict:
+        """Return dictionary with basic fields only"""
+        return {
+            'id': self.id,
+            'title': self.title,
+            'description': self.description,
+            'user_id': self.user_id,
+            'is_public': self.is_public,
+            'created_at': self._format_timestamp(self.created_at),
+            'updated_at': self._format_timestamp(self.updated_at),
+            'is_deleted': self.is_deleted,
+            'deleted_at': self._format_timestamp(self.deleted_at)
+        }
 
     def _get_creator_dict(self) -> Dict[str, Any]:
         """Get creator information as a dictionary."""

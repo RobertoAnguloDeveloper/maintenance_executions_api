@@ -37,6 +37,23 @@ class User(TimestampMixin, SoftDeleteMixin, db.Model):
     def restore(self):
         self.is_deleted = False
         self.deleted_at = None
+        
+    def to_dict_basic(self) -> dict:
+        """Return dictionary with basic fields only"""
+        return {
+            'id': self.id,
+            'first_name': self.first_name,
+            'last_name': self.last_name,
+            'email': self.email,
+            'contact_number': self.contact_number,
+            'username': self.username,
+            'role_id': self.role_id,
+            'environment_id': self.environment_id,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            'is_deleted': self.is_deleted,
+            'deleted_at': self.deleted_at.isoformat() if self.deleted_at else None
+        }
 
     def to_dict(self, include_details=False, include_deleted=False):
         """

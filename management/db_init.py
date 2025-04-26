@@ -431,7 +431,7 @@ class DatabaseInitializer:
         """Initialize default question types."""
         try:
             default_types = [
-                'text', 'multiple_choices', 
+                'text', 'multiple_choices','table' 
                 'checkbox', 'date', 
                 'datetime', 'user', 'signature'
             ]

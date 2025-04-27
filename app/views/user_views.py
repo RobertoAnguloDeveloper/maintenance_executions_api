@@ -95,6 +95,61 @@ def login():
     except Exception as e:
         logger.error(f"Error during login: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
+    
+    
+@user_bp.route('/logout', methods=['POST'])
+def logout():
+    """
+    User logout endpoint
+    
+    Handles both authenticated and unauthenticated logout requests.
+    For authenticated requests, extracts the token and logs the user out.
+    For unauthenticated requests, returns a success message without validation.
+    
+    This approach ensures that invalid tokens don't cause logout failures.
+    """
+    try:
+        # Get authorization header
+        auth_header = request.headers.get('Authorization', '')
+        token = None
+        username = None
+        
+        # Extract the token if available
+        if auth_header.startswith('Bearer '):
+            token = auth_header[7:]  # Remove 'Bearer ' prefix
+        
+        # Try to get identity if JWT is valid, but don't require it
+        try:
+            if token:
+                # This will only work with valid tokens compatible with your app's JWT config
+                user_identity = get_jwt_identity()
+                if user_identity:
+                    username = user_identity
+        except:
+            # If token is invalid, we'll still proceed with logout
+            pass
+            
+        # Process logout
+        success, message = UserController.logout_user(token=token, username=username)
+        
+        if success:
+            return jsonify({
+                "message": message,
+                "status": "success"
+            }), 200
+        else:
+            return jsonify({
+                "error": message,
+                "status": "error"
+            }), 400
+            
+    except Exception as e:
+        logger.error(f"Error during logout: {str(e)}")
+        # Even if we have an error, respond with success - client should still clear token
+        return jsonify({
+            "message": "Successfully logged out",
+            "status": "success" 
+        }), 200
 
 @user_bp.route('', methods=['GET'])
 @jwt_required()

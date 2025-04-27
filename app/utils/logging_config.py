@@ -92,6 +92,7 @@ def styled_log(message, style=None):
     styles = {
         'success': '\033[92m',  # Green
         'error': '\033[91m',    # Red
+        '422': '\031[91m',    # Red (for 422 errors)
         'warning': '\033[93m',  # Yellow
         'info': '\033[94m',     # Blue
         'bold': '\033[1m',      # Bold

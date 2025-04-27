@@ -1,8 +1,23 @@
+from app.services.auth_service import AuthService
 from app.services.user_service import UserService
 
 class UserController:
     def __init__(self):
         self.user_service = UserService()
+        
+    @staticmethod
+    def logout_user(token=None, username=None):
+        """
+        Handle user logout with enhanced token extraction
+        
+        Args:
+            token (str): Raw JWT token (optional)
+            username (str): Username of the user to logout (optional)
+            
+        Returns:
+            tuple: (success: bool, message: str)
+        """
+        return AuthService.logout_user(token=token, username=username)
         
     @staticmethod
     def create_user(first_name, last_name, email, contact_number, username, password, role_id, environment_id):

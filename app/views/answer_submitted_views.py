@@ -30,12 +30,29 @@ def create_answer_submitted():
                 "required_fields": required_fields
             }), 400
 
+        # Extract table-specific fields if necessary
+        column = None
+        row = None
+        cell_content = None
+        
+        if data['question_type_text'] == 'table':
+            # Additional validation for table-type questions
+            if 'column' not in data or 'row' not in data:
+                return jsonify({"error": "Column and row are required for table-type questions"}), 400
+                
+            column = int(data['column'])
+            row = int(data['row'])
+            cell_content = data.get('cell_content')
+
         answer_submitted, error = AnswerSubmittedController.create_answer_submitted(
             form_submission_id=int(data['form_submission_id']),
             question_text=data['question_text'],
             question_type_text=data['question_type_text'],
             answer_text=data['answer_text'],
-            current_user=current_user
+            current_user=current_user,
+            column=column,
+            row=row,
+            cell_content=cell_content
         )
 
         if error:
@@ -70,6 +87,11 @@ def bulk_create_answers_submitted():
                 return jsonify({
                     "error": "Each submission must contain question_text, question_type_text, and answer_text"
                 }), 400
+                
+            # Additional validation for table-type questions
+            if submission['question_type_text'] == 'table':
+                if 'column' not in submission or 'row' not in submission:
+                    return jsonify({"error": "Column and row are required for table-type questions"}), 400
 
         submissions, error = AnswerSubmittedController.bulk_create_answers_submitted(
             form_submission_id=int(data['form_submission_id']),
@@ -87,7 +109,7 @@ def bulk_create_answers_submitted():
                 if hasattr(submission, 'to_dict'):
                     submissions_data.append(submission.to_dict())
                 else:
-                    submissions_data.append({
+                    submission_dict = {
                         'id': submission.id,
                         'question': submission.question,
                         'question_type': submission.question_type,
@@ -95,7 +117,15 @@ def bulk_create_answers_submitted():
                         'form_submission_id': submission.form_submission_id,
                         'created_at': submission.created_at.isoformat() if submission.created_at else None,
                         'updated_at': submission.updated_at.isoformat() if submission.updated_at else None
-                    })
+                    }
+                    
+                    # Add table-specific fields if applicable
+                    if submission.question_type == 'table':
+                        submission_dict['column'] = submission.column
+                        submission_dict['row'] = submission.row
+                        submission_dict['cell_content'] = submission.cell_content
+                        
+                    submissions_data.append(submission_dict)
             
         return jsonify({
             "message": "Answers submitted successfully",
@@ -122,6 +152,20 @@ def get_all_answers_submitted():
         form_submission_id = request.args.get('form_submission_id', type=int)
         if form_submission_id:
             filters['form_submission_id'] = form_submission_id
+
+        # Question type filter
+        question_type = request.args.get('question_type')
+        if question_type:
+            filters['question_type'] = question_type
+            
+        # Table-specific filters
+        column = request.args.get('column', type=int)
+        if column is not None:
+            filters['column'] = column
+            
+        row = request.args.get('row', type=int)
+        if row is not None:
+            filters['row'] = row
 
         # Date range filters
         start_date = request.args.get('start_date')
@@ -159,6 +203,10 @@ def get_batch_answers_submitted():
         form_submission_id = request.args.get('form_submission_id', type=int)
         question_type = request.args.get('question_type')
         
+        # Table-specific filters
+        column = request.args.get('column', type=int)
+        row = request.args.get('row', type=int)
+        
         # Apply role-based access control
         current_user = get_jwt_identity()
         user = AuthService.get_current_user(current_user)
@@ -170,6 +218,8 @@ def get_batch_answers_submitted():
             include_deleted=include_deleted,
             form_submission_id=form_submission_id,
             question_type=question_type,
+            column=column,
+            row=row,
             current_user=user
         )
         
@@ -184,7 +234,9 @@ def get_batch_answers_submitted():
                 "per_page": per_page,
                 "filters_applied": {
                     "form_submission_id": form_submission_id,
-                    "question_type": question_type
+                    "question_type": question_type,
+                    "column": column,
+                    "row": row
                 }
             },
             "items": answers_submitted
@@ -265,6 +317,35 @@ def get_answers_by_submission(submission_id):
         logger.error(f"Error getting answers for submission {submission_id}: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
 
+@answer_submitted_bp.route('/table/<int:submission_id>/<path:question_text>', methods=['GET'])
+@jwt_required()
+@PermissionManager.require_permission(action="view", entity_type=EntityType.SUBMISSIONS)
+def get_table_structure(submission_id, question_text):
+    """Get the structure of a table question's answers"""
+    try:
+        current_user = get_jwt_identity()
+        user = AuthService.get_current_user(current_user)
+
+        table_structure, error = AnswerSubmittedController.get_table_structure(
+            submission_id=submission_id,
+            question_text=question_text,
+            current_user=current_user,
+            user_role=user.role.name
+        )
+
+        if error:
+            return jsonify({"error": error}), 400
+
+        return jsonify({
+            'submission_id': submission_id,
+            'question_text': question_text,
+            'table_structure': table_structure
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error getting table structure for submission {submission_id}: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
+
 @answer_submitted_bp.route('/<int:answer_submitted_id>', methods=['PUT'])
 @jwt_required()
 @PermissionManager.require_permission(action="update", entity_type=EntityType.SUBMISSIONS)
@@ -278,9 +359,36 @@ def update_answer_submitted(answer_submitted_id):
         if not data:
             return jsonify({"error": "No update data provided"}), 400
 
+        # Get the existing answer to check its type
+        existing_answer, error = AnswerSubmittedController.get_answer_submitted(
+            answer_submitted_id=answer_submitted_id,
+            current_user=current_user,
+            user_role=user.role.name
+        )
+        
+        if error:
+            return jsonify({"error": error}), 404
+
+        # Extract table-specific fields if necessary
+        column = None
+        row = None
+        cell_content = None
+        
+        if existing_answer.get('question_type') == 'table':
+            # For table-type questions, validate and extract table fields
+            if 'column' in data:
+                column = int(data['column'])
+            if 'row' in data:
+                row = int(data['row'])
+            if 'cell_content' in data:
+                cell_content = data.get('cell_content')
+
         updated_answer, error = AnswerSubmittedController.update_answer_submitted(
             answer_submitted_id=answer_submitted_id,
             answer_text=data.get('answer_text'),
+            column=column,
+            row=row,
+            cell_content=cell_content,
             current_user=current_user,
             user_role=user.role.name
         )

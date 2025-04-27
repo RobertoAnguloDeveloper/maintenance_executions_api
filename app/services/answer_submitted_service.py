@@ -25,18 +25,25 @@ class AnswerSubmittedService:
         answer_text: str,
         is_signature: bool = False,
         signature_file: Optional[FileStorage] = None,
-        upload_path: Optional[str] = None
+        upload_path: Optional[str] = None,
+        column: Optional[int] = None,
+        row: Optional[int] = None,
+        cell_content: Optional[str] = None
     ) -> Tuple[Optional[AnswerSubmitted], Optional[str]]:
         """
-        Create a new answer submission with signature handling.
+        Create a new answer submission with signature handling and table support.
         
         Args:
             form_submission_id: ID of the form submission
             question_text: The text of the question
+            question_type_text: The type of question (text, choice, table, etc.)
             answer_text: The answer text
             is_signature: Whether this answer requires a signature
             signature_file: File object for signature if applicable
             upload_path: Base path for file uploads
+            column: Column position for table-type questions
+            row: Row position for table-type questions
+            cell_content: Cell content for table-type questions
             
         Returns:
             tuple: (Created AnswerSubmitted object or None, Error message or None)
@@ -64,6 +71,13 @@ class AnswerSubmittedService:
                 question_type=question_type_text,
                 answer=answer_text
             )
+
+            # Handle table-type questions
+            if question_type_text == 'table' and column is not None and row is not None:
+                answer_submitted.column = column
+                answer_submitted.row = row
+                answer_submitted.cell_content = cell_content
+                
             db.session.add(answer_submitted)
 
             # Handle signature if applicable
@@ -101,7 +115,7 @@ class AnswerSubmittedService:
         upload_path: Optional[str] = None
     ) -> Tuple[Optional[List[AnswerSubmitted]], Optional[str]]:
         """
-        Bulk create answer submissions.
+        Bulk create answer submissions with table support.
         """
         try:
             created_submissions = []
@@ -134,6 +148,18 @@ class AnswerSubmittedService:
                     question_type=data['question_type_text'],
                     answer=data['answer_text']
                 )
+                
+                # Handle table-type questions
+                if data['question_type_text'] == 'table':
+                    # Validate required fields for table type
+                    if 'column' not in data or 'row' not in data:
+                        db.session.rollback()
+                        return None, "Column and row are required for table-type questions"
+                        
+                    answer_submitted.column = data['column']
+                    answer_submitted.row = data['row']
+                    answer_submitted.cell_content = data.get('cell_content')
+                
                 db.session.add(answer_submitted)
                 created_submissions.append(answer_submitted)
 
@@ -182,6 +208,16 @@ class AnswerSubmittedService:
                     ).filter(
                         FormSubmission.submitted_by == filters['submitted_by']
                     )
+                
+                if 'question_type' in filters:
+                    query = query.filter(AnswerSubmitted.question_type == filters['question_type'])
+                
+                # Table-specific filtering
+                if 'column' in filters:
+                    query = query.filter(AnswerSubmitted.column == filters['column'])
+                
+                if 'row' in filters:
+                    query = query.filter(AnswerSubmitted.row == filters['row'])
             
             return query.order_by(AnswerSubmitted.created_at.desc()).all()
         except Exception as e:
@@ -222,6 +258,15 @@ class AnswerSubmittedService:
             question_type = filters.get('question_type')
             if question_type:
                 query = query.filter(AnswerSubmitted.question_type == question_type)
+            
+            # Table-specific filtering
+            column = filters.get('column')
+            if column is not None:
+                query = query.filter(AnswerSubmitted.column == column)
+            
+            row = filters.get('row')
+            if row is not None:
+                query = query.filter(AnswerSubmitted.row == row)
             
             # Apply role-based access control
             current_user = filters.get('current_user')
@@ -276,9 +321,12 @@ class AnswerSubmittedService:
     @staticmethod
     def update_answer_submitted(
         answer_submitted_id: int,
-        answer_text: Optional[str] = None
+        answer_text: Optional[str] = None,
+        column: Optional[int] = None,
+        row: Optional[int] = None,
+        cell_content: Optional[str] = None
     ) -> Tuple[Optional[AnswerSubmitted], Optional[str]]:
-        """Update a submitted answer"""
+        """Update a submitted answer with table support"""
         try:
             answer = AnswerSubmitted.query.filter_by(
                 id=answer_submitted_id,
@@ -290,7 +338,17 @@ class AnswerSubmittedService:
 
             if answer_text is not None:
                 answer.answer = answer_text
-                answer.updated_at = datetime.utcnow()
+                
+            # Update table-specific fields if this is a table-type question
+            if answer.question_type == 'table':
+                if column is not None:
+                    answer.column = column
+                if row is not None:
+                    answer.row = row
+                if cell_content is not None:
+                    answer.cell_content = cell_content
+                    
+            answer.updated_at = datetime.utcnow()
 
             db.session.commit()
             return answer, None
@@ -320,3 +378,82 @@ class AnswerSubmittedService:
             db.session.rollback()
             logger.error(f"Error deleting answer submitted: {str(e)}")
             return False, str(e)
+            
+    @staticmethod
+    def get_table_cells(submission_id: int, question_text: str) -> Tuple[List[AnswerSubmitted], Optional[str]]:
+        """
+        Get all cells for a table-type question in a specific submission
+        
+        Args:
+            submission_id: ID of the form submission
+            question_text: Text of the table question
+            
+        Returns:
+            tuple: (List of AnswerSubmitted objects for table cells, Error message or None)
+        """
+        try:
+            cells = AnswerSubmitted.query.filter_by(
+                form_submission_id=submission_id,
+                question=question_text,
+                question_type='table',
+                is_deleted=False
+            ).order_by(AnswerSubmitted.row, AnswerSubmitted.column).all()
+            
+            return cells, None
+            
+        except Exception as e:
+            logger.error(f"Error getting table cells: {str(e)}")
+            return [], str(e)
+            
+    @staticmethod
+    def get_table_structure(submission_id: int, question_text: str) -> Tuple[Optional[Dict], Optional[str]]:
+        """
+        Get the structure of a table-type question response
+        
+        Args:
+            submission_id: ID of the form submission
+            question_text: Text of the table question
+            
+        Returns:
+            tuple: (Dictionary with table structure or None, Error message or None)
+        """
+        try:
+            cells, error = AnswerSubmittedService.get_table_cells(submission_id, question_text)
+            
+            if error:
+                return None, error
+                
+            if not cells:
+                return None, "No table data found"
+                
+            # Determine table dimensions
+            max_row = max(cell.row for cell in cells) if cells else 0
+            max_column = max(cell.column for cell in cells) if cells else 0
+            
+            # Create table structure
+            table = {
+                'rows': max_row + 1,
+                'columns': max_column + 1,
+                'cells': {}
+            }
+            
+            # Fill in cell data
+            for cell in cells:
+                row_key = str(cell.row)
+                col_key = str(cell.column)
+                
+                if row_key not in table['cells']:
+                    table['cells'][row_key] = {}
+                    
+                table['cells'][row_key][col_key] = {
+                    'id': cell.id,
+                    'content': cell.cell_content or '',
+                    'answer': cell.answer or ''
+                }
+            
+            return table, None
+            
+        except Exception as e:
+            error_msg = f"Error getting table structure: {str(e)}"
+            logger.error(error_msg)
+            return None, error_msg

@@ -2,6 +2,7 @@ from flask import Flask, request
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_jwt_extended import JWTManager
+from app.utils.logging_config import setup_logging
 from config import Config
 import logging
 import sys
@@ -13,8 +14,8 @@ import mimetypes
 mimetypes.init()
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# logging.basicConfig(level=logging.INFO)
+logger = setup_logging()
 
 # Initialize extensions
 db = SQLAlchemy()
@@ -23,12 +24,12 @@ jwt = JWTManager()
 
 
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+# # Configure logging
+# logging.basicConfig(
+#     level=logging.INFO,
+#     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+# )
+# logger = logging.getLogger(__name__)
 
 def check_db_initialized(db_instance):
     """

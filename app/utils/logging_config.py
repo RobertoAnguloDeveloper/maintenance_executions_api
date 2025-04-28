@@ -6,99 +6,143 @@ import re
 from datetime import datetime
 from pathlib import Path
 from logging.handlers import TimedRotatingFileHandler
+import sys # Import sys for checking stdout/stderr tty
 
-# ANSI color codes regex pattern
+# Regex pattern to detect and remove ANSI escape codes (for colors)
 ANSI_ESCAPE_PATTERN = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
 
 class ColorStripFilter(logging.Filter):
-    """Filter to remove ANSI color codes from log records"""
+    """A logging filter that removes ANSI color codes from log messages."""
     def filter(self, record):
+        # Check if the message exists and is a string before attempting to replace
         if hasattr(record, 'msg') and isinstance(record.msg, str):
             record.msg = ANSI_ESCAPE_PATTERN.sub('', record.msg)
+        # Always return True to allow the record to pass through
         return True
 
+# Module-level flag to ensure this setup runs only once per process
+_logging_configured = False
+
 def setup_logging():
-    """Configure logging for the application with daily log files"""
+    """
+    Configure logging for the application. Sets up console and rotating file handlers.
+    Ensures configuration happens only once per process.
+
+    Returns:
+        logging.Logger: The configured logger instance named "app".
+    """
+    global _logging_configured
+    logger_name = "app" # Define a specific name for the application logger
+
+    # If already configured in this specific process, return the existing logger
+    if _logging_configured:
+        return logging.getLogger(logger_name)
+
+    # --- Basic Setup ---
     log_dir = Path('logs')
-    log_dir.mkdir(exist_ok=True)
-    
-    # Format for log filename - just the date part
+    log_dir.mkdir(exist_ok=True) # Create logs directory if it doesn't exist
+
+    # Define log file naming based on date
     date_format = "%d-%m-%Y"
     current_date = datetime.now().strftime(date_format)
     log_file = log_dir / f'app_{current_date}.log'
-    
-    # Create a formatter for log entries
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    
-    # Set up the root logger
-    root_logger = logging.getLogger()
-    root_logger.setLevel(logging.INFO)
-    
-    # Clear any existing handlers to avoid duplication
-    if root_logger.handlers:
-        root_logger.handlers.clear()
-    
-    # Console handler - preserve colors
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(formatter)
-    root_logger.addHandler(console_handler)
-    
-    # File handler - strip colors using our custom filter
-    file_handler = TimedRotatingFileHandler(
-        filename=log_file,
-        when='midnight',  # Roll over at midnight
-        interval=1,       # One day
-        backupCount=30,   # Keep 30 days of logs
-        encoding='utf-8'
-    )
-    file_handler.setFormatter(formatter)
-    file_handler.suffix = "%d-%m-%Y"  # Use the same date format for rotated files
-    
-    # Add color stripping filter to file handler only
-    color_filter = ColorStripFilter()
-    file_handler.addFilter(color_filter)
-    
-    root_logger.addHandler(file_handler)
-    
-    # Set SQLAlchemy logging level
-    logging.getLogger('sqlalchemy.engine').setLevel(logging.WARNING)
-    
-    # Filter werkzeug logger to strip colors for file logs
+
+    # Define the standard log message format
+    log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    formatter = logging.Formatter(log_format)
+
+    # --- Configure the Main Application Logger ("app") ---
+    app_logger = logging.getLogger(logger_name)
+    # Check if handlers have already been added (e.g., by another import)
+    if not app_logger.hasHandlers():
+         app_logger.setLevel(logging.INFO) # Set the minimum logging level for the app
+         # Prevent app logs from propagating to the root logger (avoids duplicate root logs)
+         app_logger.propagate = False
+
+         # --- Console Handler (for terminal output) ---
+         # Check if running in an interactive terminal before adding console handler
+         if sys.stdout.isatty():
+             console_handler = logging.StreamHandler(sys.stdout) # Use stdout
+             console_handler.setFormatter(formatter)
+             # No color stripping for console
+             app_logger.addHandler(console_handler)
+         else:
+             # If not a TTY, maybe skip console logging or log differently
+             pass
+
+         # --- Rotating File Handler (for daily log files) ---
+         file_handler = TimedRotatingFileHandler(
+             filename=log_file,
+             when='midnight',  # Rotate logs at midnight
+             interval=1,       # Daily rotation
+             backupCount=30,   # Keep logs for 30 days
+             encoding='utf-8'  # Use UTF-8 encoding
+         )
+         file_handler.setFormatter(formatter)
+         # Use the same date format for rotated file names (e.g., app_27-04-2025.log.2025-04-28)
+         file_handler.suffix = "%Y-%m-%d" # Switched to standard ISO format for suffix
+         # Add filter to remove color codes before writing to file
+         color_filter = ColorStripFilter()
+         file_handler.addFilter(color_filter)
+         app_logger.addHandler(file_handler)
+
+         # Log initialization message using the app logger itself
+         app_logger.info(f"Logging initialized for '{logger_name}' logger. Log file: {log_file}")
+
+
+    # --- Configure Werkzeug Logger (Flask's internal server) ---
     werkzeug_logger = logging.getLogger('werkzeug')
-    werkzeug_logger.handlers = []  # Clear default handlers
-    
-    # Add handlers to werkzeug logger
-    werkzeug_console = logging.StreamHandler()
-    werkzeug_console.setFormatter(formatter)
-    werkzeug_logger.addHandler(werkzeug_console)
-    
-    werkzeug_file = logging.FileHandler(log_file)
-    werkzeug_file.setFormatter(formatter)
-    werkzeug_file.addFilter(color_filter)
-    werkzeug_logger.addHandler(werkzeug_file)
-    
-    # Create a named logger for this module
-    logger = logging.getLogger(__name__)
-    logger.info(f"Logging initialized. Current log file: {log_file}")
-    
-    return logger
+    if not werkzeug_logger.hasHandlers(): # Configure only if not already done
+        werkzeug_logger.setLevel(logging.INFO) # Log standard HTTP requests (INFO level)
+        werkzeug_logger.propagate = False # Prevent double logging via root
+
+        # Add app's handlers to Werkzeug logger so requests go to console/file
+        # Check if handlers were actually added to app_logger first
+        if app_logger.hasHandlers():
+            for handler in app_logger.handlers:
+                 # Make a copy or create new handlers if necessary to avoid shared state issues
+                 # For simplicity here, we reuse, but be mindful in complex scenarios
+                 werkzeug_logger.addHandler(handler)
+            app_logger.info("Werkzeug logger configured to use app handlers.")
+
+
+    # --- Configure SQLAlchemy Logger ---
+    sqlalchemy_logger = logging.getLogger('sqlalchemy.engine')
+    if not sqlalchemy_logger.hasHandlers(): # Configure only if not already done
+        # Set level (WARNING is common, INFO logs SQL queries)
+        sqlalchemy_logger.setLevel(logging.WARNING)
+        # Prevent propagation to avoid duplicate logs if root logger is configured
+        sqlalchemy_logger.propagate = False
+        # Optionally, add app handlers if you want SQL logs in your files/console
+        # if app_logger.hasHandlers():
+        #     for handler in app_logger.handlers:
+        #          sqlalchemy_logger.addHandler(handler)
+        app_logger.info("SQLAlchemy logger configured (Level: WARNING).")
+
+
+    # Mark logging as configured for this process
+    _logging_configured = True
+    # Return the main application logger instance
+    return app_logger
 
 # Optional: Function to get a styled log message (for console logging)
 def styled_log(message, style=None):
     """
-    Get a styled version of a log message for console output.
+    Get a styled version of a log message for console output using ANSI codes.
     Styles: 'success', 'error', 'warning', 'info', 'bold'
     """
     styles = {
         'success': '\033[92m',  # Green
         'error': '\033[91m',    # Red
-        '422': '\031[91m',    # Red (for 422 errors)
+        '422': '\033[91m',    # Red (can use specific codes)
         'warning': '\033[93m',  # Yellow
         'info': '\033[94m',     # Blue
         'bold': '\033[1m',      # Bold
     }
-    reset = '\033[0m'          # Reset to default
-    
-    if style and style in styles:
+    reset = '\033[0m'          # Reset color to default
+
+    # Apply style only if stdout is a TTY (terminal)
+    if style and style in styles and sys.stdout.isatty():
         return f"{styles[style]}{message}{reset}"
+    # Return plain message if no style, style not found, or not a TTY
     return message

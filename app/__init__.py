@@ -1,88 +1,94 @@
+# app/__init__.py
 from flask import Flask, request
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_jwt_extended import JWTManager
+# Import setup_logging directly
 from app.utils.logging_config import setup_logging
 from config import Config
 import logging
 import sys
 from sqlalchemy import inspect
 from flask_cors import CORS
-import logging
 import mimetypes
+import os # Import os
 
+# Initialize mimetypes database
 mimetypes.init()
 
-# Configure logging
-# logging.basicConfig(level=logging.INFO)
-logger = setup_logging()
+# --- Configure logging ONCE at the module level ---
+# This ensures it runs only when the module is first imported,
+# not every time create_app is called by the reloader.
+# setup_logging() returns the configured logger instance for the app.
+module_logger = setup_logging() # Use the specific app logger name
 
-# Initialize extensions
+# Initialize extensions globally (outside factory is fine for these)
+# They will be associated with an app instance later using init_app()
 db = SQLAlchemy()
 migrate = Migrate()
 jwt = JWTManager()
 
-
-
-# # Configure logging
-# logging.basicConfig(
-#     level=logging.INFO,
-#     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-# )
-# logger = logging.getLogger(__name__)
-
+# --- check_db_initialized function ---
 def check_db_initialized(db_instance):
     """
     Check if the database has been initialized with basic data.
-    
-    Args:
-        db_instance: SQLAlchemy instance
-        
-    Returns:
-        bool: True if database is initialized, False otherwise
+    Uses the 'app' logger instance.
     """
+    logger = logging.getLogger("app") # Get the app logger configured by setup_logging
     try:
-        # First check if tables exist
+        # First check if tables exist using SQLAlchemy inspector
         inspector = inspect(db_instance.engine)
         required_tables = ['roles', 'users', 'permissions', 'environments']
         existing_tables = inspector.get_table_names()
-        
+
         if not all(table in existing_tables for table in required_tables):
-            logger.info("Not all required tables exist")
+            logger.debug("Not all required tables exist") # Use debug level for less noise
             return False
-        
-        # Import models here to avoid circular imports
+
+        # Import models locally within the function to avoid potential circular imports
+        # during initial module loading, especially if models import 'db' from this file.
         from app.models.user import User
         from app.models.role import Role
-        
-        # Check if admin role exists
+
+        # Check if an admin role (marked as super user) exists
         admin_role = Role.query.filter_by(is_super_user=True).first()
         if not admin_role:
-            logger.info("Admin role does not exist")
+            logger.debug("Admin role does not exist") # Use debug level
             return False
-        
-        # Check if admin user exists
+
+        # Check if at least one user is assigned the admin role
         admin_user = User.query.filter_by(role_id=admin_role.id).first()
         if not admin_user:
-            logger.info("Admin user does not exist")
+            logger.debug("Admin user does not exist") # Use debug level
             return False
-        
-        logger.info("Database is properly initialized")
+
+        # If all checks pass, the database seems initialized
+        logger.debug("Database is properly initialized") # Use debug level
         return True
-        
+
     except Exception as e:
-        logger.error(f"Error checking database initialization: {str(e)}")
+        # Log any error during the check
+        logger.error(f"Error checking database initialization: {str(e)}", exc_info=True)
         return False
 
+
+# --- create_app factory ---
 def create_app(config_class=None):
-    """Create and configure the Flask application."""
+    """Create and configure the Flask application instance."""
+    # Get the logger instance configured at the module level
+    app_init_logger = logging.getLogger("app")
+
+    # Create the Flask app instance
     app = Flask(__name__)
+
+    # --- CORS setup ---
+    # Configure Cross-Origin Resource Sharing for API endpoints
     CORS(app, resources={
         r"/api/*": {
-            "origins": "*",
-            "methods": ["OPTIONS", "GET", "POST", "PUT", "DELETE"],
-            "allow_headers": [
-                "Content-Type", 
+            "origins": "*", # Allow requests from any origin (adjust for production)
+            "methods": ["OPTIONS", "GET", "POST", "PUT", "DELETE"], # Allowed HTTP methods
+            "allow_headers": [ # Headers the client is allowed to send
+                "Content-Type",
                 "Authorization",
                 "Access-Control-Allow-Origin",
                 "Access-Control-Allow-Credentials",
@@ -90,9 +96,9 @@ def create_app(config_class=None):
                 "X-Requested-With",
                 "Origin"
             ],
-            "supports_credentials": True,
-            "expose_headers": [
-                "Content-Type", 
+            "supports_credentials": True, # Allow credentials (like cookies, auth headers)
+            "expose_headers": [ # Headers the server can expose to the client
+                "Content-Type",
                 "Authorization",
                 "Content-Length",
                 "Content-Range",
@@ -100,85 +106,118 @@ def create_app(config_class=None):
             ]
         }
     })
-    
+
+    # --- after_request handler for CORS Headers ---
+    # Ensure CORS headers are added correctly, especially for preflight OPTIONS requests
     @app.after_request
     def after_request(response):
-        # For non-OPTIONS requests
+        # Add standard CORS headers for non-OPTIONS requests
         if request.method != 'OPTIONS':
             response.headers.add('Access-Control-Allow-Origin', '*')
-            response.headers.add('Access-Control-Allow-Headers', 
+            response.headers.add('Access-Control-Allow-Headers',
                 'Content-Type, Authorization, X-Requested-With, Origin')
-            response.headers.add('Access-Control-Allow-Methods', 
+            response.headers.add('Access-Control-Allow-Methods',
                 'GET, POST, PUT, DELETE, OPTIONS')
-            
-        # For OPTIONS preflight requests
+
+        # Handle OPTIONS preflight requests specifically
         if request.method == 'OPTIONS':
             response.headers.add('Access-Control-Allow-Origin', '*')
-            response.headers.add('Access-Control-Allow-Headers', 
+            response.headers.add('Access-Control-Allow-Headers',
                 'Content-Type, Authorization, X-Requested-With, Origin')
-            response.headers.add('Access-Control-Allow-Methods', 
+            response.headers.add('Access-Control-Allow-Methods',
                 'GET, POST, PUT, DELETE, OPTIONS')
-            response.headers.add('Access-Control-Max-Age', '86400')  # 24 hours
-            
+            # Cache preflight response for 24 hours
+            response.headers.add('Access-Control-Max-Age', '86400')
+
         return response
-    
+
     try:
-        # Initialize configuration
+        # --- Configuration and Extensions Initialization ---
+        # Load configuration from Config object or environment
         if config_class is None:
             config_class = Config()
-        
-        # Load configuration
         app.config.from_object(config_class)
-        
-        # Initialize extensions
+
+        # Initialize Flask extensions with the app instance
         db.init_app(app)
         migrate.init_app(app, db)
         jwt.init_app(app)
 
+        # --- Application Context ---
+        # Operations requiring access to the app context (like database queries, imports)
         with app.app_context():
-            # Import models
-            from app.models import (
+            # --- Import Models (within context) ---
+            # Import models here to ensure they are registered with SQLAlchemy
+            # Use noqa F401 to suppress unused import warnings if using linters
+            from app.models import ( # noqa F401
                 User, Role, Permission, RolePermission, Environment,
                 QuestionType, Question, Answer, Form, FormQuestion,
                 FormAnswer, FormSubmission, AnswerSubmitted, Attachment
             )
-            
-            # Register blueprints
+
+            # --- Register Blueprints (within context) ---
             from app.views import register_blueprints
             register_blueprints(app)
 
-            # Register CLI commands
-            from management.commands import register_commands
-            register_commands(app)
+            # --- Register CLI Commands (within context) ---
+            try:
+                from management.commands import register_commands
+                register_commands(app)
+            except ImportError:
+                app_init_logger.warning("management.commands not found or could not be imported. CLI commands might not be available.")
 
-            # Initialize database if needed
-            if not check_db_initialized(db):
-                logger.info("Database not initialized. Starting initial setup...")
-                db.create_all()
-                
-                from management.db_init import DatabaseInitializer
-                initializer = DatabaseInitializer(app)
-                success, error = initializer.init_db()
-                    
-                if not success:
-                    logger.error(f"Failed to initialize admin user: {error}")
-                    print("❌ Failed to initialize admin user. Please run 'flask database init'")
-                    
-            else:
-                logger.info("Database already initialized")
-                
-        logger.info("✅ Application initialized successfully")
+            # --- Conditional Database Initialization (Run only in main reloader process) ---
+            # Check the Werkzeug environment variable to avoid running this twice in debug mode
+            is_main_process = os.environ.get('WERKZEUG_RUN_MAIN') == 'true'
+
+            # Only perform DB checks and potential initialization in the main child process
+            if is_main_process:
+                app_init_logger.info("Running in main Werkzeug process. Checking DB status...")
+                if not check_db_initialized(db):
+                    app_init_logger.warning("Database not initialized. Attempting initial setup...")
+                    try:
+                        # Import the initializer class
+                        from management.db_init import DatabaseInitializer
+                        initializer = DatabaseInitializer(app)
+                        # Call the initialization method (which likely calls db.create_all)
+                        # Pass check_empty=False if init_db should run even if tables exist but lack data
+                        success, error = initializer.init_db(check_empty=False)
+
+                        if not success:
+                            # Log critical failure and print to console
+                            app_init_logger.error(f"Failed to initialize database/admin user: {error}")
+                            print(f"❌ Failed to initialize database/admin user: {error}. Please check logs or run 'flask database init'")
+                        else:
+                             app_init_logger.info("Database initialization triggered successfully.")
+
+                    except ImportError:
+                         app_init_logger.error("Could not import DatabaseInitializer. Database might not be initialized.")
+                         print("❌ Error: Could not import DatabaseInitializer. Run 'flask database init' manually.")
+                    except Exception as init_db_e:
+                         # Catch any other exception during DB initialization
+                         app_init_logger.error(f"Exception during database initialization: {init_db_e}", exc_info=True)
+                         print(f"❌ Exception during database initialization: {init_db_e}")
+
+                else:
+                    # Log that the DB is already set up (only appears once now)
+                    app_init_logger.info("Database already initialized (checked in main process).")
+            # else:
+            #      # Optional: Log that this is the initial parent process run (usually not needed)
+            #      app_init_logger.debug("Running in initial Werkzeug process (or reloader disabled). Skipping DB init check here.")
+
+
+        # Log successful app initialization only once in the main process
+        if is_main_process:
+            app_init_logger.info("✅ Application initialized successfully (Main Process)")
+
+        # Return the configured app instance
         return app
-        
+
     except Exception as e:
-        logger.error(f"❌ Application initialization failed: {str(e)}")
+        # Log critical errors during app creation using the module logger
+        module_logger.error(f"❌ Application initialization failed critically: {str(e)}", exc_info=True)
+        # Re-raise the exception to halt execution if startup fails
         raise
 
-# Optional: Create the application instance
-app = create_app()
-
-# Register CLI commands with the application instance
-if app is not None:
-    with app.app_context():
-        from management.commands import register_commands
-        register_commands(app)
+# Note: Removed app = create_app() from module level.
+# The app instance should be created by the entry point (e.g., run.py or WSGI server).

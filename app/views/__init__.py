@@ -20,9 +20,9 @@ from .export_views import export_bp
 from .cmms_config_views import cmms_config_bp
 from .export_submission_views import export_submission_bp
 from .count_views import count_bp
-
-# Import the new entity basic blueprint
 from .entity_basic_views import entity_basic_bp
+# Import the new report blueprint
+from .report_views import report_bp
 
 from flask import jsonify
 
@@ -53,12 +53,14 @@ def register_blueprints(app):
         (cmms_config_bp,'/api/cmms-configs'),
         (export_submission_bp, '/api/export_submissions'),
         (count_bp, '/api/counts'),
-        # Add the new entity basic blueprint
-        (entity_basic_bp, '/api/entity_basic')
+        (entity_basic_bp, '/api/entity_basic'),
+        # Add the new report blueprint registration
+        (report_bp, '/api/reports')
     ]
 
+    # Iterate through the blueprints list and register each one
     for blueprint, url_prefix in blueprints:
         app.register_blueprint(blueprint, url_prefix=url_prefix)
-        
-    # Register a standalone ping endpoint
+
+    # Register a standalone ping endpoint at /api/ping
     app.route('/api/ping', methods=['GET'])(ping_standalone)

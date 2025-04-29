@@ -28,6 +28,33 @@ db = SQLAlchemy()
 migrate = Migrate()
 jwt = JWTManager()
 
+# Import the model here or inside create_app within context if preferred
+from app.models.token_blocklist import TokenBlocklist
+
+@jwt.token_in_blocklist_loader
+def check_if_token_revoked(jwt_header, jwt_payload: dict) -> bool:
+    """
+    Callback function to check if a JWT has been revoked (blocklisted).
+    """
+    app_logger = logging.getLogger("app") # Get the app logger
+    jti = jwt_payload.get("jti")
+    app_logger.debug(f"Blocklist check: Checking JTI {jti}") # DEBUG log
+    if not jti:
+        app_logger.warning("Blocklist check: No JTI found in token payload.") # WARN if no JTI
+        return False # Cannot be blocklisted if no JTI
+
+    try:
+        token_in_blocklist = TokenBlocklist.query.filter_by(jti=jti).scalar()
+        is_revoked = token_in_blocklist is not None
+        if is_revoked:
+            app_logger.info(f"Blocklist check: Token is REVOKED (JTI: {jti})") # INFO if revoked
+        else:
+            app_logger.debug(f"Blocklist check: Token is VALID (JTI: {jti})") # DEBUG if valid
+        return is_revoked
+    except Exception as e:
+        app_logger.error(f"Blocklist check: Error querying blocklist for JTI {jti}: {e}", exc_info=True) # ERROR on DB query failure
+        return False
+
 # --- check_db_initialized function ---
 def check_db_initialized(db_instance):
     """
@@ -38,7 +65,7 @@ def check_db_initialized(db_instance):
     try:
         # First check if tables exist using SQLAlchemy inspector
         inspector = inspect(db_instance.engine)
-        required_tables = ['roles', 'users', 'permissions', 'environments']
+        required_tables = ['roles', 'users', 'permissions', 'environments','token_blocklist']
         existing_tables = inspector.get_table_names()
 
         if not all(table in existing_tables for table in required_tables):
@@ -152,7 +179,7 @@ def create_app(config_class=None):
             from app.models import ( # noqa F401
                 User, Role, Permission, RolePermission, Environment,
                 QuestionType, Question, Answer, Form, FormQuestion,
-                FormAnswer, FormSubmission, AnswerSubmitted, Attachment
+                FormAnswer, FormSubmission, AnswerSubmitted, Attachment,TokenBlocklist 
             )
 
             # --- Register Blueprints (within context) ---

@@ -1,10 +1,15 @@
-from flask_jwt_extended import create_access_token, get_jwt, decode_token
+from datetime import datetime, timezone
+from flask_jwt_extended import create_access_token
+from flask_jwt_extended.utils import decode_token as jwt_decode_token
+from psycopg2 import IntegrityError
 from werkzeug.security import check_password_hash
+from app.models.token_blocklist import TokenBlocklist
 from app.models.user import User
 import logging
 import json
 import base64
 from jwt.exceptions import PyJWTError
+from app import db
 
 logger = logging.getLogger(__name__)
 
@@ -155,56 +160,63 @@ class AuthService:
             return User.query.filter(or_(*queries)).first()
             
         return None
-        
+    
+    @staticmethod
+    def add_jti_to_blocklist(jti: str) -> bool:
+         """Adds a JTI to the blocklist database."""
+         logger.debug(f"Attempting to add JTI to blocklist: {jti}") # DEBUG log
+         try:
+             blocked_token = TokenBlocklist(
+                 jti=jti,
+                 created_at=datetime.now(timezone.utc)
+             )
+             db.session.add(blocked_token)
+             db.session.commit()
+             logger.info(f"Successfully added JTI to blocklist: {jti}") # INFO on success
+             return True
+         except IntegrityError:
+             db.session.rollback()
+             logger.warning(f"Attempted to add duplicate JTI to blocklist: {jti}. Considered success.") # WARN duplicate
+             return True # Treat as success if already blocked
+         except Exception as e:
+             db.session.rollback()
+             # Log the full error if DB commit fails
+             logger.error(f"Database error adding JTI {jti} to blocklist: {e}", exc_info=True) # ERROR with traceback
+             return False
+
     @staticmethod
     def logout_user(token=None, username=None):
         """
-        Handle user logout with enhanced token extraction
-        
-        Args:
-            token (str): Raw JWT token (optional)
-            username (str): Username of the user logging out (optional)
-            
-        Returns:
-            tuple: (success: bool, message: str)
+        Handle user logout by adding token JTI to blocklist if a valid token is provided.
         """
+        logger.debug(f"Logout request received. Token provided: {'Yes' if token else 'No'}") # DEBUG log
         try:
-            # If we have a username directly provided
-            if username:
-                user = User.query.filter_by(username=username).first()
-                if user:
-                    logger.info(f"User {username} logged out successfully")
-                    return True, "Successfully logged out"
-            
-            # Try to extract user info from token if provided
             if token:
-                token_info = AuthService.extract_user_info_from_token(token)
-                
-                # Try to find user in our database
-                if token_info:
-                    user = AuthService.lookup_user_from_token_info(token_info)
-                    
-                    if user:
-                        # We found a matching user in our system
-                        logger.info(f"User {user.username} logged out successfully")
-                        return True, "Successfully logged out"
-                    
-                    # Get best username to log from token info
-                    identity = (token_info.get('identity') or 
-                               token_info.get('username') or 
-                               token_info.get('preferred_username') or 
-                               token_info.get('user_name') or 
-                               token_info.get('sub'))
-                    
-                    if identity:
-                        # External user
-                        logger.info(f"External user with identity '{identity}' logged out successfully")
-                        return True, "Successfully logged out"
-            
-            # Default success even if we couldn't identify the user
-            logger.info("Anonymous user logged out successfully")
-            return True, "Successfully logged out"
-            
+                try:
+                    logger.debug("Attempting to decode token for JTI...") # DEBUG log
+                    decoded_token = jwt_decode_token(token)
+                    jti = decoded_token.get('jti')
+                    identity = decoded_token.get('sub', username)
+                    logger.debug(f"Decoded token. JTI: {jti}, Identity: {identity}") # DEBUG log
+
+                    if jti:
+                        if AuthService.add_jti_to_blocklist(jti):
+                            logger.info(f"User {identity or 'Unknown'} logged out successfully (Token {jti} blocklisted).")
+                            return True, "Successfully logged out and token blocklisted."
+                        else:
+                            # Blocklist add failed (error logged in add_jti_to_blocklist)
+                            return True, "Logout successful (server blocklist error)." # Still True for client
+                    else:
+                        logger.warning("Could not extract JTI from provided token during logout.")
+                        return True, "Successfully logged out (JTI missing)." # Client still logs out
+
+                except PyJWTError as e:
+                    logger.warning(f"Invalid/Expired token provided during logout: {e}. Relying on client to clear token.")
+                    return True, "Successfully logged out (token invalid)."
+            else:
+                 logger.info("Logout endpoint called without token. Relying on client.")
+                 return True, "Successfully logged out."
+
         except Exception as e:
-            logger.error(f"Error during logout: {str(e)}")
-            return False, "Error processing logout"
+            logger.error(f"Unexpected error during logout processing: {str(e)}", exc_info=True)
+            return True, "Successfully logged out (server error during processing)."

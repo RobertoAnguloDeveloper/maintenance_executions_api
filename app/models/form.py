@@ -141,7 +141,7 @@ class Form(TimestampMixin, SoftDeleteMixin, db.Model):
         }
 
         # Add possible answers only for choice-type questions
-        if question_type in ['checkbox', 'multiple_choices']:
+        if question_type in ['checkbox', 'multiple_choices','table', 'dropdown']:
             formatted_question['possible_answers'] = self._get_question_answers(form_question)
 
         return formatted_question

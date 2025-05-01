@@ -1,4 +1,5 @@
 # app/services/report_service.py
+import numpy as np
 from sqlalchemy import text, inspect
 from app import db
 import xlsxwriter
@@ -62,7 +63,7 @@ class ReportService:
 
     # --- Configuration Mapping (Expandable) ---
     ENTITY_CONFIG = {
-        "form_submissions": {
+        'form_submissions': {
             'model': FormSubmission,
             'view_permission_entity': EntityType.SUBMISSIONS,
             'default_columns': [
@@ -71,7 +72,8 @@ class ReportService:
             ],
             'default_sort': [{"field": "submitted_at", "direction": "desc"}],
             'stats_generators': ['generate_submission_stats'],
-            'chart_generators': ['generate_submission_charts'],
+            'chart_generators': ['generate_enhanced_submission_charts'],  # Updated
+            'insight_generators': ['generate_submission_insights'],  # New
             'pptx_generator': '_generate_form_submission_pptx'
         },
         "users": {
@@ -575,13 +577,265 @@ class ReportService:
 
             flat_data.append(row_dict)
         return flat_data
+    
+    @staticmethod
+    def generate_submission_insights(df: pd.DataFrame) -> Dict[str, str]:
+        """Generates textual insights about form submissions."""
+        insights = {}
+        
+        if df.empty:
+            return {"no_data": "No submission data available for analysis."}
+            
+        try:
+            # Basic volume insights
+            record_count = len(df)
+            insights["volume"] = f"Analyzed {record_count} total submissions."
+            
+            # Time-based insights
+            if 'submitted_at' in df.columns:
+                df['submitted_at_dt'] = pd.to_datetime(df['submitted_at'], errors='coerce')
+                valid_dates = df['submitted_at_dt'].dropna()
+                
+                if not valid_dates.empty:
+                    date_range = (valid_dates.max() - valid_dates.min()).days
+                    avg_daily = record_count / max(date_range, 1)
+                    
+                    insights["activity"] = (f"Submissions span {date_range} days with an average of "
+                                        f"{avg_daily:.1f} submissions per day.")
+                    
+                    # Find peak periods
+                    if len(valid_dates) > 10:
+                        df['hour'] = df['submitted_at_dt'].dt.hour
+                        peak_hour = df['hour'].value_counts().idxmax()
+                        ampm = "AM" if peak_hour < 12 else "PM"
+                        display_hour = peak_hour if peak_hour <= 12 else peak_hour - 12
+                        
+                        insights["peak_time"] = f"Peak submission activity occurs around {display_hour} {ampm}."
+            
+            # User-based insights
+            if 'submitted_by' in df.columns:
+                unique_users = df['submitted_by'].nunique()
+                submissions_per_user = record_count / max(unique_users, 1)
+                
+                insights["user_activity"] = (f"Submissions came from {unique_users} unique users, "
+                                            f"averaging {submissions_per_user:.1f} submissions per user.")
+                    
+            return insights
+            
+        except Exception as e:
+            logger.error(f"Error generating submission insights: {e}", exc_info=True)
+            return {"error": "Could not generate insights due to an error."}
+    
+    @staticmethod
+    def generate_enhanced_submission_charts(df: pd.DataFrame, report_type: str) -> Dict[str, BytesIO]:
+        """Generates multiple charts for submission data with insights embedded in titles."""
+        charts = {}
+        if 'submitted_at' not in df.columns or df.empty:
+            return charts
+            
+        try:
+            # Ensure datetime conversion, handle potential errors
+            df['submitted_at_dt'] = pd.to_datetime(df['submitted_at'], errors='coerce').dt.tz_localize(None)
+            df.dropna(subset=['submitted_at_dt'], inplace=True)
+            if df.empty: 
+                return charts
+
+            # 1. Submissions Time Series with Trend
+            monthly_counts = df.set_index('submitted_at_dt').resample('ME').size()
+            if not monthly_counts.empty:
+                # Calculate trend increase/decrease
+                if len(monthly_counts) > 1:
+                    first_month = monthly_counts.iloc[0]
+                    last_month = monthly_counts.iloc[-1]
+                    trend_pct = ((last_month - first_month) / first_month * 100) if first_month else 0
+                    trend_direction = "up" if trend_pct > 0 else "down"
+                    title = f"Submissions Trend: {abs(trend_pct):.1f}% {trend_direction} over period"
+                else:
+                    title = "Monthly Submissions"
+                    
+                fig, ax = plt.subplots(figsize=(10, 4))
+                monthly_counts.plot(kind='line', ax=ax, marker='o')
+                
+                # Add data labels to each point on the line
+                for x, y in zip(range(len(monthly_counts)), monthly_counts.values):
+                    ax.annotate(
+                        f'{int(y)}',
+                        (x, y),
+                        textcoords="offset points",
+                        xytext=(0, 10),
+                        ha='center',
+                        fontweight='bold',
+                        bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="gray", alpha=0.8)
+                    )
+                    
+                ax.set_title(title)
+                ax.set_ylabel('# Submissions')
+                ax.set_xlabel('')
+                plt.xticks(rotation=30, ha='right')
+                charts['time_series'] = ReportService._save_plot_to_bytes(fig)
+                
+            # 2. Weekly Pattern Analysis with data labels
+            if len(df) > 7 and 'submitted_at_dt' in df.columns:
+                df['day_of_week'] = df['submitted_at_dt'].dt.day_name()
+                day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+                day_counts = df['day_of_week'].value_counts().reindex(day_order)
+                
+                # Find busiest day
+                busiest_day = day_counts.idxmax()
+                
+                fig, ax = plt.subplots(figsize=(10, 4))
+                # Use hue parameter with legend=False to address the FutureWarning
+                bars = sns.barplot(x=day_counts.index, y=day_counts.values, ax=ax, hue=day_counts.index, legend=False, palette="viridis")
+                
+                # Add data labels on top of each bar
+                for i, bar in enumerate(ax.patches):
+                    value = int(bar.get_height())
+                    ax.text(
+                        bar.get_x() + bar.get_width() / 2,
+                        bar.get_height() + 0.3,
+                        f'{value}',
+                        ha='center',
+                        va='bottom',
+                        fontweight='bold',
+                        color='black',
+                        bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="gray", alpha=0.8)
+                    )
+                
+                ax.set_title(f'Submissions by Day of Week (Busiest: {busiest_day})')
+                ax.set_ylabel('# Submissions')
+                plt.xticks(rotation=30, ha='right')
+                charts['weekly_pattern'] = ReportService._save_plot_to_bytes(fig)
+            
+            # 3. User Submission Distribution with data labels
+            if 'submitted_by' in df.columns:
+                user_counts = df['submitted_by'].value_counts()
+                if len(user_counts) > 1:
+                    # Calculate distribution stats
+                    top_users = user_counts.nlargest(5)
+                    top_pct = (top_users.sum() / user_counts.sum()) * 100
+                    
+                    fig, ax = plt.subplots(figsize=(10, 4))
+                    # Use hue parameter with legend=False to address the FutureWarning
+                    bars = sns.barplot(x=top_users.index, y=top_users.values, ax=ax, hue=top_users.index, legend=False, palette="viridis")
+                    
+                    # Add data labels on top of each bar
+                    for i, bar in enumerate(ax.patches):
+                        value = int(bar.get_height())
+                        ax.text(
+                            bar.get_x() + bar.get_width() / 2,
+                            bar.get_height() + 0.3,
+                            f'{value}',
+                            ha='center',
+                            va='bottom',
+                            fontweight='bold',
+                            color='black',
+                            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="gray", alpha=0.8)
+                        )
+                    
+                    ax.set_title(f'Top 5 Users Account for {top_pct:.1f}% of Submissions')
+                    ax.set_ylabel('# Submissions')
+                    ax.set_xlabel('')
+                    plt.xticks(rotation=30, ha='right')
+                    charts['user_distribution'] = ReportService._save_plot_to_bytes(fig)
+            
+            # 4. NEW: Form Type Distribution (Pie Chart)
+            if 'form.title' in df.columns:
+                form_counts = df['form.title'].value_counts().nlargest(5)  # Show top 5 forms
+                if not form_counts.empty:
+                    fig, ax = plt.subplots(figsize=(8, 6))
+                    wedges, texts, autotexts = ax.pie(
+                        form_counts.values, 
+                        labels=form_counts.index, 
+                        autopct='%1.1f%%',
+                        textprops={'fontsize': 9},
+                        colors=plt.cm.viridis(np.linspace(0, 1, len(form_counts)))
+                    )
+                    # Make labels more readable
+                    plt.setp(autotexts, size=10, weight="bold")
+                    
+                    # Add count values in the legend
+                    legend_labels = [f"{name} ({count})" for name, count in zip(form_counts.index, form_counts.values)]
+                    ax.legend(wedges, legend_labels, title="Form Types", loc="center left", bbox_to_anchor=(1, 0, 0.5, 1))
+                    
+                    ax.set_title('Submissions by Form Type')
+                    ax.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle
+                    plt.tight_layout()
+                    charts['form_distribution'] = ReportService._save_plot_to_bytes(fig)
+            
+            # 5. NEW: Submission Activity Heatmap by Hour and Day
+            if len(df) > 20 and 'submitted_at_dt' in df.columns:
+                # Extract hour and day of week
+                df['hour'] = df['submitted_at_dt'].dt.hour
+                df['day_of_week'] = df['submitted_at_dt'].dt.day_name()
+                
+                # Create pivot table for heatmap
+                day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+                hour_day = pd.crosstab(df['hour'], df['day_of_week']).reindex(columns=day_order)
+                
+                # Create heatmap
+                fig, ax = plt.subplots(figsize=(10, 6))
+                sns.heatmap(
+                    hour_day, 
+                    cmap="YlGnBu", 
+                    linewidths=.5, 
+                    ax=ax,
+                    cbar_kws={'label': 'Number of Submissions'},
+                    annot=True,  # Show the values in each cell
+                    fmt="d"      # Format as integers
+                )
+                ax.set_title('Submission Activity by Hour and Day of Week')
+                ax.set_ylabel('Hour of Day')
+                ax.set_xlabel('Day of Week')
+                plt.tight_layout()
+                charts['activity_heatmap'] = ReportService._save_plot_to_bytes(fig)
+            
+            # 6. NEW: Monthly Distribution for Year Comparison (if data spans multiple years)
+            if 'submitted_at_dt' in df.columns:
+                # Check if data spans multiple years
+                years = df['submitted_at_dt'].dt.year.unique()
+                if len(years) > 1:
+                    # Group by year and month
+                    df['year'] = df['submitted_at_dt'].dt.year
+                    df['month'] = df['submitted_at_dt'].dt.month_name()
+                    
+                    # Create a pivot table: rows=month, columns=year, values=count
+                    month_order = [
+                        'January', 'February', 'March', 'April', 'May', 'June', 
+                        'July', 'August', 'September', 'October', 'November', 'December'
+                    ]
+                    year_month_counts = pd.crosstab(df['month'], df['year'])
+                    year_month_counts = year_month_counts.reindex(month_order)
+                    
+                    # Plot as grouped bar chart
+                    fig, ax = plt.subplots(figsize=(12, 6))
+                    year_month_counts.plot(kind='bar', ax=ax)
+                    
+                    # Add data labels
+                    for container in ax.containers:
+                        ax.bar_label(container, fmt='%d', fontweight='bold')
+                    
+                    ax.set_title('Monthly Submissions by Year')
+                    ax.set_xlabel('Month')
+                    ax.set_ylabel('Number of Submissions')
+                    plt.xticks(rotation=45, ha='right')
+                    plt.legend(title='Year')
+                    plt.tight_layout()
+                    charts['yearly_comparison'] = ReportService._save_plot_to_bytes(fig)
+                    
+            return charts
+                
+        except Exception as e:
+            logger.error(f"Error generating enhanced submission charts: {e}", exc_info=True)
+            if 'fig' in locals() and plt.fignum_exists(fig.number):
+                plt.close(fig)
+            return charts
 
     # --- Data Analysis & Stats/Chart Generation ---
     @staticmethod
     def _analyze_data(data: List[Dict], report_type: str) -> Dict:
-        """Performs basic analysis and generates charts/stats if configured."""
-        analysis = {"summary_stats": {}, "charts": {}}
-        if not data: # Don't analyze if no data
+        """Performs enhanced analysis with focus on visualization rather than tables."""
+        analysis = {"summary_stats": {}, "charts": {}, "insights": {}}
+        if not data:
             return analysis
 
         try:
@@ -589,41 +843,41 @@ class ReportService:
             config = ReportService.ENTITY_CONFIG.get(report_type, {})
             stats_funcs = config.get('stats_generators', [])
             chart_funcs = config.get('chart_generators', [])
+            insight_funcs = config.get('insight_generators', [])  # New insight generators
 
-            # --- Generate Summary Stats ---
-            analysis['summary_stats']['record_count'] = len(df) # Basic count
+            # Generate Summary Stats
+            analysis['summary_stats']['record_count'] = len(df)
             for func_name in stats_funcs:
                 if hasattr(ReportService, func_name):
                     try:
-                        # Call the static stats generator method
                         analysis['summary_stats'].update(getattr(ReportService, func_name)(df))
                     except Exception as stat_err:
-                        logger.error(f"Error executing statistics function '{func_name}' for {report_type}: {stat_err}", exc_info=True)
-                        analysis['summary_stats'][f'{func_name}_error'] = str(stat_err) # Add error info
-                else:
-                    logger.warning(f"Statistics generator function '{func_name}' not found in ReportService.")
+                        logger.error(f"Error executing statistics function '{func_name}': {stat_err}", exc_info=True)
 
-            # --- Generate Charts ---
+            # Generate Charts with greater priority
             for func_name in chart_funcs:
-                 if hasattr(ReportService, func_name):
+                if hasattr(ReportService, func_name):
                     try:
-                        # Call the static chart generator method
-                        chart_bytes = getattr(ReportService, func_name)(df, report_type)
-                        # Store the chart BytesIO object if successfully generated
-                        if chart_bytes and isinstance(chart_bytes, BytesIO):
-                            chart_key = func_name.replace("generate_", "").replace("_charts","") # e.g., 'submission_trend'
-                            analysis['charts'][chart_key] = chart_bytes
-                        elif chart_bytes: # Log if it returned something unexpected
-                            logger.warning(f"Chart generator '{func_name}' for {report_type} did not return a BytesIO object.")
+                        chart_results = getattr(ReportService, func_name)(df, report_type)
+                        # Allow functions to return multiple charts
+                        if isinstance(chart_results, dict):
+                            analysis['charts'].update(chart_results)
+                        elif chart_results and isinstance(chart_results, BytesIO):
+                            chart_key = func_name.replace("generate_", "").replace("_charts","")
+                            analysis['charts'][chart_key] = chart_results
                     except Exception as chart_err:
-                        logger.error(f"Error executing chart function '{func_name}' for {report_type}: {chart_err}", exc_info=True)
-                        # Optionally add chart error info to analysis dict if needed
-                 else:
-                    logger.warning(f"Chart generator function '{func_name}' not found in ReportService.")
+                        logger.error(f"Error executing chart function '{func_name}': {chart_err}", exc_info=True)
+
+            # Generate Text-Based Insights
+            for func_name in insight_funcs:
+                if hasattr(ReportService, func_name):
+                    try:
+                        analysis['insights'].update(getattr(ReportService, func_name)(df))
+                    except Exception as insight_err:
+                        logger.error(f"Error executing insight function '{func_name}': {insight_err}", exc_info=True)
 
         except Exception as e:
-            logger.error(f"Error during data analysis for {report_type}: {e}", exc_info=True)
-            analysis['summary_stats']['analysis_error'] = "Data analysis failed" # Add overall error
+            logger.error(f"Error during data analysis: {e}", exc_info=True)
 
         return analysis
 
@@ -982,177 +1236,165 @@ class ReportService:
     # --- PDF Generation ---
     @staticmethod
     def _generate_multi_section_pdf(report_data: Dict[str, Dict], global_params: dict) -> BytesIO:
-        """Generates a single PDF document with sections for each entity."""
+        """Generates a PDF focusing on charts and insights rather than tables."""
         buffer = BytesIO()
-        # Use letter size, adjust if needed
         doc = SimpleDocTemplate(buffer, pagesize=letter,
-                                leftMargin=0.75*inch, rightMargin=0.75*inch,
-                                topMargin=0.75*inch, bottomMargin=0.75*inch)
+                            leftMargin=0.75*inch, rightMargin=0.75*inch,
+                            topMargin=0.75*inch, bottomMargin=0.75*inch)
         styles = getSampleStyleSheet()
+        
         story = []
-        first_section = True
-
-        # Overall Title (Optional)
-        overall_title = global_params.get("report_title", "Full System Report")
+        
+        # Add title
+        overall_title = global_params.get("report_title", "Data Analysis Report")
         story.append(Paragraph(overall_title, styles['h1']))
         story.append(Spacer(1, 0.3*inch))
-
+        
+        # Add each section
+        first_section = True
+        
         for report_type, result in report_data.items():
             if not first_section:
-                story.append(PageBreak()) # Add page break before each new section (except the first)
+                story.append(PageBreak())
             first_section = False
-
-            if result.get('error'):
-                logger.warning(f"Adding error section for {report_type} to PDF.")
-                story.append(Paragraph(f"Error: {report_type.replace('_',' ').title()}", styles['h2']))
-                story.append(Paragraph(f"Could not generate report: {result['error']}", styles['Normal']))
-                continue
-
-            # Ensure data and params exist
-            if 'data' not in result or 'params' not in result or 'columns' not in result['params']:
-                 logger.warning(f"Missing data/params/columns for PDF section '{report_type}'.")
-                 story.append(Paragraph(f"Error: {report_type.replace('_',' ').title()}", styles['h2']))
-                 story.append(Paragraph("Report configuration incomplete.", styles['Normal']))
-                 continue
-
-            data = result['data']
-            columns = result['params']['columns']
-            analysis = result.get('analysis', {})
-            section_params = result['params']
-            section_title = section_params.get("sheet_name", report_type.replace("_", " ").title()) # Use sheet name as section title
-
-            # --- Section Title ---
+            
+            section_params = result.get('params', {})
+            section_title = section_params.get("sheet_name", report_type.replace("_", " ").title())
+            
+            # Add section title
             story.append(Paragraph(section_title, styles['h2']))
             story.append(Spacer(1, 0.2*inch))
-
-            # --- Summary Stats ---
-            if analysis and analysis.get('summary_stats'):
-                story.append(Paragraph("Summary Statistics:", styles['h3']))
-                stats = analysis['summary_stats']; simple_stats = {k:v for k,v in stats.items() if not isinstance(v, (dict, list))}
-                for key, value in simple_stats.items(): story.append(Paragraph(f"<b>{key.replace('_',' ').title()}:</b> {value}", styles['Normal']))
-                story.append(Spacer(1, 0.1*inch))
-
-            # --- Data Table ---
-            if data:
-                table_data = [columns]; table_data.extend([[str(row.get(col, '')) for col in columns] for row in data])
-                # Adjust page size based on columns for this specific table
-                num_cols = len(columns)
-                # Determine if landscape is needed (heuristic)
-                # Calculate approximate text width (very rough estimate)
-                avg_char_width = 5 # points per char (adjust based on font/size)
-                total_text_width_est = sum(max(len(str(row.get(c,''))) for row in data+[{}]) * avg_char_width for c in columns) + num_cols * 10 # Add padding
-                page_width_points = letter[0] - 1.5 * inch * 72 # Usable width in points
-                if num_cols > 7 or total_text_width_est > page_width_points * 1.5: # Use landscape if many columns or estimate is wide
-                    current_pagesize = landscape(letter)
-                else:
-                    current_pagesize = letter
-
-                available_width = current_pagesize[0] - 1.5*inch # Account for margins
-
-                col_width = available_width / num_cols if num_cols > 0 else available_width;
-                col_widths = [col_width] * num_cols
-                # Create and style the table
-                style = TableStyle([('BACKGROUND', (0, 0), (-1, 0), colors.darkgrey),
-                                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                                    ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                                    ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
-                                    ('BACKGROUND', (0, 1), (-1, -1), colors.lightgrey),
-                                    ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-                                    ('FONTSIZE', (0, 0), (-1, -1), 7), # Small font for tables
-                                    ('VALIGN', (0,0), (-1,-1), 'MIDDLE')])
-                table = Table(table_data, colWidths=col_widths, repeatRows=1); table.setStyle(style);
-                story.append(table); story.append(Spacer(1, 0.2*inch))
-            else:
-                 story.append(Paragraph("No data available for this section.", styles['Italic']))
-                 story.append(Spacer(1, 0.2*inch))
-
-            # --- Charts ---
-            if analysis and analysis.get('charts'):
-                story.append(Paragraph("Charts:", styles['h3']))
-                for chart_key, chart_bytes in analysis['charts'].items():
-                     if isinstance(chart_bytes, BytesIO):
-                         try: img = RLImage(chart_bytes, width=5*inch, height=2.5*inch); img.hAlign = 'CENTER'; story.append(img); story.append(Spacer(1, 0.1*inch))
-                         except Exception as img_err: logger.error(f"Error adding chart {chart_key} to PDF: {img_err}"); story.append(Paragraph(f"<i>Error displaying chart: {chart_key}</i>", styles['Italic']))
-                     else: logger.warning(f"Chart data for {chart_key} is not BytesIO.")
-
+            
+            # Add insights first
+            if 'analysis' in result and 'insights' in result['analysis']:
+                insights = result['analysis']['insights']
+                if insights:
+                    story.append(Paragraph("Key Insights:", styles['h3']))
+                    for key, insight in insights.items():
+                        # Use standard style to avoid font issues
+                        story.append(Paragraph(f"• {insight}", styles['Normal']))
+                    story.append(Spacer(1, 0.2*inch))
+            
+            # Add summary stats - FIX: Correct path to summary_stats
+            if 'analysis' in result and 'summary_stats' in result['analysis']:
+                # Fixed line - get summary_stats from inside analysis dict
+                stats = result['analysis']['summary_stats']
+                simple_stats = {k:v for k,v in stats.items() if not isinstance(v, (dict, list))}
+                
+                if simple_stats:
+                    story.append(Paragraph("Summary Statistics:", styles['h3']))
+                    for key, value in simple_stats.items():
+                        story.append(Paragraph(f"<b>{key.replace('_',' ').title()}:</b> {value}", styles['Normal']))
+                    story.append(Spacer(1, 0.2*inch))
+            
+            # Add charts with maximum prominence
+            if 'analysis' in result and 'charts' in result['analysis']:
+                charts = result['analysis']['charts']
+                if charts:
+                    for chart_key, chart_bytes in charts.items():
+                        if isinstance(chart_bytes, BytesIO):
+                            try:
+                                # Make charts larger and more prominent
+                                img = RLImage(chart_bytes, width=6.5*inch, height=3.5*inch)
+                                img.hAlign = 'CENTER'
+                                story.append(img)
+                                
+                                # Add chart description below it
+                                chart_title = chart_key.replace('_', ' ').title()
+                                story.append(Paragraph(chart_title, styles['Caption']))
+                                story.append(Spacer(1, 0.3*inch))
+                            except Exception as img_err:
+                                logger.error(f"Error adding chart {chart_key}: {img_err}")
+        
+        # Build the PDF
         try:
             doc.build(story)
         except Exception as build_err:
-             logger.error(f"Error building multi-section PDF document: {build_err}", exc_info=True)
-             raise ValueError(f"Failed to build PDF: {build_err}")
-
+            logger.error(f"Error building PDF: {build_err}", exc_info=True)
+            raise ValueError(f"Failed to build PDF: {build_err}")
+        
         buffer.seek(0)
         return buffer
 
     # --- DOCX Generation ---
     @staticmethod
     def _generate_multi_section_docx(report_data: Dict[str, Dict], global_params: dict) -> BytesIO:
-        """Generates a single DOCX document with sections for each entity."""
+        """Generates a DOCX document focusing on charts and insights."""
         document = Document()
         buffer = BytesIO()
-        first_section = True
-
-        # Overall Title (Optional)
-        overall_title = global_params.get("report_title", "Full System Report")
+        
+        # Set document properties
+        overall_title = global_params.get("report_title", "Data Analysis Report")
         document.add_heading(overall_title, level=0).alignment = WD_ALIGN_PARAGRAPH.CENTER
-        document.add_paragraph()
-
+        
+        # Add each section
+        first_section = True
+        
         for report_type, result in report_data.items():
             if not first_section:
                 document.add_page_break()
             first_section = False
-
+            
+            # Get section info
             section_params = result.get('params', {})
             section_title = section_params.get("sheet_name", report_type.replace("_", " ").title())
-            document.add_heading(section_title, level=1) # Section heading
-
-            if result.get('error'):
-                logger.warning(f"Adding error section for {report_type} to DOCX.")
-                document.add_paragraph(f"Could not generate report: {result['error']}")
-                continue
-
-            if 'data' not in result or 'params' not in result or 'columns' not in result['params']:
-                 logger.warning(f"Missing data/params/columns for DOCX section '{report_type}'.")
-                 document.add_paragraph("Report configuration incomplete.")
-                 continue
-
-            data = result['data']
-            columns = result['params']['columns']
-            analysis = result.get('analysis', {})
-
-            # --- Summary Stats ---
-            if analysis and analysis.get('summary_stats'):
-                document.add_heading("Summary Statistics", level=2)
-                stats = analysis['summary_stats']; simple_stats = {k:v for k,v in stats.items() if not isinstance(v, (dict, list))}
-                for key, value in simple_stats.items(): p = document.add_paragraph(); p.add_run(key.replace("_"," ").title() + ": ").bold = True; p.add_run(str(value))
-                document.add_paragraph()
-
-            # --- Data Table ---
-            if data:
-                try:
-                    table = document.add_table(rows=1, cols=len(columns)); table.style = 'Table Grid'; table.autofit = False; table.allow_autofit = False
-                    hdr_cells = table.rows[0].cells
-                    for i, col_name in enumerate(columns): hdr_cells[i].text = col_name; hdr_cells[i].paragraphs[0].runs[0].font.bold = True; hdr_cells[i].paragraphs[0].runs[0].font.size = Pt(9)
-
-                    for row_data in data:
-                        row_cells = table.add_row().cells
-                        for i, col_name in enumerate(columns): cell_value = str(row_data.get(col_name, '')); row_cells[i].text = cell_value; row_cells[i].paragraphs[0].runs[0].font.size = Pt(8)
+            
+            # Add section title
+            document.add_heading(section_title, level=1)
+            
+            # Add insights first - they provide context for the charts
+            if 'analysis' in result and 'insights' in result['analysis']:
+                insights = result['analysis']['insights']
+                if insights:
+                    document.add_heading("Key Insights", level=2)
+                    for key, insight in insights.items():
+                        p = document.add_paragraph()
+                        p.add_run("• ").bold = True
+                        p.add_run(insight).italic = True
                     document.add_paragraph()
-                except Exception as table_err: logger.error(f"Error creating DOCX table for {report_type}: {table_err}"); document.add_paragraph(f"Error creating data table: {table_err}")
-            else:
-                 document.add_paragraph("No data available for this section.")
-                 document.add_paragraph()
-
-            # --- Charts ---
-            if analysis and analysis.get('charts'):
-                 document.add_heading("Charts", level=2)
-                 for chart_key, chart_bytes in analysis['charts'].items():
-                     if isinstance(chart_bytes, BytesIO):
-                         try: document.add_picture(chart_bytes, width=Inches(5.5)); document.add_paragraph(chart_key.replace("_"," ").title(), style='Caption')
-                         except Exception as img_err: logger.error(f"Error adding chart {chart_key} to DOCX: {img_err}"); document.add_paragraph(f"Error displaying chart: {chart_key}")
-                     else: logger.warning(f"Chart data for {chart_key} is not BytesIO.")
-
+            
+            # Add summary stats as a stylized section
+            if 'analysis' in result and 'summary_stats' in result['analysis']:
+                stats = result['analysis']['summary_stats']
+                simple_stats = {k:v for k,v in stats.items() if not isinstance(v, (dict, list))}
+                
+                if simple_stats:
+                    document.add_heading("Summary Statistics", level=2)
+                    
+                    # Create a grid layout for stats
+                    stat_count = len(simple_stats)
+                    row_count = (stat_count + 1) // 2  # Display in 2 columns when possible
+                    
+                    for i, (key, value) in enumerate(simple_stats.items()):
+                        p = document.add_paragraph(style='List Bullet')
+                        p.add_run(key.replace("_", " ").title() + ": ").bold = True
+                        p.add_run(str(value))
+                    
+                    document.add_paragraph()
+            
+            # Add charts with maximum prominence
+            if 'analysis' in result and 'charts' in result['analysis']:
+                charts = result['analysis']['charts']
+                if charts:
+                    document.add_heading("Visual Analysis", level=2)
+                    
+                    for chart_key, chart_bytes in charts.items():
+                        if isinstance(chart_bytes, BytesIO):
+                            try:
+                                # Make chart larger for better visibility
+                                document.add_picture(chart_bytes, width=Inches(6.0))
+                                
+                                # Add descriptive caption
+                                chart_title = chart_key.replace('_', ' ').title()
+                                p = document.add_paragraph(chart_title, style='Caption')
+                                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                                
+                                # Add space after each chart
+                                document.add_paragraph()
+                            except Exception as img_err:
+                                logger.error(f"Error adding chart {chart_key}: {img_err}")
+        
+        # Save document to buffer
         document.save(buffer)
         buffer.seek(0)
         return buffer
@@ -1160,96 +1402,163 @@ class ReportService:
     # --- Specific PPTX Generator for Form Submissions ---
     @staticmethod
     def _generate_form_submission_pptx(objects: List[Dict], columns: List[str], analysis: Dict, report_params: dict) -> BytesIO:
-        """Generates a specific PowerPoint (PPTX) report for Form Submissions."""
-        # Note: data parameter renamed to objects to reflect passing original objects
+        """Generates a PowerPoint (PPTX) presentation focused on data visualization."""
         prs = Presentation()
         buffer = BytesIO()
-
+        
         # --- Title Slide ---
         title_slide_layout = prs.slide_layouts[0]
         slide = prs.slides.add_slide(title_slide_layout)
         title = slide.shapes.title
         subtitle = slide.placeholders[1]
-        report_title = report_params.get("report_title", "Form Submission Report")
+        report_title = report_params.get("report_title", "Form Submission Analysis")
         title.text = report_title
-        subtitle.text = f"Generated on {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-
-        # --- Summary Stats Slide ---
-        if analysis and analysis.get('summary_stats'):
-            stats_slide_layout = prs.slide_layouts[5] # Blank layout
-            slide = prs.slides.add_slide(stats_slide_layout)
-            shapes = slide.shapes
-            shapes.title.text = "Submission Statistics"
-            left, top, width, height = PptxInches(0.5), PptxInches(1.0), PptxInches(8.0), PptxInches(5.5)
-            txBox = shapes.add_textbox(left, top, width, height)
-            tf = txBox.text_frame; tf.word_wrap = True
-            stats = analysis['summary_stats']
-            p = tf.add_paragraph(); p.text = f"Total Submissions: {stats.get('record_count', 'N/A')}"; p.font.bold = True; p.font.size = PptxPt(18)
-            p = tf.add_paragraph(); p.text = f"First Submission: {stats.get('first_submission', 'N/A')}"; p.font.size = PptxPt(14)
-            p = tf.add_paragraph(); p.text = f"Last Submission: {stats.get('last_submission', 'N/A')}"; p.font.size = PptxPt(14)
-            if 'submissions_per_user_top5' in stats:
-                 p = tf.add_paragraph(); p.text = "\nTop Submitters:"; p.font.bold = True; p.font.size = PptxPt(16)
-                 for user, count in stats['submissions_per_user_top5'].items():
-                     p = tf.add_paragraph(); p.text = f"- {user}: {count}"; p.font.size = PptxPt(12); p.level = 1
-
-        # --- Chart Slides ---
+        subtitle.text = f"Generated on {datetime.now().strftime('%Y-%m-%d')}"
+        
+        # --- Executive Summary Slide ---
+        if analysis and (analysis.get('insights') or analysis.get('summary_stats')):
+            summary_slide_layout = prs.slide_layouts[1]  # Title and content
+            slide = prs.slides.add_slide(summary_slide_layout)
+            slide.shapes.title.text = "Executive Summary"
+            
+            tf = slide.shapes.placeholders[1].text_frame
+            tf.clear()  # Clear default content
+            
+            # Add key metrics
+            if analysis.get('summary_stats'):
+                stats = analysis['summary_stats']
+                p = tf.add_paragraph()
+                p.text = f"Total Submissions: {stats.get('record_count', 'N/A')}"
+                p.font.bold = True
+                p.font.size = PptxPt(18)
+                
+                if 'first_submission' in stats and 'last_submission' in stats:
+                    # Add date range
+                    p = tf.add_paragraph()
+                    p.text = f"Date Range: {stats.get('first_submission', 'N/A')} to {stats.get('last_submission', 'N/A')}"
+                    p.font.size = PptxPt(14)
+            
+            # Add key insights
+            if analysis.get('insights'):
+                insights = analysis['insights']
+                p = tf.add_paragraph()
+                p.text = "Key Insights:"
+                p.font.bold = True
+                p.font.size = PptxPt(16)
+                
+                for key, insight in insights.items():
+                    if key not in ['no_data', 'error']:  # Skip error messages
+                        p = tf.add_paragraph()
+                        p.text = f"• {insight}"
+                        p.font.size = PptxPt(14)
+                        p.level = 1
+        
+        # --- Individual Chart Slides ---
         if analysis and analysis.get('charts'):
-             for chart_key, chart_bytes in analysis['charts'].items():
-                 if isinstance(chart_bytes, BytesIO):
-                     try:
-                         chart_slide_layout = prs.slide_layouts[5] # Blank layout
-                         slide = prs.slides.add_slide(chart_slide_layout)
-                         shapes = slide.shapes
-                         shapes.title.text = chart_key.replace("_"," ").title()
-                         left, top, width = PptxInches(1), PptxInches(1.5), PptxInches(8)
-                         pic = shapes.add_picture(chart_bytes, left, top, width=width)
-                     except Exception as img_err:
-                         logger.error(f"Error adding chart {chart_key} to PPTX: {img_err}")
-                         error_slide_layout = prs.slide_layouts[5]
-                         slide = prs.slides.add_slide(error_slide_layout)
-                         shapes = slide.shapes; shapes.title.text = f"Error: {chart_key}"
-                         tf = shapes.add_textbox(PptxInches(1), PptxInches(1.5), PptxInches(8), PptxInches(1)).text_frame
-                         tf.text = f"Could not generate chart: {img_err}"
-                 else: logger.warning(f"Chart data for {chart_key} is not BytesIO.")
-
-        # --- Data Table Slide (Optional) ---
-        if objects and report_params.get("include_data_table_in_ppt", True): # Use original objects
-            table_slide_layout = prs.slide_layouts[5] # Blank layout
-            slide = prs.slides.add_slide(table_slide_layout)
-            shapes = slide.shapes; shapes.title.text = "Submission Data Sample"
-            table_columns = ReportService.ENTITY_CONFIG['form_submissions']['default_columns']
-            max_ppt_rows = report_params.get("max_ppt_table_rows", 15)
-            rows = min(len(objects), max_ppt_rows) + 1 # Limit rows + header
-            cols = len(table_columns);
-            left, top, width, height = PptxInches(0.3), PptxInches(1.2), PptxInches(9.4), PptxInches(5.8)
-
-            try:
-                table = shapes.add_table(rows, cols, left, top, width, height).table
-                widths = [0.5, 0.7, 2.5, 1.5, 2.0, 2.0]
-                for i, w in enumerate(widths):
-                    if i < cols: table.columns[i].width = PptxInches(w)
-
-                for c_idx, col_name in enumerate(table_columns):
-                    cell = table.cell(0, c_idx)
-                    cell.text = col_name.replace("_", " ").title()
-                    cell.text_frame.paragraphs[0].font.bold = True
-                    cell.text_frame.paragraphs[0].font.size = PptxPt(10)
-                    cell.text_frame.vertical_anchor = MSO_ANCHOR.MIDDLE
-
-                for r_idx, row_data_obj in enumerate(objects[:max_ppt_rows]): # Iterate original objects
-                    for c_idx, col_name in enumerate(table_columns):
-                        cell_value = str(ReportService._get_attribute_recursive(row_data_obj, col_name) or '')
-                        cell = table.cell(r_idx + 1, c_idx)
-                        cell.text = cell_value
-                        cell.text_frame.paragraphs[0].font.size = PptxPt(9)
-                        cell.text_frame.vertical_anchor = MSO_ANCHOR.MIDDLE
-
-            except Exception as table_err:
-                logger.error(f"Error creating PPTX table: {table_err}", exc_info=True)
-                tf = shapes.add_textbox(left, top, width, height).text_frame
-                tf.text = f"Error creating data table: {table_err}"
-
-        prs.save(buffer); buffer.seek(0); return buffer
+            charts = analysis.get('charts', {})
+            
+            for chart_key, chart_bytes in charts.items():
+                if isinstance(chart_bytes, BytesIO):
+                    try:
+                        # Create slide for each chart
+                        chart_slide_layout = prs.slide_layouts[5]  # Title and blank content
+                        slide = prs.slides.add_slide(chart_slide_layout)
+                        
+                        # Add descriptive title based on chart key
+                        title_text = chart_key.replace('_', ' ').title()
+                        slide.shapes.title.text = title_text
+                        
+                        # Make chart large and centered
+                        left = PptxInches(1)
+                        top = PptxInches(1.5)
+                        width = PptxInches(8)
+                        pic = slide.shapes.add_picture(chart_bytes, left, top, width=width)
+                        
+                        # Add text box with insights if available
+                        if analysis.get('insights'):
+                            # Find a relevant insight for this chart if possible
+                            relevant_insight = None
+                            insights = analysis.get('insights', {})
+                            
+                            # Try to match insight to chart type
+                            for key, text in insights.items():
+                                if key in chart_key or chart_key in key:
+                                    relevant_insight = text
+                                    break
+                            
+                            # Use activity insight as fallback for time-based charts
+                            if not relevant_insight and 'activity' in insights and ('time' in chart_key or 'trend' in chart_key):
+                                relevant_insight = insights['activity']
+                            
+                            # Use user insight as fallback for user charts
+                            if not relevant_insight and 'user_activity' in insights and 'user' in chart_key:
+                                relevant_insight = insights['user_activity']
+                            
+                            # Add insight if found
+                            if relevant_insight:
+                                left = PptxInches(1)
+                                top = PptxInches(5.5)  # Position below the chart
+                                width = PptxInches(8)
+                                height = PptxInches(1)
+                                
+                                txBox = slide.shapes.add_textbox(left, top, width, height)
+                                tf = txBox.text_frame
+                                tf.word_wrap = True
+                                
+                                p = tf.add_paragraph()
+                                p.text = relevant_insight
+                                p.font.italic = True
+                                p.font.size = PptxPt(12)
+                    
+                    except Exception as img_err:
+                        logger.error(f"Error adding chart {chart_key} to PPTX: {img_err}")
+        
+        # --- Conclusion Slide ---
+        conclusion_slide_layout = prs.slide_layouts[1]  # Title and content
+        slide = prs.slides.add_slide(conclusion_slide_layout)
+        slide.shapes.title.text = "Conclusions & Recommendations"
+        
+        tf = slide.shapes.placeholders[1].text_frame
+        tf.clear()  # Clear default content
+        
+        # Add conclusions based on insights and data
+        if analysis.get('insights'):
+            insights = analysis.get('insights', {})
+            
+            # Combine insights into conclusions
+            p = tf.add_paragraph()
+            p.text = "Based on the data analysis:"
+            p.font.bold = True
+            p.font.size = PptxPt(16)
+            
+            # Add some sample conclusions
+            conclusions = []
+            
+            if 'activity' in insights:
+                conclusions.append("The submission patterns suggest opportunities for process optimization during peak times.")
+                
+            if 'user_activity' in insights:
+                if 'submissions_per_user_top5' in analysis.get('summary_stats', {}):
+                    conclusions.append("Submission workload varies significantly between users. Consider workload balancing or targeted training.")
+            
+            # Fallback conclusions if none were generated
+            if not conclusions:
+                conclusions = [
+                    "Regular monitoring of submission patterns is recommended to identify trends.",
+                    "Consider implementing user engagement strategies to maintain consistent submission activity."
+                ]
+            
+            # Add all conclusions
+            for conclusion in conclusions:
+                p = tf.add_paragraph()
+                p.text = f"• {conclusion}"
+                p.font.size = PptxPt(14)
+                p.level = 1
+        
+        # Save presentation
+        prs.save(buffer)
+        buffer.seek(0)
+        return buffer
 
     # --- Main Report Generation Method ---
     @staticmethod

@@ -1,5 +1,6 @@
 # app/services/report_service.py
-
+from sqlalchemy import text, inspect
+from app import db
 import xlsxwriter
 import csv
 import zipfile # Added for multi-CSV export
@@ -44,7 +45,7 @@ from app.utils.permission_manager import PermissionManager, EntityType, RoleType
 # Import SQLAlchemy components
 from sqlalchemy.orm import joinedload, selectinload, Query, aliased
 from sqlalchemy import or_, asc, desc, inspect as sqla_inspect, func
-from datetime import datetime
+from datetime import date, datetime
 import logging
 import traceback
 import os # For plot saving/cleanup if needed
@@ -62,97 +63,169 @@ class ReportService:
     # --- Configuration Mapping (Expandable) ---
     ENTITY_CONFIG = {
         "form_submissions": {
-            'model': FormSubmission, 'view_permission_entity': EntityType.SUBMISSIONS,
-            'default_columns': ["id", "form_id", "form.title", "submitted_by", "submitted_at", "updated_at"],
+            'model': FormSubmission,
+            'view_permission_entity': EntityType.SUBMISSIONS,
+            'default_columns': [
+                "id", "form_id", "form.title", "form.description", "submitted_by", 
+                "submitted_at", "created_at", "updated_at", "is_deleted", "deleted_at"
+            ],
             'default_sort': [{"field": "submitted_at", "direction": "desc"}],
             'stats_generators': ['generate_submission_stats'],
             'chart_generators': ['generate_submission_charts'],
-            'pptx_generator': '_generate_form_submission_pptx' # Specific PPTX generator
+            'pptx_generator': '_generate_form_submission_pptx'
         },
         "users": {
-            'model': User, 'view_permission_entity': EntityType.USERS,
-            'default_columns': ["id", "username", "first_name", "last_name", "email", "role.name", "environment.name", "created_at", "is_deleted"],
+            'model': User,
+            'view_permission_entity': EntityType.USERS,
+            'default_columns': [
+                "id", "username", "first_name", "last_name", "email", "contact_number",
+                "role_id", "role.name", "role.description", "role.is_super_user",
+                "environment_id", "environment.name", "environment.description",
+                "created_at", "updated_at", "is_deleted", "deleted_at"
+            ],
             'default_sort': [{"field": "username", "direction": "asc"}],
             'stats_generators': ['generate_user_stats'],
             'chart_generators': ['generate_user_charts']
-            # No specific pptx_generator, will use default or error
         },
         "forms": {
-            'model': Form, 'view_permission_entity': EntityType.FORMS,
-            'default_columns': ["id", "title", "description", "is_public", "creator.username", "creator.environment.name", "created_at"],
-             'default_sort': [{"field": "title", "direction": "asc"}],
-             'stats_generators': ['generate_form_stats'],
-             'chart_generators': ['generate_form_charts']
-       },
+            'model': Form,
+            'view_permission_entity': EntityType.FORMS,
+            'default_columns': [
+                "id", "title", "description", "user_id", "creator.username", 
+                "creator.first_name", "creator.last_name", "creator.email",
+                "creator.environment.name", "is_public", "created_at", 
+                "updated_at", "is_deleted", "deleted_at"
+            ],
+            'default_sort': [{"field": "title", "direction": "asc"}],
+            'stats_generators': ['generate_form_stats'],
+            'chart_generators': ['generate_form_charts']
+        },
         "environments": {
-            'model': Environment, 'view_permission_entity': EntityType.ENVIRONMENTS,
-            'default_columns': ["id", "name", "description", "created_at"],
-             'default_sort': [{"field": "name", "direction": "asc"}],
-             'stats_generators': ['generate_environment_stats'],
-             'chart_generators': ['generate_environment_charts']
+            'model': Environment,
+            'view_permission_entity': EntityType.ENVIRONMENTS,
+            'default_columns': [
+                "id", "name", "description", "created_at", "updated_at", 
+                "is_deleted", "deleted_at"
+            ],
+            'default_sort': [{"field": "name", "direction": "asc"}],
+            'stats_generators': ['generate_environment_stats'],
+            'chart_generators': ['generate_environment_charts']
         },
-         "roles": {
-            'model': Role, 'view_permission_entity': EntityType.ROLES,
-            'default_columns': ["id", "name", "description", "is_super_user", "created_at"],
-             'default_sort': [{"field": "name", "direction": "asc"}],
-             'stats_generators': ['generate_role_stats'],
-             'chart_generators': ['generate_role_charts']
+        "roles": {
+            'model': Role,
+            'view_permission_entity': EntityType.ROLES,
+            'default_columns': [
+                "id", "name", "description", "is_super_user", "created_at", 
+                "updated_at", "is_deleted", "deleted_at"
+            ],
+            'default_sort': [{"field": "name", "direction": "asc"}],
+            'stats_generators': ['generate_role_stats'],
+            'chart_generators': ['generate_role_charts']
         },
-         "permissions": {
-            'model': Permission, 'view_permission_entity': EntityType.ROLES, # Assuming tied to role view perm
-            'default_columns': ["id", "name", "action", "entity", "description"],
-             'default_sort': [{"field": "name", "direction": "asc"}],
-             'stats_generators': [], 'chart_generators': []
+        "permissions": {
+            'model': Permission,
+            'view_permission_entity': EntityType.ROLES,
+            'default_columns': [
+                "id", "name", "action", "entity", "description", "created_at", 
+                "updated_at", "is_deleted", "deleted_at"
+            ],
+            'default_sort': [{"field": "name", "direction": "asc"}],
+            'stats_generators': [],
+            'chart_generators': []
         },
-         "role_permissions": {
-            'model': RolePermission, 'view_permission_entity': EntityType.ROLES, # Assuming tied to role view perm
-            'default_columns': ["id", "role_id", "role.name", "permission_id", "permission.name"],
+        "role_permissions": {
+            'model': RolePermission,
+            'view_permission_entity': EntityType.ROLES,
+            'default_columns': [
+                "id", "role_id", "role.name", "role.description", "permission_id", 
+                "permission.name", "permission.action", "permission.entity", 
+                "permission.description", "created_at", "updated_at", "is_deleted", "deleted_at"
+            ],
             'default_sort': [{"field": "role_id", "direction": "asc"}, {"field": "permission_id", "direction": "asc"}],
-            'stats_generators': [], 'chart_generators': []
+            'stats_generators': [],
+            'chart_generators': []
         },
         "question_types": {
-            'model': QuestionType, 'view_permission_entity': EntityType.QUESTION_TYPES,
-            'default_columns': ["id", "type", "created_at"],
+            'model': QuestionType,
+            'view_permission_entity': EntityType.QUESTION_TYPES,
+            'default_columns': [
+                "id", "type", "created_at", "updated_at", "is_deleted", "deleted_at"
+            ],
             'default_sort': [{"field": "type", "direction": "asc"}],
-            'stats_generators': [], 'chart_generators': []
+            'stats_generators': [],
+            'chart_generators': []
         },
-         "questions": {
-            'model': Question, 'view_permission_entity': EntityType.QUESTIONS,
-            'default_columns': ["id", "text", "question_type.type", "remarks", "is_signature", "created_at"],
+        "questions": {
+            'model': Question,
+            'view_permission_entity': EntityType.QUESTIONS,
+            'default_columns': [
+                "id", "text", "question_type_id", "question_type.type", 
+                "is_signature", "remarks", "created_at", "updated_at", 
+                "is_deleted", "deleted_at"
+            ],
             'default_sort': [{"field": "text", "direction": "asc"}],
             'stats_generators': ['generate_question_stats'],
             'chart_generators': []
         },
-        "answers": { # Predefined answers
-            'model': Answer, 'view_permission_entity': EntityType.ANSWERS,
-            'default_columns': ["id", "value", "remarks", "created_at"],
+        "answers": {
+            'model': Answer,
+            'view_permission_entity': EntityType.ANSWERS,
+            'default_columns': [
+                "id", "value", "remarks", "created_at", "updated_at", 
+                "is_deleted", "deleted_at"
+            ],
             'default_sort': [{"field": "value", "direction": "asc"}],
-            'stats_generators': [], 'chart_generators': []
+            'stats_generators': [],
+            'chart_generators': []
         },
-        "form_questions": { # Link table
-            'model': FormQuestion, 'view_permission_entity': EntityType.FORMS,
-            'default_columns': ["id", "form_id", "form.title", "question_id", "question.text", "order_number"],
+        "form_questions": {
+            'model': FormQuestion,
+            'view_permission_entity': EntityType.FORMS,
+            'default_columns': [
+                "id", "form_id", "form.title", "form.description", "question_id", 
+                "question.text", "question.question_type.type", "question.is_signature", 
+                "order_number", "created_at", "updated_at", "is_deleted", "deleted_at"
+            ],
             'default_sort': [{"field": "form_id", "direction": "asc"}, {"field": "order_number", "direction": "asc"}],
-            'stats_generators': [], 'chart_generators': []
+            'stats_generators': [],
+            'chart_generators': []
         },
-        "form_answers": { # Link table for possible answers
-            'model': FormAnswer, 'view_permission_entity': EntityType.FORMS,
-            'default_columns': ["id", "form_question_id", "form_question.question.text", "answer_id", "answer.value"],
+        "form_answers": {
+            'model': FormAnswer,
+            'view_permission_entity': EntityType.FORMS,
+            'default_columns': [
+                "id", "form_question_id", "form_question.question.text", 
+                "form_question.question.question_type.type", "answer_id", 
+                "answer.value", "answer.remarks", "remarks", "created_at", 
+                "updated_at", "is_deleted", "deleted_at"
+            ],
             'default_sort': [{"field": "form_question_id", "direction": "asc"}, {"field": "answer_id", "direction": "asc"}],
-            'stats_generators': [], 'chart_generators': []
+            'stats_generators': [],
+            'chart_generators': []
         },
-        "answers_submitted": { # Submitted answers
-            'model': AnswerSubmitted, 'view_permission_entity': EntityType.SUBMISSIONS,
-            'default_columns': ["id", "form_submission_id", "question", "question_type", "answer", "column", "row", "cell_content", "created_at"],
-             'default_sort': [{"field": "created_at", "direction": "desc"}],
-             'stats_generators': [], 'chart_generators': [] # Stats/charts better on FormSubmission level
+        "answers_submitted": {
+            'model': AnswerSubmitted,
+            'view_permission_entity': EntityType.SUBMISSIONS,
+            'default_columns': [
+                "id", "form_submission_id", "form_submission.form.title", 
+                "question", "question_type", "answer", "column", "row", 
+                "cell_content", "created_at", "updated_at", "is_deleted", "deleted_at"
+            ],
+            'default_sort': [{"field": "created_at", "direction": "desc"}],
+            'stats_generators': [],
+            'chart_generators': []
         },
         "attachments": {
-            'model': Attachment, 'view_permission_entity': EntityType.ATTACHMENTS,
-            'default_columns': ["id", "form_submission_id", "file_type", "file_path", "is_signature", "signature_position", "signature_author", "created_at"],
-             'default_sort': [{"field": "created_at", "direction": "desc"}],
-             'stats_generators': ['generate_attachment_stats'],
-             'chart_generators': []
+            'model': Attachment,
+            'view_permission_entity': EntityType.ATTACHMENTS,
+            'default_columns': [
+                "id", "form_submission_id", "form_submission.form.title", 
+                "file_type", "file_path", "is_signature", "signature_position", 
+                "signature_author", "created_at", "updated_at", "is_deleted", "deleted_at"
+            ],
+            'default_sort': [{"field": "created_at", "direction": "desc"}],
+            'stats_generators': ['generate_attachment_stats'],
+            'chart_generators': []
         },
     }
 
@@ -749,51 +822,77 @@ class ReportService:
 
         # Define formats
         header_format = workbook.add_format({'bold': True, 'text_wrap': True, 'valign': 'top', 'fg_color': '#D7E4BC', 'border': 1, 'align': 'center'})
-        wrap_format = workbook.add_format({'text_wrap': True, 'valign': 'top', 'align': 'left'}) # For data cells
+        wrap_format = workbook.add_format({'text_wrap': True, 'valign': 'top', 'align': 'left'})
 
         # --- Write Data Table ---
         # Prepare headers for add_table
         headers = [{'header': col} for col in columns]
         # Convert all data to string, handle None
-        table_data = [[str(row_dict.get(col)) if row_dict.get(col) is not None else '' for col in columns] for row_dict in data]
+        table_data = []
+        for row_dict in data:
+            row_values = []
+            for col in columns:
+                cell_value = row_dict.get(col)
+                if cell_value is None:
+                    row_values.append('')
+                elif isinstance(cell_value, (datetime, date)):
+                    row_values.append(cell_value.isoformat())
+                else:
+                    row_values.append(str(cell_value))
+            table_data.append(row_values)
 
-        first_row_table = 0 # Start table at the top
+        first_row_table = 0  # Start table at the top
         first_col_table = 0
 
         if not table_data and not headers:
-             worksheet.write(first_row_table, 0, "No data or columns configured for this report.")
-        elif not table_data: # Write only headers if no data
+            worksheet.write(first_row_table, 0, "No data or columns configured for this report.")
+        elif not table_data:  # Write only headers if no data
             for col_idx, header_info in enumerate(headers):
-                 worksheet.write(first_row_table, col_idx, header_info['header'], header_format)
+                worksheet.write(first_row_table, col_idx, header_info['header'], header_format)
             logger.warning(f"No data found for sheet '{worksheet.name}'. Writing headers only.")
         else:
             # Calculate table dimensions
-            last_row_table = first_row_table + len(table_data) # +1 for header implicitly handled by add_table
+            last_row_table = first_row_table + len(table_data) 
             last_col_table = first_col_table + len(headers) - 1
 
             # Add the table using worksheet.add_table
             worksheet.add_table(first_row_table, first_col_table, last_row_table, last_col_table, {
                 'data': table_data,
                 'columns': headers,
-                'style': sheet_params.get('table_options', {}).get('style', 'Table Style Medium 9'), # Default style
+                'style': sheet_params.get('table_options', {}).get('style', 'Table Style Medium 9'),
                 'banded_rows': sheet_params.get('table_options', {}).get('banded_rows', True),
-                'header_row': True # Let add_table handle the header format
+                'header_row': True
             })
 
-            # --- Auto-adjust Column Widths (Basic) ---
-            # Note: This is an approximation. Accurate width calculation is complex.
+            # --- Auto-adjust Column Widths ---
             for col_idx, col_key in enumerate(columns):
                 # Calculate max length needed for this column
                 header_len = len(col_key)
                 max_data_len = 0
                 for row_data in table_data:
-                    cell_value = row_data[col_idx] # Already stringified
-                    max_data_len = max(max_data_len, len(cell_value))
+                    if col_idx < len(row_data):  # Ensure index is valid
+                        cell_value = row_data[col_idx]  # Already stringified
+                        max_data_len = max(max_data_len, len(cell_value))
 
                 # Set width (add padding, limit max width)
-                # Adjust multiplier based on font size if needed
                 width = min(max(header_len, max_data_len, 10) + 2, 60)
-                worksheet.set_column(col_idx, col_idx, width, wrap_format) # Apply wrap format to data columns
+                worksheet.set_column(col_idx, col_idx, width, wrap_format)
+                
+        # Add charts if present in analysis
+        if analysis and 'charts' in analysis and analysis['charts']:
+            chart_row = len(table_data) + 3  # Position charts below the data table with some spacing
+            for chart_name, chart_data in analysis['charts'].items():
+                if isinstance(chart_data, BytesIO):
+                    try:
+                        # Save the chart image into the worksheet
+                        chart_data.seek(0)  # Reset the BytesIO position
+                        worksheet.insert_image(chart_row, 1, f"chart_{chart_name}.png", 
+                                            {'image_data': chart_data, 'x_scale': 0.75, 'y_scale': 0.75})
+                        chart_row += 20  # Move down for the next chart
+                    except Exception as e:
+                        logger.error(f"Failed to insert chart {chart_name} into worksheet: {e}")
+                        worksheet.write(chart_row, 1, f"Error inserting chart: {chart_name}")
+                        chart_row += 2
 
 
     @staticmethod
@@ -1159,11 +1258,14 @@ class ReportService:
         Generates a report based on the provided parameters, checking permissions first.
         Handles single entity requests for XLSX, CSV, PDF, DOCX, PPTX.
         Handles multi-entity requests ("report_type": "all" or list) for:
-          - XLSX (multi-sheet)
-          - CSV (ZIP archive)
-          - PDF (ZIP archive)
-        DOCX/PPTX multi-entity requests are not supported.
-
+        - XLSX (multi-sheet)
+        - CSV (ZIP archive)
+        - PDF (multi-section document or ZIP archive with individual PDFs)
+        
+        Args:
+            report_params (dict): Parameters defining the report.
+            user (User): The user requesting the report.
+            
         Returns:
             Tuple[Optional[BytesIO], Optional[str], Optional[str], Optional[str]]:
                 - BytesIO buffer containing the report file, or None on error.
@@ -1189,230 +1291,418 @@ class ReportService:
             report_types_to_process = []
 
             if isinstance(report_type_req, list):
-                if output_format not in ["xlsx", "csv", "pdf"]: # Allow PDF for multi via ZIP
-                     return None, None, None, f"Multi-entity reports are only supported for XLSX, CSV (ZIP), and PDF (ZIP) formats, not {output_format.upper()}."
+                if output_format not in ["xlsx", "csv", "pdf"]:
+                    return None, None, None, f"Multi-entity reports are only supported for XLSX, CSV (ZIP), and PDF (ZIP) formats, not {output_format.upper()}."
                 is_multi_entity = True
                 report_types_to_process = report_type_req
-                if not base_filename: base_filename = f"multi_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                if not base_filename: 
+                    base_filename = f"multi_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
             elif report_type_req == "all":
-                if output_format not in ["xlsx", "csv", "pdf"]: # Allow PDF for multi via ZIP
-                     return None, None, None, f"Report for 'all' entities is only supported for XLSX, CSV (ZIP), and PDF (ZIP) formats, not {output_format.upper()}."
+                if output_format not in ["xlsx", "csv", "pdf"]:
+                    return None, None, None, f"Report for 'all' entities is only supported for XLSX, CSV (ZIP), and PDF (ZIP) formats, not {output_format.upper()}."
                 is_multi_entity = True
                 report_types_to_process = list(ReportService.ENTITY_CONFIG.keys())
-                if not base_filename: base_filename = f"full_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-            else: # Single entity request
+                if not base_filename: 
+                    base_filename = f"full_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            else:
                 is_multi_entity = False
                 report_types_to_process = [report_type_req]
-                if not base_filename: base_filename = f"report_{report_type_req}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                if not base_filename: 
+                    base_filename = f"report_{report_type_req}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
             # --- Process Each Report Configuration ---
             processed_data = {}
 
             for report_type in report_types_to_process:
-                 if report_type not in ReportService.ENTITY_CONFIG:
-                     error_msg = f"Unsupported report type: {report_type}"
-                     if is_multi_entity: logger.warning(error_msg); processed_data[report_type] = {'error': error_msg}; continue
-                     else: return None, None, None, error_msg
+                if report_type not in ReportService.ENTITY_CONFIG:
+                    error_msg = f"Unsupported report type: {report_type}"
+                    if is_multi_entity: 
+                        logger.warning(error_msg)
+                        processed_data[report_type] = {'error': error_msg}
+                        continue
+                    else: 
+                        return None, None, None, error_msg
 
-                 config = ReportService.ENTITY_CONFIG[report_type]
-                 model_cls = config['model']
-                 required_permission_entity = config['view_permission_entity']
+                config = ReportService.ENTITY_CONFIG[report_type]
+                model_cls = config['model']
+                required_permission_entity = config['view_permission_entity']
 
-                 # --- Permission Check ---
-                 if not PermissionManager.has_permission(user, "view", required_permission_entity):
-                     error_msg = f"Permission denied: Cannot generate report for {report_type}."
-                     logger.warning(f"User {user.username} lacks permission for {report_type} report.")
-                     if is_multi_entity: processed_data[report_type] = {'error': error_msg}; continue
-                     else: return None, None, None, error_msg
+                # --- Permission Check ---
+                if not PermissionManager.has_permission(user, "view", required_permission_entity):
+                    error_msg = f"Permission denied: Cannot generate report for {report_type}."
+                    logger.warning(f"User {user.username} lacks permission for {report_type} report.")
+                    if is_multi_entity: 
+                        processed_data[report_type] = {'error': error_msg}
+                        continue
+                    else: 
+                        return None, None, None, error_msg
 
-                 # --- Determine Columns, Filters, Sort ---
-                 has_detailed_params = any(k in report_params for k in ['columns', 'filters', 'sort_by'])
+                # --- Determine Columns, Filters, Sort ---
+                has_detailed_params = any(k in report_params for k in ['columns', 'filters', 'sort_by'])
 
-                 if is_multi_entity or not has_detailed_params:
-                     columns = config.get('default_columns')
-                     if not columns:
-                         error_msg = f"Default columns not configured for report type: {report_type}"
-                         if is_multi_entity: logger.error(error_msg); processed_data[report_type] = {'error': error_msg}; continue
-                         else: return None, None, None, error_msg
-                     filters = []
-                     sort_by = config.get('default_sort', [])
-                 else: # Detailed single request
-                     columns = report_params.get("columns", config.get('default_columns'))
-                     if not columns:
-                          return None, None, None, f"Columns must be specified or default columns must be configured for report type: {report_type}"
-                     filters = report_params.get("filters", [])
-                     sort_by = report_params.get("sort_by", config.get('default_sort', []))
+                if is_multi_entity or not has_detailed_params:
+                    columns = config.get('default_columns')
+                    if not columns:
+                        error_msg = f"Default columns not configured for report type: {report_type}"
+                        if is_multi_entity: 
+                            logger.error(error_msg)
+                            processed_data[report_type] = {'error': error_msg}
+                            continue
+                        else: 
+                            return None, None, None, error_msg
+                    filters = []
+                    sort_by = config.get('default_sort', [])
+                else:  # Detailed single request
+                    columns = report_params.get("columns", config.get('default_columns'))
+                    if not columns:
+                        return None, None, None, f"Columns must be specified or default columns must be configured for report type: {report_type}"
+                    filters = report_params.get("filters", [])
+                    sort_by = report_params.get("sort_by", config.get('default_sort', []))
 
-                 current_params = {
-                     "columns": columns, "filters": filters, "sort_by": sort_by,
-                     "report_type": report_type,
-                     "sheet_name": report_params.get(f"{report_type}_sheet_name", report_type.replace("_", " ").title()),
-                     "table_options": report_params.get(f"{report_type}_table_options", report_params.get("table_options", {})),
-                     "include_data_table_in_ppt": report_params.get("include_data_table_in_ppt", False),
-                     "max_ppt_table_rows": report_params.get("max_ppt_table_rows", 15),
-                     "report_title": report_params.get("report_title")
-                 }
+                current_params = {
+                    "columns": columns, 
+                    "filters": filters, 
+                    "sort_by": sort_by,
+                    "report_type": report_type,
+                    "sheet_name": report_params.get(f"{report_type}_sheet_name", report_type.replace("_", " ").title()),
+                    "table_options": report_params.get(f"{report_type}_table_options", report_params.get("table_options", {})),
+                    "include_data_table_in_ppt": report_params.get("include_data_table_in_ppt", False),
+                    "max_ppt_table_rows": report_params.get("max_ppt_table_rows", 15),
+                    "report_title": report_params.get("report_title")
+                }
 
-                 # --- Data Fetching & Processing ---
-                 try:
-                     logger.info(f"Fetching data for report type '{report_type}'...")
-                     fetched_objects = ReportService._fetch_data(model_cls, current_params['filters'], current_params['sort_by'], user, current_params['columns'])
-                     logger.info(f"Fetched {len(fetched_objects)} records for '{report_type}'.")
+                # --- Data Fetching & Processing ---
+                try:
+                    logger.info(f"Fetching data for report type '{report_type}'...")
+                    fetched_objects = ReportService._fetch_data(model_cls, current_params['filters'], current_params['sort_by'], user, current_params['columns'])
+                    logger.info(f"Fetched {len(fetched_objects)} records for '{report_type}'.")
 
-                     logger.info(f"Flattening data for '{report_type}'...")
-                     if fetched_objects and isinstance(fetched_objects[0], model_cls):
-                         data = ReportService._flatten_data(fetched_objects, current_params['columns'])
-                         logger.info(f"Flattened data generated for '{report_type}'.")
-                     else:
-                         # Handle cases where fetch might return non-model objects or be empty
-                         data = []
-                         if fetched_objects: # Log if fetched_objects is not None but not expected type
-                             logger.warning(f"Fetched data for {report_type} is not a list of expected model instances.")
-                         else: # Log if fetch returned None or empty list
-                              logger.warning(f"No data fetched for {report_type}, using empty list.")
+                    logger.info(f"Flattening data for '{report_type}'...")
+                    if fetched_objects and isinstance(fetched_objects[0], model_cls):
+                        data = ReportService._flatten_data(fetched_objects, current_params['columns'])
+                        logger.info(f"Flattened data generated for '{report_type}'.")
+                    else:
+                        data = []
+                        if fetched_objects:
+                            logger.warning(f"Fetched data for {report_type} is not a list of expected model instances.")
+                        else:
+                            logger.warning(f"No data fetched for {report_type}, using empty list.")
 
+                    # --- Data Analysis (only if needed) ---
+                    analysis_results = {}
+                    if output_format in ["pdf", "docx", "pptx"]:
+                        logger.info(f"Analyzing data for '{report_type}'...")
+                        analysis_results = ReportService._analyze_data(data, report_type)
+                        logger.info(f"Data analysis complete for '{report_type}'.")
 
-                     # --- Data Analysis (only if needed) ---
-                     analysis_results = {}
-                     if output_format in ["pdf", "docx", "pptx"]:
-                         logger.info(f"Analyzing data for '{report_type}'...")
-                         analysis_results = ReportService._analyze_data(data, report_type)
-                         logger.info(f"Data analysis complete for '{report_type}'.")
+                    processed_data[report_type] = {
+                        'error': None,
+                        'data': data,
+                        'objects': fetched_objects,
+                        'params': current_params,
+                        'analysis': analysis_results
+                    }
 
-                     processed_data[report_type] = {
-                         'error': None,
-                         'data': data,            # Use flattened data
-                         'objects': fetched_objects, # Store original objects for PPTX/complex cases
-                         'params': current_params,
-                         'analysis': analysis_results
-                     }
-
-                 except Exception as fetch_err:
-                     error_msg = f"Error processing data for {report_type}."
-                     logger.error(f"{error_msg}: {fetch_err}", exc_info=True)
-                     if is_multi_entity: processed_data[report_type] = {'error': error_msg}; continue
-                     else: return None, None, None, error_msg
-
+                except Exception as fetch_err:
+                    error_msg = f"Error processing data for {report_type}: {str(fetch_err)}"
+                    logger.error(f"{error_msg}", exc_info=True)
+                    if is_multi_entity: 
+                        processed_data[report_type] = {'error': error_msg}
+                        continue
+                    else: 
+                        return None, None, None, error_msg
 
             # --- Report Generation ---
-            final_buffer = None
-            final_filename = None
-            mime_type = None
-
-            if not processed_data and is_multi_entity:
-                 return None, None, None, "No data could be generated for the requested report types due to errors or permissions."
+            if not processed_data:
+                if is_multi_entity:
+                    return None, None, None, "No data could be generated for the requested report types due to errors or permissions."
+                else:
+                    return None, None, None, "Failed to process report data."
 
             # --- Generate Output Based on Format ---
-            if output_format == "xlsx":
-                final_filename = f"{base_filename}.xlsx"
-                mime_type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-                logger.info(f"Generating XLSX report '{final_filename}'...")
-                final_buffer = ReportService._generate_multi_sheet_xlsx(processed_data, report_params)
+            try:
+                if output_format == "xlsx":
+                    final_filename = f"{base_filename}.xlsx"
+                    mime_type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                    logger.info(f"Generating XLSX report '{final_filename}'...")
+                    final_buffer = ReportService._generate_multi_sheet_xlsx(processed_data, report_params)
 
-            elif output_format == "csv":
-                 if is_multi_entity:
-                     final_filename = f"{base_filename}.zip"
-                     mime_type = 'application/zip'
-                     logger.info(f"Generating Multi-CSV ZIP report '{final_filename}'...")
-                     final_buffer = ReportService._generate_multi_csv_zip(processed_data, report_params)
-                 else:
-                     single_report_type = list(processed_data.keys())[0]
-                     result = processed_data[single_report_type]
-                     if result.get('error'): return None, None, None, result['error']
-                     final_filename = f"{base_filename}.csv"
-                     mime_type = 'text/csv'
-                     logger.info(f"Generating CSV report '{final_filename}'...")
-                     final_buffer = ReportService._generate_csv_report(result['data'], result['params']['columns'], result['analysis'])
+                elif output_format == "csv":
+                    if is_multi_entity:
+                        final_filename = f"{base_filename}.zip"
+                        mime_type = 'application/zip'
+                        logger.info(f"Generating Multi-CSV ZIP report '{final_filename}'...")
+                        final_buffer = ReportService._generate_multi_csv_zip(processed_data, report_params)
+                    else:
+                        single_report_type = list(processed_data.keys())[0]
+                        result = processed_data[single_report_type]
+                        if result.get('error'): 
+                            return None, None, None, result['error']
+                        final_filename = f"{base_filename}.csv"
+                        mime_type = 'text/csv'
+                        logger.info(f"Generating CSV report '{final_filename}'...")
+                        final_buffer = ReportService._generate_csv_report(result['data'], result['params']['columns'], result['analysis'])
 
-            elif output_format == "pdf":
-                 if is_multi_entity:
-                     final_filename = f"{base_filename}_pdfs.zip"
-                     mime_type = 'application/zip'
-                     logger.info(f"Generating Multi-PDF ZIP report '{final_filename}'...")
-                     zip_buffer = BytesIO()
-                     with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                         # Generate Consolidated PDF first
-                         logger.info("Generating consolidated PDF for ZIP archive...")
-                         try:
-                             consolidated_pdf_buffer = ReportService._generate_multi_section_pdf(processed_data, report_params)
-                             zipf.writestr("_consolidated_report.pdf", consolidated_pdf_buffer.getvalue())
-                             logger.info("Added _consolidated_report.pdf to ZIP archive.")
-                         except Exception as consol_err:
-                             logger.error(f"Error generating consolidated PDF for ZIP: {consol_err}", exc_info=True)
-                             zipf.writestr("_consolidated_report_error.txt", f"Error generating consolidated PDF: {consol_err}")
+                elif output_format == "pdf":
+                    if is_multi_entity:
+                        final_filename = f"{base_filename}_pdfs.zip"
+                        mime_type = 'application/zip'
+                        logger.info(f"Generating Multi-PDF ZIP report '{final_filename}'...")
+                        zip_buffer = BytesIO()
+                        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                            # Generate Consolidated PDF first
+                            logger.info("Generating consolidated PDF for ZIP archive...")
+                            try:
+                                consolidated_pdf_buffer = ReportService._generate_multi_section_pdf(processed_data, report_params)
+                                zipf.writestr("_consolidated_report.pdf", consolidated_pdf_buffer.getvalue())
+                                logger.info("Added _consolidated_report.pdf to ZIP archive.")
+                            except Exception as consol_err:
+                                logger.error(f"Error generating consolidated PDF for ZIP: {consol_err}", exc_info=True)
+                                zipf.writestr("_consolidated_report_error.txt", f"Error generating consolidated PDF: {consol_err}")
 
-                         # Generate Individual PDFs
-                         for report_type, result in processed_data.items():
-                             if result.get('error'):
-                                 logger.warning(f"Skipping individual PDF for {report_type} in ZIP due to error: {result['error']}")
-                                 zipf.writestr(f"{report_type}_error.txt", f"Error generating report: {result['error']}")
-                                 continue
-                             if 'data' in result and 'params' in result and 'columns' in result['params']:
-                                 pdf_filename = f"{report_type}.pdf"
-                                 logger.info(f"Generating individual PDF data for {pdf_filename}...")
-                                 try:
-                                     # Generate single PDF section in memory
-                                     single_pdf_buffer = ReportService._generate_multi_section_pdf({report_type: result}, report_params) # Generate single section
-                                     zipf.writestr(pdf_filename, single_pdf_buffer.getvalue())
-                                     logger.info(f"Added {pdf_filename} to ZIP archive.")
-                                 except Exception as pdf_zip_err:
-                                     logger.error(f"Error generating individual PDF for {report_type} for ZIP: {pdf_zip_err}", exc_info=True)
-                                     zipf.writestr(f"{report_type}_error.txt", f"Error generating individual PDF: {pdf_zip_err}")
-                             else:
-                                 logger.warning(f"Missing data/params/columns for PDF '{report_type}', skipping ZIP entry.")
-                                 zipf.writestr(f"{report_type}_nodata.txt", "No data or columns configured.")
-                     zip_buffer.seek(0)
-                     final_buffer = zip_buffer
-                 else:
-                     # Generate single PDF
-                     single_report_type = list(processed_data.keys())[0]
-                     result = processed_data[single_report_type]
-                     if result.get('error'): return None, None, None, result['error']
-                     final_filename = f"{base_filename}.pdf"
-                     mime_type = 'application/pdf'
-                     logger.info(f"Generating PDF report '{final_filename}'...")
-                     final_buffer = ReportService._generate_multi_section_pdf({single_report_type: result}, report_params)
+                            # Generate Individual PDFs
+                            for report_type, result in processed_data.items():
+                                if result.get('error'):
+                                    logger.warning(f"Skipping individual PDF for {report_type} in ZIP due to error: {result['error']}")
+                                    zipf.writestr(f"{report_type}_error.txt", f"Error generating report: {result['error']}")
+                                    continue
+                                if 'data' in result and 'params' in result and 'columns' in result['params']:
+                                    pdf_filename = f"{report_type}.pdf"
+                                    logger.info(f"Generating individual PDF data for {pdf_filename}...")
+                                    try:
+                                        single_pdf_buffer = ReportService._generate_multi_section_pdf({report_type: result}, report_params)
+                                        zipf.writestr(pdf_filename, single_pdf_buffer.getvalue())
+                                        logger.info(f"Added {pdf_filename} to ZIP archive.")
+                                    except Exception as pdf_zip_err:
+                                        logger.error(f"Error generating individual PDF for {report_type} for ZIP: {pdf_zip_err}", exc_info=True)
+                                        zipf.writestr(f"{report_type}_error.txt", f"Error generating individual PDF: {pdf_zip_err}")
+                                else:
+                                    logger.warning(f"Missing data/params/columns for PDF '{report_type}', skipping ZIP entry.")
+                                    zipf.writestr(f"{report_type}_nodata.txt", "No data or columns configured.")
+                        zip_buffer.seek(0)
+                        final_buffer = zip_buffer
+                    else:
+                        # Generate single PDF
+                        single_report_type = list(processed_data.keys())[0]
+                        result = processed_data[single_report_type]
+                        if result.get('error'): 
+                            return None, None, None, result['error']
+                        final_filename = f"{base_filename}.pdf"
+                        mime_type = 'application/pdf'
+                        logger.info(f"Generating PDF report '{final_filename}'...")
+                        final_buffer = ReportService._generate_multi_section_pdf({single_report_type: result}, report_params)
 
-            elif output_format == "docx":
-                 if is_multi_entity: return None, None, None, "DOCX export is only supported for single entity report requests."
-                 single_report_type = list(processed_data.keys())[0]
-                 result = processed_data[single_report_type]
-                 if result.get('error'): return None, None, None, result['error']
-                 final_filename = f"{base_filename}.docx"
-                 mime_type = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-                 logger.info(f"Generating DOCX report '{final_filename}'...")
-                 final_buffer = ReportService._generate_multi_section_docx({single_report_type: result}, report_params)
+                elif output_format == "docx":
+                    if is_multi_entity: 
+                        return None, None, None, "DOCX export is only supported for single entity report requests."
+                    single_report_type = list(processed_data.keys())[0]
+                    result = processed_data[single_report_type]
+                    if result.get('error'): 
+                        return None, None, None, result['error']
+                    final_filename = f"{base_filename}.docx"
+                    mime_type = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+                    logger.info(f"Generating DOCX report '{final_filename}'...")
+                    final_buffer = ReportService._generate_multi_section_docx({single_report_type: result}, report_params)
 
+                elif output_format == "pptx":
+                    if is_multi_entity: 
+                        return None, None, None, "PPTX export is only supported for single entity report requests."
+                    single_report_type = list(processed_data.keys())[0]
+                    result = processed_data[single_report_type]
+                    if result.get('error'): 
+                        return None, None, None, result['error']
+                    final_filename = f"{base_filename}.pptx"
+                    mime_type = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+                    logger.info(f"Generating PPTX report '{final_filename}'...")
+                    config = ReportService.ENTITY_CONFIG[single_report_type]
+                    pptx_gen_func_name = config.get('pptx_generator')
+                    if pptx_gen_func_name and hasattr(ReportService, pptx_gen_func_name):
+                        final_buffer = getattr(ReportService, pptx_gen_func_name)(result['objects'], result['params']['columns'], result['analysis'], result['params'])
+                    else:
+                        logger.error(f"PPTX generation not specifically implemented for report type: {single_report_type}")
+                        return None, None, None, f"PPTX generation is not supported for report type: {single_report_type}"
 
-            elif output_format == "pptx":
-                 if is_multi_entity: return None, None, None, "PPTX export is only supported for single entity report requests."
-                 single_report_type = list(processed_data.keys())[0]
-                 result = processed_data[single_report_type]
-                 if result.get('error'): return None, None, None, result['error']
-                 final_filename = f"{base_filename}.pptx"
-                 mime_type = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
-                 logger.info(f"Generating PPTX report '{final_filename}'...")
-                 config = ReportService.ENTITY_CONFIG[single_report_type]
-                 pptx_gen_func_name = config.get('pptx_generator')
-                 if pptx_gen_func_name and hasattr(ReportService, pptx_gen_func_name):
-                      # Pass original objects ('objects') to PPTX generator
-                      final_buffer = getattr(ReportService, pptx_gen_func_name)(result['objects'], result['params']['columns'], result['analysis'], result['params'])
-                 else:
-                      logger.error(f"PPTX generation not specifically implemented for report type: {single_report_type}")
-                      return None, None, None, f"PPTX generation is not supported for report type: {single_report_type}"
+                else:
+                    return None, None, None, f"Internal error: Unhandled output format: {output_format}"
 
-            else:
-                 return None, None, None, f"Internal error: Unhandled output format: {output_format}"
-
-            # --- Final Return ---
-            if final_buffer:
-                logger.info(f"{output_format.upper()} report '{final_filename}' generated successfully.")
-                return final_buffer, final_filename, mime_type, None
-            else:
-                 logger.error(f"Report generation failed for format {output_format}, buffer is None.")
-                 return None, None, None, f"Failed to generate report in {output_format} format."
+                # --- Final Return ---
+                if final_buffer:
+                    logger.info(f"{output_format.upper()} report '{final_filename}' generated successfully.")
+                    return final_buffer, final_filename, mime_type, None
+                else:
+                    logger.error(f"Report generation failed for format {output_format}, buffer is None.")
+                    return None, None, None, f"Failed to generate report in {output_format} format."
+            
+            except Exception as format_err:
+                error_msg = f"Error generating {output_format} format: {str(format_err)}"
+                logger.error(error_msg, exc_info=True)
+                return None, None, None, error_msg
 
         except Exception as e:
-            logger.error(f"Failed to generate report: {str(e)}")
-            logger.error(traceback.format_exc())
-            return None, None, None, f"An error occurred during report generation. Please check logs for details."
+            logger.error(f"Failed to generate report: {str(e)}", exc_info=True)
+            return None, None, None, f"An error occurred during report generation: {str(e)}"
+        
+    @staticmethod
+    def get_database_schema() -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+        """
+        Retrieves database schema and table row counts.
+        
+        Returns:
+            Tuple[Optional[Dict[str, Any]], Optional[str]]:
+                - Dictionary containing schema data, or None on error.
+                - Error message, or None on success.
+        """
+        try:
+            # --- Get Database Schema ---
+            inspector = inspect(db.engine)
+            schema_data = {}
+            
+            # Get all table names
+            table_names = inspector.get_table_names()
+            
+            # For each table, get column information and row count
+            for table_name in table_names:
+                try:
+                    # Get column information
+                    columns = []
+                    for column in inspector.get_columns(table_name):
+                        column_info = {
+                            "name": column['name'],
+                            "type": str(column['type']),
+                            "nullable": column.get('nullable', True),
+                            "default": str(column.get('default', 'None')),
+                            "primary_key": False
+                        }
+                        columns.append(column_info)
+                    
+                    # Get primary keys
+                    pk_constraint = inspector.get_pk_constraint(table_name)
+                    pk_columns = pk_constraint.get('constrained_columns', []) if pk_constraint else []
+                    for column in columns:
+                        if column['name'] in pk_columns:
+                            column['primary_key'] = True
+                    
+                    # Get foreign keys
+                    foreign_keys = []
+                    for fk in inspector.get_foreign_keys(table_name):
+                        foreign_keys.append({
+                            "constrained_columns": fk['constrained_columns'],
+                            "referred_table": fk['referred_table'],
+                            "referred_columns": fk['referred_columns']
+                        })
+                    
+                    # Get row count
+                    row_count_query = text(f"SELECT COUNT(*) FROM {table_name}")
+                    row_count_result = db.session.execute(row_count_query)
+                    row_count = row_count_result.scalar()
+                    
+                    # For soft-delete enabled tables, get active row count
+                    active_row_count = None
+                    try:
+                        # Check if is_deleted column exists
+                        if any(col['name'] == 'is_deleted' for col in columns):
+                            active_count_query = text(f"SELECT COUNT(*) FROM {table_name} WHERE is_deleted = FALSE")
+                            active_count_result = db.session.execute(active_count_query)
+                            active_row_count = active_count_result.scalar()
+                    except Exception as active_count_err:
+                        logger.warning(f"Error getting active count for {table_name}: {str(active_count_err)}")
+                    
+                    # Add table info to schema data
+                    table_info = {
+                        "columns": columns,
+                        "primary_keys": pk_columns,
+                        "foreign_keys": foreign_keys,
+                        "total_rows": row_count
+                    }
+                    
+                    if active_row_count is not None:
+                        table_info["active_rows"] = active_row_count
+                        table_info["deleted_rows"] = row_count - active_row_count
+                    
+                    schema_data[table_name] = table_info
+                    
+                except Exception as table_err:
+                    logger.error(f"Error fetching schema for table {table_name}: {str(table_err)}")
+                    schema_data[table_name] = {"error": f"Failed to retrieve schema: {str(table_err)}"}
+            
+            # Get additional database information
+            try:
+                # Get database version
+                version_query = text("SELECT version()")
+                db_version = db.session.execute(version_query).scalar()
+                
+                # Get database name
+                db_name = None
+                try:
+                    # Try to get database name from connection URL
+                    db_url = str(db.engine.url)
+                    if '/' in db_url:
+                        # Extract database name from URL (handles most database types)
+                        parts = db_url.split('/')
+                        db_name_with_params = parts[-1]
+                        if '?' in db_name_with_params:
+                            db_name = db_name_with_params.split('?')[0]
+                        else:
+                            db_name = db_name_with_params
+                    
+                    # If the above method fails, try another approach
+                    if not db_name:
+                        # For PostgreSQL
+                        try:
+                            db_name_query = text("SELECT current_database()")
+                            db_name = db.session.execute(db_name_query).scalar()
+                        except:
+                            pass
+                    
+                    # For MySQL/MariaDB
+                    if not db_name:
+                        try:
+                            db_name_query = text("SELECT DATABASE()")
+                            db_name = db.session.execute(db_name_query).scalar()
+                        except:
+                            pass
+                    
+                    # For SQLite, extract from connection string
+                    if not db_name and 'sqlite' in db_url.lower():
+                        db_name = db_url.split('/')[-1]
+                except Exception as db_name_err:
+                    logger.warning(f"Error getting database name: {str(db_name_err)}")
+                    db_name = "Unknown"
+                
+                # Match tables to model classes (where possible)
+                model_mapping = {}
+                for model_name in ReportService.ENTITY_CONFIG.keys():
+                    model_cls = ReportService.ENTITY_CONFIG[model_name].get('model')
+                    if model_cls:
+                        table_name = model_cls.__tablename__
+                        model_mapping[table_name] = model_name
+                
+                # Add database information to response
+                response_data = {
+                    "database_info": {
+                        "name": db_name,
+                        "version": db_version,
+                        "total_tables": len(table_names),
+                        "application_models": len(model_mapping)
+                    },
+                    "model_mapping": model_mapping,
+                    "tables": schema_data
+                }
+                
+                return response_data, None
+                
+            except Exception as db_info_err:
+                logger.error(f"Error fetching database information: {str(db_info_err)}")
+                response_data = {
+                    "database_info": {
+                        "name": "Unknown",
+                        "version": "Unknown",
+                        "total_tables": len(table_names)
+                    },
+                    "tables": schema_data
+                }
+                return response_data, None
+                
+        except Exception as e:
+            logger.exception(f"Failed to retrieve database schema: {str(e)}")
+            return None, f"An error occurred while retrieving database schema: {str(e)}"

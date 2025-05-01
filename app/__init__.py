@@ -55,42 +55,58 @@ def check_if_token_revoked(jwt_header, jwt_payload: dict) -> bool:
         app_logger.error(f"Blocklist check: Error querying blocklist for JTI {jti}: {e}", exc_info=True) # ERROR on DB query failure
         return False
 
-# --- check_db_initialized function ---
 def check_db_initialized(db_instance):
     """
     Check if the database has been initialized with basic data.
     Uses the 'app' logger instance.
     """
-    logger = logging.getLogger("app") # Get the app logger configured by setup_logging
+    logger = logging.getLogger("app")
+    
+    # First check if we can connect to the database at all
+    try:
+        # Test basic connection
+        connection = db_instance.engine.connect()
+        connection.close()
+    except Exception as e:
+        # If we can't connect, log the error and return False
+        logger.error(f"Database connection error: {str(e)}", exc_info=True)
+        
+        # Check if the error is encoding-related
+        if 'utf-8' in str(e).lower() or 'codec' in str(e).lower():
+            logger.error("Encoding issue detected in database URL. Please delete .env file and restart the app.")
+            print("\n❌ Encoding issue detected in database URL.")
+            print("Please delete the .env file and restart the application with 'flask run'.")
+        
+        return False
+    
     try:
         # First check if tables exist using SQLAlchemy inspector
         inspector = inspect(db_instance.engine)
-        required_tables = ['roles', 'users', 'permissions', 'environments','token_blocklist']
+        required_tables = ['roles', 'users', 'permissions', 'environments', 'token_blocklist']
         existing_tables = inspector.get_table_names()
 
         if not all(table in existing_tables for table in required_tables):
-            logger.debug("Not all required tables exist") # Use debug level for less noise
+            logger.debug("Not all required tables exist")
             return False
 
-        # Import models locally within the function to avoid potential circular imports
-        # during initial module loading, especially if models import 'db' from this file.
+        # Import models locally to avoid circular imports
         from app.models.user import User
         from app.models.role import Role
 
-        # Check if an admin role (marked as super user) exists
+        # Check if an admin role exists
         admin_role = Role.query.filter_by(is_super_user=True).first()
         if not admin_role:
-            logger.debug("Admin role does not exist") # Use debug level
+            logger.debug("Admin role does not exist")
             return False
 
-        # Check if at least one user is assigned the admin role
+        # Check if admin user exists
         admin_user = User.query.filter_by(role_id=admin_role.id).first()
         if not admin_user:
-            logger.debug("Admin user does not exist") # Use debug level
+            logger.debug("Admin user does not exist")
             return False
 
         # If all checks pass, the database seems initialized
-        logger.debug("Database is properly initialized") # Use debug level
+        logger.debug("Database is properly initialized")
         return True
 
     except Exception as e:
@@ -99,7 +115,6 @@ def check_db_initialized(db_instance):
         return False
 
 
-# --- create_app factory ---
 def create_app(config_class=None):
     """Create and configure the Flask application instance."""
     # Get the logger instance configured at the module level
@@ -179,7 +194,7 @@ def create_app(config_class=None):
             from app.models import ( # noqa F401
                 User, Role, Permission, RolePermission, Environment,
                 QuestionType, Question, Answer, Form, FormQuestion,
-                FormAnswer, FormSubmission, AnswerSubmitted, Attachment,TokenBlocklist 
+                FormAnswer, FormSubmission, AnswerSubmitted, Attachment, TokenBlocklist 
             )
 
             # --- Register Blueprints (within context) ---
@@ -200,38 +215,51 @@ def create_app(config_class=None):
             # Only perform DB checks and potential initialization in the main child process
             if is_main_process:
                 app_init_logger.info("Running in main Werkzeug process. Checking DB status...")
+                db_initialized = False
+                
+                # Try to create tables first
+                try:
+                    db.create_all()
+                    app_init_logger.info("Database tables created (or already exist)")
+                except Exception as e:
+                    app_init_logger.error(f"Error creating database tables: {str(e)}", exc_info=True)
+                    print(f"❌ Error creating database tables: {str(e)}")
+                    print("Please check your database configuration in .env file.")
+                    
+                # Now check if the database is initialized with required data
                 if not check_db_initialized(db):
                     app_init_logger.warning("Database not initialized. Attempting initial setup...")
                     try:
                         # Import the initializer class
                         from management.db_init import DatabaseInitializer
                         initializer = DatabaseInitializer(app)
-                        # Call the initialization method (which likely calls db.create_all)
-                        # Pass check_empty=False if init_db should run even if tables exist but lack data
+                        # Call the initialization method
                         success, error = initializer.init_db(check_empty=False)
 
                         if not success:
                             # Log critical failure and print to console
-                            app_init_logger.error(f"Failed to initialize database/admin user: {error}")
-                            print(f"❌ Failed to initialize database/admin user: {error}. Please check logs or run 'flask database init'")
+                            app_init_logger.error(f"Failed to initialize database: {error}")
+                            print(f"❌ Failed to initialize database: {error}")
+                            print("Please run 'flask database init' manually.")
                         else:
-                             app_init_logger.info("Database initialization triggered successfully.")
+                            app_init_logger.info("Database initialization completed successfully.")
+                            db_initialized = True
 
                     except ImportError:
-                         app_init_logger.error("Could not import DatabaseInitializer. Database might not be initialized.")
-                         print("❌ Error: Could not import DatabaseInitializer. Run 'flask database init' manually.")
+                        app_init_logger.error("Could not import DatabaseInitializer. Database might not be initialized.")
+                        print("❌ Error: Could not import DatabaseInitializer. Run 'flask database init' manually.")
                     except Exception as init_db_e:
-                         # Catch any other exception during DB initialization
-                         app_init_logger.error(f"Exception during database initialization: {init_db_e}", exc_info=True)
-                         print(f"❌ Exception during database initialization: {init_db_e}")
-
+                        # Catch any other exception during DB initialization
+                        app_init_logger.error(f"Exception during database initialization: {init_db_e}", exc_info=True)
+                        print(f"❌ Exception during database initialization: {init_db_e}")
                 else:
-                    # Log that the DB is already set up (only appears once now)
+                    # Log that the DB is already set up
                     app_init_logger.info("Database already initialized (checked in main process).")
-            # else:
-            #      # Optional: Log that this is the initial parent process run (usually not needed)
-            #      app_init_logger.debug("Running in initial Werkzeug process (or reloader disabled). Skipping DB init check here.")
+                    db_initialized = True
 
+                # If initialization was successful, log it
+                if db_initialized:
+                    app_init_logger.info("✅ Database ready for use")
 
         # Log successful app initialization only once in the main process
         if is_main_process:

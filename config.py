@@ -9,25 +9,17 @@ import psycopg2
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 import secrets  # For generating secure random keys
 
-# Try to load .env, but don't fail if it doesn't exist
-try:
-    load_dotenv(raise_error_if_not_found=False)
-except Exception:
-    pass  # Ignore any errors during dotenv loading
-
+# Configure logger
 logger = logging.getLogger(__name__)
 
 class Config:
     """Application configuration class."""
     def __init__(self):
-        # Check if .env exists, if not, create it
-        self._ensure_env_file_exists()
+        # First, create/check env file and handle database setup
+        self._setup_environment()
         
-        # Now load the environment variables (which might have just been created)
-        try:
-            load_dotenv(override=True)
-        except Exception:
-            pass
+        # Load environment variables (from potentially fixed .env file)
+        load_dotenv(override=True)
         
         # Set up configuration values
         self.SECRET_KEY = os.environ.get('SECRET_KEY') or secrets.token_hex(24)
@@ -47,18 +39,19 @@ class Config:
         # Ensure upload directory exists
         if not os.path.exists(self.UPLOAD_FOLDER):
             os.makedirs(self.UPLOAD_FOLDER)
-
-    def _ensure_env_file_exists(self):
-        """Check if .env file exists, create it if it doesn't."""
+    
+    def _setup_environment(self):
+        """Create or verify .env file and handle database setup."""
         env_path = os.path.join(os.path.abspath(os.path.dirname(__file__)), '.env')
         
+        # Check if .env exists
         if not os.path.exists(env_path):
-            # .env file doesn't exist, create it with default values
+            # Create new .env with basic settings
             try:
-                # Create a secure random key for SECRET_KEY and JWT_SECRET_KEY
                 secret_key = secrets.token_hex(24)
                 jwt_secret_key = secrets.token_hex(24)
                 
+                # First create the .env file with security settings
                 with open(env_path, 'w', encoding='utf-8') as f:
                     f.write("# Auto-generated .env file\n\n")
                     f.write("# Security Configuration\n")
@@ -66,13 +59,86 @@ class Config:
                     f.write(f"JWT_SECRET_KEY={jwt_secret_key}\n\n")
                     f.write("# Application Settings\n")
                     f.write("JWT_ACCESS_TOKEN_EXPIRES=3600\n\n")
-                    # Database URL will be added by _get_database_uri()
                 
                 logger.info(f"Created new .env file at {env_path}")
                 print(f"✅ Created new .env file at {env_path}")
+                
+                # Now set up the database configuration since we're starting fresh
+                print("\n⚠️  Database URL not found in environment variables.")
+                
+                # Get database connection details
+                db_host = input("Database host (default: localhost): ").strip() or 'localhost'
+                db_name = input("Database name: ").strip()
+                db_user = input("Database username: ").strip()
+                db_pass = getpass.getpass("Database password: ").strip()
+
+                # Create database and user if needed
+                success, error = self.create_db_and_user(db_host, db_name, db_user, db_pass)
+                if not success:
+                    print(f"❌ Failed to create database/user: {error}")
+                    # We'll still create the DATABASE_URL in the .env to avoid breaking the app
+                
+                # Generate the database URL
+                db_url = f"postgresql://{db_user}:{db_pass}@{db_host}/{db_name}"
+                
+                # Update the .env file with the database URL
+                with open(env_path, 'a', encoding='utf-8') as f:
+                    f.write("# Database Configuration\n")
+                    f.write(f"DATABASE_URL={db_url}\n")
+                    
+                # Set the environment variable directly for the current process
+                os.environ['DATABASE_URL'] = db_url
+                print("✅ Database credentials saved to .env file")
+                
             except Exception as e:
                 logger.error(f"Failed to create .env file: {str(e)}")
                 print(f"⚠️ Warning: Could not create .env file: {str(e)}")
+        else:
+            # Check for encoding issues in existing .env
+            try:
+                with open(env_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    
+                # Check if it has DATABASE_URL
+                if "DATABASE_URL=" not in content:
+                    # No DATABASE_URL, we need to add it
+                    print("\n⚠️  Database URL not found in environment variables.")
+                    
+                    # Get database connection details
+                    db_host = input("Database host (default: localhost): ").strip() or 'localhost'
+                    db_name = input("Database name: ").strip()
+                    db_user = input("Database username: ").strip()
+                    db_pass = getpass.getpass("Database password: ").strip()
+
+                    # Create database and user if needed
+                    success, error = self.create_db_and_user(db_host, db_name, db_user, db_pass)
+                    if not success:
+                        print(f"❌ Failed to create database/user: {error}")
+                    
+                    # Generate the database URL
+                    db_url = f"postgresql://{db_user}:{db_pass}@{db_host}/{db_name}"
+                    
+                    # Update the .env file with the database URL
+                    with open(env_path, 'a', encoding='utf-8') as f:
+                        f.write("\n# Database Configuration\n")
+                        f.write(f"DATABASE_URL={db_url}\n")
+                        
+                    # Set the environment variable directly for the current process
+                    os.environ['DATABASE_URL'] = db_url
+                    print("✅ Database credentials saved to .env file")
+                    
+            except UnicodeDecodeError:
+                # Encoding issue detected, delete the problematic file
+                try:
+                    os.remove(env_path)
+                    logger.info(f"Removed .env file with encoding issues")
+                    print(f"⚠️ Detected encoding issues in .env file. Removed for clean setup.")
+                    # Recursively call this method to create a new .env file
+                    self._setup_environment()
+                except Exception as e:
+                    logger.error(f"Failed to remove problematic .env file: {str(e)}")
+                    print(f"⚠️ Warning: Encoding issues in .env file but couldn't remove it: {str(e)}")
+                    print(f"   Please manually delete the .env file at: {env_path}")
 
     def create_db_and_user(self, db_host, db_name, db_user, db_pass):
         """Create database and user if they don't exist."""
@@ -123,77 +189,12 @@ class Config:
             return False, error_msg
 
     def _get_database_uri(self):
-        """Get database URI from environment or prompt user."""
+        """Get database URI from environment."""
         db_url = os.environ.get('DATABASE_URL')
         
-        # Handle potential encoding issues
-        if db_url:
-            try:
-                # Test if the URL is valid UTF-8
-                db_url.encode('utf-8').decode('utf-8')
-            except (UnicodeDecodeError, UnicodeEncodeError):
-                # If there's an encoding issue, reset db_url to force reconfiguration
-                logger.warning("Invalid encoding in DATABASE_URL. Reconfiguring...")
-                db_url = None
-        
-        if not db_url and os.isatty(0):
-            print("\n⚠️  Database URL not found in environment variables or invalid.")
-            print("🔄 Starting database configuration...")
-            
-            # Get database connection details
-            db_host = input("Database host (default: localhost): ").strip() or 'localhost'
-            db_name = input("Database name: ").strip()
-            db_user = input("Database username: ").strip()
-            db_pass = getpass.getpass("Database password: ").strip()
-
-            # Create database and user if needed
-            success, error = self.create_db_and_user(db_host, db_name, db_user, db_pass)
-            if not success:
-                raise Exception(f"Failed to create database/user: {error}")
-
-            db_url = f"postgresql://{db_user}:{db_pass}@{db_host}/{db_name}"
-            
-            # Always save to .env in this automated setup
-            try:
-                env_path = os.path.join(os.path.abspath(os.path.dirname(__file__)), '.env')
-                
-                # Read existing content if file exists
-                existing_content = ""
-                if os.path.exists(env_path):
-                    with open(env_path, 'r', encoding='utf-8') as f:
-                        existing_content = f.read()
-                
-                # Check if DATABASE_URL already exists in the file
-                if "DATABASE_URL=" in existing_content:
-                    # Replace the existing DATABASE_URL line
-                    import re
-                    existing_content = re.sub(
-                        r'DATABASE_URL=.*(\r\n|\r|\n|$)', 
-                        f'DATABASE_URL={db_url}\n', 
-                        existing_content
-                    )
-                    
-                    with open(env_path, 'w', encoding='utf-8') as f:
-                        f.write(existing_content)
-                else:
-                    # Append DATABASE_URL to the file
-                    with open(env_path, 'a', encoding='utf-8') as f:
-                        f.write("\n# Database Configuration\n")
-                        f.write(f"DATABASE_URL={db_url}\n")
-                
-                # Set the environment variable directly for the current process
-                os.environ['DATABASE_URL'] = db_url
-                
-                print("✅ Database credentials saved to .env file")
-            except Exception as e:
-                logger.error(f"Error saving to .env file: {str(e)}")
-                print(f"⚠️  Warning: Could not save to .env file: {str(e)}")
-                # Set the environment variable even if we couldn't save to .env
-                os.environ['DATABASE_URL'] = db_url
-
         if not db_url:
             raise ValueError("Database URL is required. Please set DATABASE_URL environment variable or run in interactive mode.")
-            
+        
         return db_url
 
     @staticmethod

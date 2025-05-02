@@ -1963,12 +1963,19 @@ class ReportService:
 
             # Add headers and format
             for c_idx, col_name in enumerate(display_cols):
-                 cell = table.cell(0, c_idx)
-                 cell.text = col_name.replace(".", " ").replace("_", " ").title()[:25] # Abbreviate long headers
-                 # Basic header formatting
-                 p = cell.text_frame.paragraphs[0]; p.font.bold = True; p.font.size = PptxPt(10); p.alignment = PP_ALIGN.CENTER
-                 cell.fill.solid(); cell.fill.fore_color.rgb = PptxRGBColor(220, 230, 241) # Light blue/gray
-                 cell.vertical_anchor = MSO_ANCHOR.MIDDLE
+                cell = table.cell(0, c_idx)
+                cell.text = col_name.replace(".", " ").replace("_", " ").title()[:25] # Abbreviate long headers
+
+                # Basic header formatting
+                p = cell.text_frame.paragraphs[0]
+                p.font.bold = True
+                p.font.size = PptxPt(10)
+                p.alignment = PP_ALIGN.CENTER
+                p.font.color.rgb = PptxRGBColor(255, 255, 255) # <--- ADDED: White text
+
+                cell.fill.solid()
+                cell.fill.fore_color.rgb = PptxRGBColor(0, 0, 128) # <--- CHANGED: Dark Blue (Navy)
+                cell.vertical_anchor = MSO_ANCHOR.MIDDLE
 
             # Add data rows
             for r_idx, row_dict in enumerate(data_sample):

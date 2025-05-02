@@ -31,8 +31,9 @@ from docx.enum.table import WD_TABLE_ALIGNMENT
 from pptx import Presentation
 from pptx.util import Inches as PptxInches, Pt as PptxPt
 from pptx.enum.shapes import MSO_SHAPE
-from pptx.enum.text import MSO_ANCHOR, MSO_AUTO_SIZE
+from pptx.enum.text import PP_ALIGN
 from pptx.dml.color import RGBColor as PptxRGBColor
+from pptx.enum.text import MSO_ANCHOR, MSO_AUTO_SIZE
 
 # --- App Imports ---
 # Import all necessary models from your app.models package
@@ -634,6 +635,12 @@ class ReportService:
             return charts
             
         try:
+            # Set overall style to ensure white backgrounds and better readability
+            plt.style.use('default')
+            
+            # Custom color palette that works well with white backgrounds
+            color_palette = plt.cm.viridis(np.linspace(0, 1, 10))
+            
             # Ensure datetime conversion, handle potential errors
             df['submitted_at_dt'] = pd.to_datetime(df['submitted_at'], errors='coerce').dt.tz_localize(None)
             df.dropna(subset=['submitted_at_dt'], inplace=True)
@@ -653,8 +660,9 @@ class ReportService:
                 else:
                     title = "Monthly Submissions"
                     
-                fig, ax = plt.subplots(figsize=(10, 4))
-                monthly_counts.plot(kind='line', ax=ax, marker='o')
+                fig, ax = plt.subplots(figsize=(10, 5), facecolor='white')
+                ax.set_facecolor('white')
+                monthly_counts.plot(kind='line', ax=ax, marker='o', color=color_palette[0], linewidth=2)
                 
                 # Add data labels to each point on the line
                 for x, y in zip(range(len(monthly_counts)), monthly_counts.values):
@@ -665,17 +673,20 @@ class ReportService:
                         xytext=(0, 10),
                         ha='center',
                         fontweight='bold',
-                        bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="gray", alpha=0.8)
+                        color='black',
+                        bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="gray", alpha=0.9)
                     )
                     
-                ax.set_title(title)
-                ax.set_ylabel('# Submissions')
-                ax.set_xlabel('')
+                ax.set_title(title, fontsize=14, fontweight='bold')
+                ax.set_ylabel('# Submissions', fontsize=12)
+                ax.set_xlabel('', fontsize=12)
                 plt.xticks(rotation=30, ha='right')
+                plt.grid(axis='y', linestyle='--', alpha=0.7)
+                plt.tight_layout()
                 charts['time_series'] = ReportService._save_plot_to_bytes(fig)
                 
-            # 2. Weekly Pattern Analysis with data labels
-            if len(df) > 7 and 'submitted_at_dt' in df.columns:
+            # 2. Weekly Pattern Analysis with centered data labels
+            if len(df) > 3 and 'submitted_at_dt' in df.columns:
                 df['day_of_week'] = df['submitted_at_dt'].dt.day_name()
                 day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
                 day_counts = df['day_of_week'].value_counts().reindex(day_order)
@@ -683,30 +694,38 @@ class ReportService:
                 # Find busiest day
                 busiest_day = day_counts.idxmax()
                 
-                fig, ax = plt.subplots(figsize=(10, 4))
-                # Use hue parameter with legend=False to address the FutureWarning
-                bars = sns.barplot(x=day_counts.index, y=day_counts.values, ax=ax, hue=day_counts.index, legend=False, palette="viridis")
+                fig, ax = plt.subplots(figsize=(10, 5), facecolor='white')
+                ax.set_facecolor('white')
                 
-                # Add data labels on top of each bar
-                for i, bar in enumerate(ax.patches):
-                    value = int(bar.get_height())
+                # Use a single color palette for sequential coloring
+                bars = ax.bar(
+                    day_counts.index, 
+                    day_counts.values, 
+                    color=color_palette
+                )
+                
+                # Add data labels IN THE MIDDLE of each bar (not at the top)
+                for bar in bars:
+                    height = bar.get_height()
                     ax.text(
                         bar.get_x() + bar.get_width() / 2,
-                        bar.get_height() + 0.3,
-                        f'{value}',
+                        height / 2,  # Position text in the middle of the bar
+                        f'{int(height)}',
                         ha='center',
-                        va='bottom',
+                        va='center',
                         fontweight='bold',
-                        color='black',
-                        bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="gray", alpha=0.8)
+                        color='white',  # White text for better contrast against the bar color
+                        fontsize=12
                     )
                 
-                ax.set_title(f'Submissions by Day of Week (Busiest: {busiest_day})')
-                ax.set_ylabel('# Submissions')
+                ax.set_title(f'Submissions by Day of Week (Busiest: {busiest_day})', fontsize=14, fontweight='bold')
+                ax.set_ylabel('# Submissions', fontsize=12)
+                ax.set_ylim(0, max(day_counts.values) * 1.1)  # Give a little extra room at the top
                 plt.xticks(rotation=30, ha='right')
+                plt.tight_layout()
                 charts['weekly_pattern'] = ReportService._save_plot_to_bytes(fig)
             
-            # 3. User Submission Distribution with data labels
+            # 3. User Submission Distribution with centered data labels
             if 'submitted_by' in df.columns:
                 user_counts = df['submitted_by'].value_counts()
                 if len(user_counts) > 1:
@@ -714,82 +733,206 @@ class ReportService:
                     top_users = user_counts.nlargest(5)
                     top_pct = (top_users.sum() / user_counts.sum()) * 100
                     
-                    fig, ax = plt.subplots(figsize=(10, 4))
-                    # Use hue parameter with legend=False to address the FutureWarning
-                    bars = sns.barplot(x=top_users.index, y=top_users.values, ax=ax, hue=top_users.index, legend=False, palette="viridis")
+                    fig, ax = plt.subplots(figsize=(10, 5), facecolor='white')
+                    ax.set_facecolor('white')
                     
-                    # Add data labels on top of each bar
-                    for i, bar in enumerate(ax.patches):
-                        value = int(bar.get_height())
+                    # Use a single color palette for sequential coloring
+                    bars = ax.bar(
+                        top_users.index, 
+                        top_users.values, 
+                        color=color_palette
+                    )
+                    
+                    # Add data labels IN THE MIDDLE of each bar
+                    for bar in bars:
+                        height = bar.get_height()
                         ax.text(
                             bar.get_x() + bar.get_width() / 2,
-                            bar.get_height() + 0.3,
-                            f'{value}',
+                            height / 2,  # Middle of the bar
+                            f'{int(height)}',
                             ha='center',
-                            va='bottom',
+                            va='center',
                             fontweight='bold',
-                            color='black',
-                            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="gray", alpha=0.8)
+                            color='white',  # White text for better contrast
+                            fontsize=12
                         )
                     
-                    ax.set_title(f'Top 5 Users Account for {top_pct:.1f}% of Submissions')
-                    ax.set_ylabel('# Submissions')
+                    ax.set_title(f'Top 5 Users Account for {top_pct:.1f}% of Submissions', fontsize=14, fontweight='bold')
+                    ax.set_ylabel('# Submissions', fontsize=12)
                     ax.set_xlabel('')
                     plt.xticks(rotation=30, ha='right')
+                    plt.tight_layout()
                     charts['user_distribution'] = ReportService._save_plot_to_bytes(fig)
             
-            # 4. NEW: Form Type Distribution (Pie Chart)
+            # 4. Form Type Distribution (Pie Chart)
             if 'form.title' in df.columns:
                 form_counts = df['form.title'].value_counts().nlargest(5)  # Show top 5 forms
                 if not form_counts.empty:
-                    fig, ax = plt.subplots(figsize=(8, 6))
+                    fig, ax = plt.subplots(figsize=(9, 7), facecolor='white')
+                    ax.set_facecolor('white')
+                    
                     wedges, texts, autotexts = ax.pie(
                         form_counts.values, 
-                        labels=form_counts.index, 
+                        labels=None,  # No labels directly on pie
                         autopct='%1.1f%%',
-                        textprops={'fontsize': 9},
-                        colors=plt.cm.viridis(np.linspace(0, 1, len(form_counts)))
+                        textprops={'fontsize': 12, 'color': 'black', 'fontweight': 'bold'},
+                        colors=color_palette,
+                        wedgeprops={'edgecolor': 'white', 'linewidth': 2}
                     )
-                    # Make labels more readable
-                    plt.setp(autotexts, size=10, weight="bold")
                     
-                    # Add count values in the legend
+                    # Make percentage labels stand out with white backgrounds
+                    for autotext in autotexts:
+                        autotext.set_bbox(dict(facecolor='white', edgecolor='gray', alpha=0.8, boxstyle='round,pad=0.3'))
+                    
+                    # Add form names as external text with counts
                     legend_labels = [f"{name} ({count})" for name, count in zip(form_counts.index, form_counts.values)]
-                    ax.legend(wedges, legend_labels, title="Form Types", loc="center left", bbox_to_anchor=(1, 0, 0.5, 1))
+                    ax.legend(
+                        wedges, 
+                        legend_labels, 
+                        title="Form Types", 
+                        loc="center right", 
+                        bbox_to_anchor=(1.1, 0.5),
+                        frameon=True,
+                        facecolor='white',
+                        edgecolor='gray'
+                    )
                     
-                    ax.set_title('Submissions by Form Type')
+                    ax.set_title('Submissions by Form Type', fontsize=14, fontweight='bold')
                     ax.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle
                     plt.tight_layout()
                     charts['form_distribution'] = ReportService._save_plot_to_bytes(fig)
             
-            # 5. NEW: Submission Activity Heatmap by Hour and Day
-            if len(df) > 20 and 'submitted_at_dt' in df.columns:
+            # 5. Submission Activity Heatmap by Hour and Day
+            if len(df) > 10 and 'submitted_at_dt' in df.columns:
                 # Extract hour and day of week
                 df['hour'] = df['submitted_at_dt'].dt.hour
                 df['day_of_week'] = df['submitted_at_dt'].dt.day_name()
                 
-                # Create pivot table for heatmap
-                day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-                hour_day = pd.crosstab(df['hour'], df['day_of_week']).reindex(columns=day_order)
+                # Get date range and statistics for the insight text
+                date_range = (df['submitted_at_dt'].max() - df['submitted_at_dt'].min()).days
+                avg_daily = len(df) / max(date_range, 1)
                 
-                # Create heatmap
-                fig, ax = plt.subplots(figsize=(10, 6))
-                sns.heatmap(
+                # Get busiest days and hours
+                busy_days = df['day_of_week'].value_counts().nlargest(2)
+                busy_hours = df['hour'].value_counts().nlargest(2)
+                
+                # Create nice time labels - important for readability
+                hour_labels = {
+                    h: f"{h if h <= 12 else h-12}:00 {'AM' if h < 12 else 'PM'}" 
+                    for h in range(24)
+                }
+                hour_labels[0] = "12:00 AM"  # Fix midnight
+                hour_labels[12] = "12:00 PM"  # Fix noon
+                
+                # Create pivot table with business hours (or all hours with activity)
+                day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+                
+                # Option 1: Show all hours with activity
+                active_hours = sorted(df['hour'].unique())
+                
+                # Option 2: Focus on standard business hours
+                # business_hours = list(range(8, 19))  # 8 AM to 6 PM
+                # active_hours = sorted([h for h in df['hour'].unique() if h in business_hours])
+                
+                # Option 3: Show full 24-hour view
+                # active_hours = list(range(24))
+                
+                # Create heatmap data
+                hour_day = pd.crosstab(
+                    df['hour'], 
+                    df['day_of_week'],
+                    normalize=False  # Raw counts, not percentages
+                ).reindex(index=active_hours, columns=day_order, fill_value=0)
+                
+                # Create figure with proper background
+                fig, ax = plt.subplots(figsize=(12, 8), facecolor='white')
+                ax.set_facecolor('white')
+                
+                # Create the heatmap
+                heatmap = sns.heatmap(
                     hour_day, 
                     cmap="YlGnBu", 
-                    linewidths=.5, 
+                    linewidths=1,
+                    linecolor='white',
                     ax=ax,
                     cbar_kws={'label': 'Number of Submissions'},
                     annot=True,  # Show the values in each cell
-                    fmt="d"      # Format as integers
+                    fmt="d",     # Format as integers
+                    annot_kws={'fontsize': 10, 'fontweight': 'bold'}
                 )
-                ax.set_title('Submission Activity by Hour and Day of Week')
-                ax.set_ylabel('Hour of Day')
-                ax.set_xlabel('Day of Week')
-                plt.tight_layout()
+                
+                # Ensure zeros are blank/very light to avoid clutter
+                for text in heatmap.texts:
+                    value = int(text.get_text()) if text.get_text().strip() else 0
+                    if value == 0:
+                        text.set_text("")  # Hide zeros
+                        continue
+                        
+                    # For non-zero values, ensure proper contrast
+                    color_val = plt.cm.YlGnBu(value / max(hour_day.values.max(), 1))
+                    if sum(color_val[:3]) < 1.5:
+                        text.set_color('white')
+                    else:
+                        text.set_color('black')
+                
+                # Convert y-axis labels to readable time format
+                formatted_labels = [hour_labels.get(hour, f"{hour}:00") for hour in hour_day.index]
+                ax.set_yticklabels(formatted_labels)
+                
+                # Set proper title
+                ax.set_title('Submission Activity by Hour and Day of Week', fontsize=14, fontweight='bold')
+                ax.set_ylabel('Hour of Day', fontsize=12)
+                ax.set_xlabel('Day of Week', fontsize=12)
+                
+                # Find peak time combinations
+                if not hour_day.empty:
+                    max_val = hour_day.max().max()
+                    if max_val > 0:
+                        max_hour_idx, max_day_idx = np.where(hour_day.values == max_val)
+                        if len(max_hour_idx) > 0:
+                            peak_hour = hour_day.index[max_hour_idx[0]]
+                            peak_day = hour_day.columns[max_day_idx[0]]
+                            peak_formatted = hour_labels.get(peak_hour, f"{peak_hour}:00")
+                            peak_info = f"{peak_day}s at {peak_formatted}"
+                        else:
+                            peak_info = "N/A"
+                    else:
+                        peak_info = "N/A"
+                        max_val = 0
+                else:
+                    peak_info = "N/A"
+                    max_val = 0
+                
+                # Create a SINGLE insight box (no duplicate text)
+                insight_text = (
+                    f"Submission Insights: Data spans {date_range} days with {len(df)} total submissions ({avg_daily:.1f} per day on average).\n"
+                    f"Peak activity occurs on {busy_days.index[0]}s ({busy_days.iloc[0]} submissions) and most frequently at {hour_labels.get(busy_hours.index[0], busy_hours.index[0])} ({busy_hours.iloc[0]} submissions).\n"
+                    f"Absolute peak: {peak_info} with {max_val} submissions."
+                )
+                
+                # Add insight box at the bottom with clean formatting
+                plt.figtext(
+                    0.5, 0.01,  # Positioned at the bottom center
+                    insight_text,
+                    ha='center',
+                    fontsize=11,
+                    fontweight='bold', 
+                    bbox=dict(
+                        boxstyle='round,pad=0.7',
+                        facecolor='white', 
+                        edgecolor='darkblue',
+                        alpha=0.9
+                    )
+                )
+                
+                # CRITICAL: Make room for the insight box AND remove space where the
+                # unwanted text was appearing by adjusting tight layout parameters
+                plt.tight_layout(rect=[0, 0.08, 1, 0.95])  # [left, bottom, right, top]
+                
+                # Save the chart
                 charts['activity_heatmap'] = ReportService._save_plot_to_bytes(fig)
             
-            # 6. NEW: Monthly Distribution for Year Comparison (if data spans multiple years)
+            # 6. Monthly Distribution for Year Comparison (if data spans multiple years)
             if 'submitted_at_dt' in df.columns:
                 # Check if data spans multiple years
                 years = df['submitted_at_dt'].dt.year.unique()
@@ -807,18 +950,32 @@ class ReportService:
                     year_month_counts = year_month_counts.reindex(month_order)
                     
                     # Plot as grouped bar chart
-                    fig, ax = plt.subplots(figsize=(12, 6))
-                    year_month_counts.plot(kind='bar', ax=ax)
+                    fig, ax = plt.subplots(figsize=(12, 6), facecolor='white')
+                    ax.set_facecolor('white')
+                    
+                    bars = year_month_counts.plot(kind='bar', ax=ax)
                     
                     # Add data labels
                     for container in ax.containers:
-                        ax.bar_label(container, fmt='%d', fontweight='bold')
+                        # Add centered labels to each bar
+                        for bar in container:
+                            height = bar.get_height()
+                            ax.text(
+                                bar.get_x() + bar.get_width() / 2,
+                                height / 2,
+                                f'{int(height)}',
+                                ha='center',
+                                va='center',
+                                fontweight='bold',
+                                color='white'
+                            )
                     
-                    ax.set_title('Monthly Submissions by Year')
-                    ax.set_xlabel('Month')
-                    ax.set_ylabel('Number of Submissions')
+                    ax.set_title('Monthly Submissions by Year', fontsize=14, fontweight='bold')
+                    ax.set_xlabel('Month', fontsize=12)
+                    ax.set_ylabel('Number of Submissions', fontsize=12)
                     plt.xticks(rotation=45, ha='right')
-                    plt.legend(title='Year')
+                    plt.legend(title='Year', loc='upper right')
+                    plt.grid(axis='y', linestyle='--', alpha=0.3)
                     plt.tight_layout()
                     charts['yearly_comparison'] = ReportService._save_plot_to_bytes(fig)
                     
@@ -1378,10 +1535,24 @@ class ReportService:
                 if charts:
                     document.add_heading("Visual Analysis", level=2)
                     
+                    # Check if we need to regenerate any charts with data labels
                     for chart_key, chart_bytes in charts.items():
                         if isinstance(chart_bytes, BytesIO):
                             try:
-                                # Make chart larger for better visibility
+                                # Special handling for bar charts to ensure they have data labels
+                                if 'distribution' in chart_key or 'weekly_pattern' in chart_key:
+                                    # Try to regenerate the chart with data labels
+                                    if report_type == 'users' and 'user_distribution' in chart_key:
+                                        # Create docx-specific chart with data labels - just an example for 'users'
+                                        data = pd.DataFrame(result['data'])
+                                        if 'role.name' in data.columns:
+                                            new_chart_bytes = ReportService._create_docx_bar_chart(
+                                                data, 'role.name', 'User Distribution by Role'
+                                            )
+                                            if new_chart_bytes:
+                                                chart_bytes = new_chart_bytes
+                                    
+                                # Make chart larger for better visibility in the document
                                 document.add_picture(chart_bytes, width=Inches(6.0))
                                 
                                 # Add descriptive caption
@@ -1398,6 +1569,60 @@ class ReportService:
         document.save(buffer)
         buffer.seek(0)
         return buffer
+    
+    @staticmethod
+    def _create_docx_bar_chart(df: pd.DataFrame, column: str, title: str) -> Optional[BytesIO]:
+        """Creates a bar chart with data labels for DOCX documents."""
+        try:
+            if column not in df.columns or df.empty:
+                return None
+                
+            # Count values in the column
+            value_counts = df[column].value_counts()
+            if value_counts.empty:
+                return None
+                
+            # Set up the chart
+            fig, ax = plt.subplots(figsize=(10, 5), facecolor='white')
+            ax.set_facecolor('white')
+            
+            # Create the bar chart
+            bars = ax.bar(
+                value_counts.index,
+                value_counts.values,
+                color=plt.cm.viridis(np.linspace(0, 1, len(value_counts)))
+            )
+            
+            # Add data labels to the center of each bar
+            for bar in bars:
+                height = bar.get_height()
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    height / 2,  # Center of the bar
+                    f'{int(height)}',
+                    ha='center',
+                    va='center',
+                    color='white',
+                    fontweight='bold',
+                    fontsize=12
+                )
+            
+            # Add title and labels
+            ax.set_title(title, fontsize=14, fontweight='bold')
+            ax.set_ylabel('Count', fontsize=12)
+            
+            # Rotate x-labels if there are many categories
+            if len(value_counts) > 5:
+                plt.xticks(rotation=45, ha='right')
+                
+            plt.tight_layout()
+            
+            # Save to buffer
+            return ReportService._save_plot_to_bytes(fig)
+            
+        except Exception as e:
+            logger.error(f"Error creating DOCX bar chart: {e}", exc_info=True)
+            return None
 
     # --- Specific PPTX Generator for Form Submissions ---
     @staticmethod
@@ -1457,9 +1682,17 @@ class ReportService:
         if analysis and analysis.get('charts'):
             charts = analysis.get('charts', {})
             
+            # Process each chart
             for chart_key, chart_bytes in charts.items():
                 if isinstance(chart_bytes, BytesIO):
                     try:
+                        # Special handling for activity heatmap - regenerate without the text overlap issue
+                        if chart_key == 'activity_heatmap':
+                            # Create a custom chart specifically for PowerPoint to avoid text overlap
+                            chart_bytes = ReportService._create_pptx_heatmap_chart(objects)
+                            if not chart_bytes:  # Fall back to original if creation fails
+                                chart_bytes = chart_bytes
+                        
                         # Create slide for each chart
                         chart_slide_layout = prs.slide_layouts[5]  # Title and blank content
                         slide = prs.slides.add_slide(chart_slide_layout)
@@ -1474,44 +1707,204 @@ class ReportService:
                         width = PptxInches(8)
                         pic = slide.shapes.add_picture(chart_bytes, left, top, width=width)
                         
-                        # Add text box with insights if available
-                        if analysis.get('insights'):
-                            # Find a relevant insight for this chart if possible
-                            relevant_insight = None
-                            insights = analysis.get('insights', {})
+                        # Add relevant insight text box at the bottom of the slide
+                        if chart_key == 'activity_heatmap':
+                            # Create custom insight for the heatmap instead of using the text on the image
+                            insights_dict = analysis.get('insights', {})
+                            date_range = 0
+                            avg_daily = 0
                             
-                            # Try to match insight to chart type
-                            for key, text in insights.items():
-                                if key in chart_key or chart_key in key:
-                                    relevant_insight = text
-                                    break
+                            # Extract data from objects for insights
+                            if objects and hasattr(objects[0], 'submitted_at'):
+                                dates = [pd.to_datetime(obj.submitted_at) for obj in objects 
+                                        if hasattr(obj, 'submitted_at') and obj.submitted_at]
+                                if dates:
+                                    date_range = (max(dates) - min(dates)).days
+                                    avg_daily = len(dates) / max(date_range, 1)
                             
-                            # Use activity insight as fallback for time-based charts
-                            if not relevant_insight and 'activity' in insights and ('time' in chart_key or 'trend' in chart_key):
-                                relevant_insight = insights['activity']
+                            # Create a textbox with clear insight text (no duplicates)
+                            left = PptxInches(1)
+                            top = PptxInches(6)  # Position further down below the chart
+                            width = PptxInches(8)
+                            height = PptxInches(1.5)
                             
-                            # Use user insight as fallback for user charts
-                            if not relevant_insight and 'user_activity' in insights and 'user' in chart_key:
-                                relevant_insight = insights['user_activity']
+                            txBox = slide.shapes.add_textbox(left, top, width, height)
+                            tf = txBox.text_frame
+                            tf.word_wrap = True
                             
-                            # Add insight if found
-                            if relevant_insight:
-                                left = PptxInches(1)
-                                top = PptxInches(5.5)  # Position below the chart
-                                width = PptxInches(8)
-                                height = PptxInches(1)
+                            p = tf.add_paragraph()
+                            insight_text = (
+                                f"Activity Analysis: {len(objects)} submissions over {date_range} days "
+                                f"({avg_daily:.1f} per day average). "
+                                f"Examine patterns for operational planning and resource allocation."
+                            )
+                            p.text = insight_text
+                            p.font.size = PptxPt(12)
+                            p.font.bold = True
+                        else:
+                            # Add text box with insights if available for other charts
+                            if analysis.get('insights'):
+                                # Find a relevant insight for this chart
+                                relevant_insight = None
+                                insights = analysis.get('insights', {})
                                 
-                                txBox = slide.shapes.add_textbox(left, top, width, height)
-                                tf = txBox.text_frame
-                                tf.word_wrap = True
+                                # Try to match insight to chart type
+                                for key, text in insights.items():
+                                    if key in chart_key or chart_key in key:
+                                        relevant_insight = text
+                                        break
                                 
-                                p = tf.add_paragraph()
-                                p.text = relevant_insight
-                                p.font.italic = True
-                                p.font.size = PptxPt(12)
+                                # Use activity insight as fallback for time-based charts
+                                if not relevant_insight and 'activity' in insights and ('time' in chart_key or 'trend' in chart_key):
+                                    relevant_insight = insights['activity']
+                                
+                                # Use user insight as fallback for user charts
+                                if not relevant_insight and 'user_activity' in insights and 'user' in chart_key:
+                                    relevant_insight = insights['user_activity']
+                                
+                                # Add insight if found - with more careful positioning
+                                if relevant_insight:
+                                    # Calculate position based on chart size
+                                    left = PptxInches(1)
+                                    top = min(PptxInches(5.5), top + pic.height + PptxInches(0.2))  # Position below chart with a small gap
+                                    width = PptxInches(8)
+                                    height = PptxInches(0.8)  # Smaller height
+                                    
+                                    txBox = slide.shapes.add_textbox(left, top, width, height)
+                                    tf = txBox.text_frame
+                                    tf.word_wrap = True
+                                    tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE  # Resize text to fit box
+                                    
+                                    p = tf.add_paragraph()
+                                    
+                                    # Limit insight text length
+                                    if len(relevant_insight) > 150:
+                                        relevant_insight = relevant_insight[:147] + "..."
+                                        
+                                    p.text = relevant_insight
+                                    p.font.italic = True
+                                    p.font.size = PptxPt(11)  # Slightly smaller font
                     
                     except Exception as img_err:
                         logger.error(f"Error adding chart {chart_key} to PPTX: {img_err}")
+        
+        # --- Optional Data Table Slide ---
+        if objects and report_params.get("include_data_table_in_ppt", False):
+            max_rows = min(len(objects), report_params.get("max_ppt_table_rows", 15))
+            if max_rows > 0:
+                table_slide_layout = prs.slide_layouts[5]  # Blank layout
+                slide = prs.slides.add_slide(table_slide_layout)
+                slide.shapes.title.text = "Submission Data Sample"
+                
+                # Create a simple table with key fields only (max 4 columns to prevent overflow)
+                # Choose most important columns first
+                display_columns = ["id", "form.title", "submitted_by", "submitted_at"][:4]  # Limit to 4 columns max
+                
+                # Find which columns actually exist in our data
+                available_columns = [col for col in display_columns if col in columns]
+                
+                if available_columns:
+                    rows = min(max_rows + 1, 10)  # Header + data rows, max 10 rows total
+                    cols = len(available_columns)
+                    
+                    # Use conservative dimensions that will fit on slide
+                    left, top = PptxInches(0.5), PptxInches(1.5)
+                    width, height = PptxInches(9), PptxInches(3.5)  # Reduced height
+                    
+                    table = slide.shapes.add_table(rows, cols, left, top, width, height).table
+                    
+                    # Set column widths based on content type
+                    column_widths = {
+                        "id": 0.75,           # ID column can be narrow
+                        "form.title": 3.5,    # Title needs more space
+                        "submitted_by": 2.0,  # Username has medium width
+                        "submitted_at": 2.0   # Date needs a bit more space
+                    }
+                    
+                    # Set column widths
+                    for i, col_name in enumerate(available_columns):
+                        # Get defined width or use default
+                        width_inches = column_widths.get(col_name, 2.0)
+                        # Set width on column
+                        table.columns[i].width = PptxInches(width_inches)
+                    
+                    # Set headers
+                    for i, col_name in enumerate(available_columns):
+                        # Format column header
+                        display_name = col_name.replace(".", " ").replace("_", " ").title()
+                        cell = table.cell(0, i)
+                        cell.text = display_name
+                        cell.fill.solid()
+                        cell.fill.fore_color.rgb = PptxRGBColor(91, 155, 213)  # Blue header
+                        
+                        # Format text
+                        tf = cell.text_frame
+                        tf.word_wrap = True  # Enable word wrap
+                        tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE  # Fit text to cell
+                        
+                        # Format text
+                        p = tf.paragraphs[0]
+                        p.alignment = PP_ALIGN.CENTER  # Use PP_ALIGN for center alignment
+                        run = p.runs[0]
+                        run.font.bold = True
+                        run.font.color.rgb = PptxRGBColor(255, 255, 255)  # White text
+                        run.font.size = PptxPt(10)  # Smaller font
+                    
+                    # Add data rows - limit text length to avoid overflow
+                    for r, obj in enumerate(objects[:max_rows]):
+                        if r >= rows - 1:  # Ensure we don't exceed table row count
+                            break
+                            
+                        for c, col in enumerate(available_columns):
+                            # Get the value using attribute access
+                            if "." in col:
+                                # Handle nested attributes for relationships
+                                parts = col.split(".")
+                                value = obj
+                                for part in parts:
+                                    if hasattr(value, part):
+                                        value = getattr(value, part)
+                                    else:
+                                        value = "N/A"
+                                        break
+                            else:
+                                # Direct attribute
+                                value = getattr(obj, col, "N/A")
+                            
+                            # Format datetime values
+                            if isinstance(value, datetime):
+                                value = value.strftime("%Y-%m-%d %H:%M")
+                            
+                            # Truncate long text
+                            str_value = str(value)
+                            if len(str_value) > 40:  # Arbitrary limit to prevent overflow
+                                str_value = str_value[:37] + "..."
+                            
+                            # Set cell value
+                            cell = table.cell(r+1, c)
+                            cell.text = str_value
+                            
+                            # Configure word wrap and text sizing
+                            tf = cell.text_frame
+                            tf.word_wrap = True
+                            tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+                            
+                            # Smaller font for data
+                            run = tf.paragraphs[0].runs[0]
+                            run.font.size = PptxPt(9)
+                    
+                    # Add note about data limits - position carefully to avoid overlap
+                    if len(objects) > max_rows:
+                        note_left, note_top = PptxInches(0.5), PptxInches(5.5)  # Position below table
+                        note_width, note_height = PptxInches(9), PptxInches(0.5)
+                        
+                        note_box = slide.shapes.add_textbox(note_left, note_top, note_width, note_height)
+                        note_frame = note_box.text_frame
+                        
+                        note = note_frame.add_paragraph()
+                        note.text = f"Note: Showing {rows-1} of {len(objects)} total records."
+                        note.font.italic = True
+                        note.font.size = PptxPt(10)
         
         # --- Conclusion Slide ---
         conclusion_slide_layout = prs.slide_layouts[1]  # Title and content
@@ -1559,6 +1952,99 @@ class ReportService:
         prs.save(buffer)
         buffer.seek(0)
         return buffer
+    
+    @staticmethod
+    def _create_pptx_heatmap_chart(objects: List[Any]) -> Optional[BytesIO]:
+        """Creates a clean activity heatmap chart specifically for PowerPoint."""
+        try:
+            if not objects:
+                return None
+                
+            # Create DataFrame from objects
+            df = pd.DataFrame()
+            
+            # Extract datetime fields
+            df['submitted_at'] = [obj.submitted_at if hasattr(obj, 'submitted_at') else None for obj in objects]
+            df['submitted_at_dt'] = pd.to_datetime(df['submitted_at'], errors='coerce')
+            df.dropna(subset=['submitted_at_dt'], inplace=True)
+            
+            if df.empty:
+                return None
+                
+            # Extract hour and day of week
+            df['hour'] = df['submitted_at_dt'].dt.hour
+            df['day_of_week'] = df['submitted_at_dt'].dt.day_name()
+            
+            # Create nice time labels
+            hour_labels = {
+                h: f"{h if h <= 12 else h-12}:00 {'AM' if h < 12 else 'PM'}" 
+                for h in range(24)
+            }
+            hour_labels[0] = "12:00 AM"  # Fix midnight
+            hour_labels[12] = "12:00 PM"  # Fix noon
+            
+            # Create pivot table with business hours
+            day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+            active_hours = sorted(df['hour'].unique())
+            
+            # Create heatmap data
+            hour_day = pd.crosstab(
+                df['hour'], 
+                df['day_of_week']
+            ).reindex(index=active_hours, columns=day_order, fill_value=0)
+            
+            # Create figure - LARGER for PowerPoint
+            fig, ax = plt.subplots(figsize=(12, 7), facecolor='white')
+            ax.set_facecolor('white')
+            
+            # Create the heatmap - no text duplication
+            heatmap = sns.heatmap(
+                hour_day, 
+                cmap="YlGnBu", 
+                linewidths=1,
+                linecolor='white',
+                ax=ax,
+                cbar_kws={'label': 'Number of Submissions'},
+                annot=True,
+                fmt="d",
+                annot_kws={'fontsize': 10, 'fontweight': 'bold'}
+            )
+            
+            # Ensure zeros are blank/very light
+            for text in heatmap.texts:
+                value = int(text.get_text()) if text.get_text().strip() else 0
+                if value == 0:
+                    text.set_text("")  # Hide zeros
+                    continue
+                    
+                # For non-zero values, ensure proper contrast
+                color_val = plt.cm.YlGnBu(value / max(hour_day.values.max(), 1))
+                if sum(color_val[:3]) < 1.5:
+                    text.set_color('white')
+                else:
+                    text.set_color('black')
+            
+            # Convert y-axis labels to readable time format
+            formatted_labels = [hour_labels.get(hour, f"{hour}:00") for hour in hour_day.index]
+            ax.set_yticklabels(formatted_labels)
+            
+            # Set proper title - MUCH CLEANER for PowerPoint
+            ax.set_title('Submission Activity by Hour and Day of Week', fontsize=16, fontweight='bold')
+            ax.set_ylabel('Hour of Day', fontsize=14)
+            ax.set_xlabel('Day of Week', fontsize=14)
+            
+            # IMPORTANT: Don't add additional text to the chart itself
+            # The stats will be added in a separate text box in the PowerPoint slide
+            
+            # Tight layout without the extra space for text
+            plt.tight_layout()
+            
+            # Save and return
+            return ReportService._save_plot_to_bytes(fig)
+            
+        except Exception as e:
+            logger.error(f"Error creating PowerPoint heatmap chart: {e}", exc_info=True)
+            return None
 
     # --- Main Report Generation Method ---
     @staticmethod

@@ -1,5 +1,3 @@
-# app/controllers/report_controller.py
-
 from typing import Dict, Tuple, Optional, Any
 from app.services.report_service import ReportService
 from app.models import User

@@ -12,8 +12,6 @@ from sqlalchemy import inspect
 from flask_cors import CORS
 import mimetypes
 import os # Import os
-from flask_caching import Cache
-from functools import wraps
 
 # Initialize mimetypes database
 mimetypes.init()
@@ -33,48 +31,29 @@ jwt = JWTManager()
 # Import the model here or inside create_app within context if preferred
 from app.models.token_blocklist import TokenBlocklist
 
-cache = Cache()  # Initialize in create_app with config
-
-def cached_blocklist_check(expire=300):
-    """Caching decorator for blocklist checks"""
-    def decorator(f):
-        @wraps(f)
-        def decorated_function(jwt_header, jwt_payload):
-            jti = jwt_payload.get("jti")
-            if not jti:
-                return False
-                
-            # Try to get from cache first
-            cache_key = f"blocklist:{jti}"
-            cached_result = cache.get(cache_key)
-            
-            if cached_result is not None:
-                return cached_result
-                
-            # If not in cache, check database
-            result = f(jwt_header, jwt_payload)
-            
-            # Cache the result (both positive and negative)
-            cache.set(cache_key, result, timeout=expire)
-            return result
-        return decorated_function
-    return decorator
-
 @jwt.token_in_blocklist_loader
-@cached_blocklist_check(expire=300)  # Cache results for 5 minutes
 def check_if_token_revoked(jwt_header, jwt_payload: dict) -> bool:
-    # Same implementation but with less logging
+    """
+    Callback function to check if a JWT has been revoked (blocklisted).
+    """
+    app_logger = logging.getLogger("app") # Get the app logger
     jti = jwt_payload.get("jti")
+    app_logger.debug(f"Blocklist check: Checking JTI {jti}") # DEBUG log
     if not jti:
-        return False
+        app_logger.warning("Blocklist check: No JTI found in token payload.") # WARN if no JTI
+        return False # Cannot be blocklisted if no JTI
 
     try:
-        is_revoked = TokenBlocklist.query.filter_by(jti=jti).scalar() is not None
+        token_in_blocklist = TokenBlocklist.query.filter_by(jti=jti).scalar()
+        is_revoked = token_in_blocklist is not None
+        if is_revoked:
+            app_logger.info(f"Blocklist check: Token is REVOKED (JTI: {jti})") # INFO if revoked
+        else:
+            app_logger.debug(f"Blocklist check: Token is VALID (JTI: {jti})") # DEBUG if valid
         return is_revoked
     except Exception as e:
-        app_logger = logging.getLogger("app")
-        app_logger.error(f"Error checking blocklist: {e}", exc_info=True)
-        return False  # Default to allowing if check fails
+        app_logger.error(f"Blocklist check: Error querying blocklist for JTI {jti}: {e}", exc_info=True) # ERROR on DB query failure
+        return False
 
 def check_db_initialized(db_instance):
     """

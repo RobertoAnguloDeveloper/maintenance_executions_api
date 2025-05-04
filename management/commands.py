@@ -141,13 +141,6 @@ def register_commands(app):
             error_msg = f"Error during blocklist cleanup: {str(e)}"
             logger.error(error_msg, exc_info=True)
             click.echo(f"❌ {error_msg}", err=True)
-            
-    @app.cli.command("cleanup-tokens")
-    def cleanup_tokens_command():
-        """Remove expired tokens from blocklist."""
-        from app.utils.cleanup_tasks import cleanup_token_blocklist
-        count = cleanup_token_blocklist()
-        print(f"Removed {count} expired tokens from blocklist")
 
     # Return the main database command group
     return database

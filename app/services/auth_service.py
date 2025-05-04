@@ -188,35 +188,44 @@ class AuthService:
     def logout_user(token=None, username=None):
         """
         Handle user logout by adding token JTI to blocklist if a valid token is provided.
+        Optimized implementation with minimal DB interaction.
         """
-        logger.debug(f"Logout request received. Token provided: {'Yes' if token else 'No'}") # DEBUG log
         try:
             if token:
                 try:
-                    logger.debug("Attempting to decode token for JTI...") # DEBUG log
+                    # Decode token only to extract JTI - no additional validations needed
                     decoded_token = jwt_decode_token(token)
                     jti = decoded_token.get('jti')
-                    identity = decoded_token.get('sub', username)
-                    logger.debug(f"Decoded token. JTI: {jti}, Identity: {identity}") # DEBUG log
-
+                    
                     if jti:
-                        if AuthService.add_jti_to_blocklist(jti):
-                            logger.info(f"User {identity or 'Unknown'} logged out successfully (Token {jti} blocklisted).")
-                            return True, "Successfully logged out and token blocklisted."
-                        else:
-                            # Blocklist add failed (error logged in add_jti_to_blocklist)
-                            return True, "Logout successful (server blocklist error)." # Still True for client
-                    else:
-                        logger.warning("Could not extract JTI from provided token during logout.")
-                        return True, "Successfully logged out (JTI missing)." # Client still logs out
-
-                except PyJWTError as e:
-                    logger.warning(f"Invalid/Expired token provided during logout: {e}. Relying on client to clear token.")
-                    return True, "Successfully logged out (token invalid)."
-            else:
-                 logger.info("Logout endpoint called without token. Relying on client.")
-                 return True, "Successfully logged out."
-
+                        # Use thread-local session to avoid locking main DB connection
+                        session = db.create_scoped_session()
+                        try:
+                            # Check if already blocklisted before adding
+                            existing = session.query(TokenBlocklist.id).filter_by(jti=jti).scalar()
+                            if not existing:
+                                blocked_token = TokenBlocklist(
+                                    jti=jti,
+                                    created_at=datetime.now(timezone.utc)
+                                )
+                                session.add(blocked_token)
+                                session.commit()
+                                logger.info(f"JTI {jti[:8]}... blocklisted successfully")
+                            else:
+                                logger.info(f"JTI {jti[:8]}... already in blocklist")
+                        except Exception as db_err:
+                            session.rollback()
+                            logger.warning(f"Blocklist DB operation failed: {str(db_err)}")
+                        finally:
+                            session.close()
+                    
+                        return True, "Successfully logged out"
+                except Exception as decode_err:
+                    logger.warning(f"Token decode error during logout: {str(decode_err)}")
+            
+            # Always succeed from the client perspective
+            return True, "Successfully logged out"
+            
         except Exception as e:
-            logger.error(f"Unexpected error during logout processing: {str(e)}", exc_info=True)
-            return True, "Successfully logged out (server error during processing)."
+            logger.error(f"Unexpected logout error: {str(e)}")
+            return True, "Successfully logged out"

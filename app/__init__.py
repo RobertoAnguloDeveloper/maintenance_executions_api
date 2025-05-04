@@ -61,20 +61,24 @@ def cached_blocklist_check(expire=300):
 from app.models.token_blocklist import TokenBlocklist
 
 @jwt.token_in_blocklist_loader
-@cached_blocklist_check(expire=300)  # Cache results for 5 minutes
 def check_if_token_revoked(jwt_header, jwt_payload: dict) -> bool:
-    # Same implementation but with less logging
+    """
+    Callback function to check if a JWT has been revoked (blocklisted).
+    Optimized version with minimal logging and error handling.
+    """
     jti = jwt_payload.get("jti")
     if not jti:
         return False
 
     try:
+        # Use an efficient scalar query to check blocklist status
         is_revoked = TokenBlocklist.query.filter_by(jti=jti).scalar() is not None
         return is_revoked
     except Exception as e:
+        # Minimal error logging - avoid extensive logging on every request
         app_logger = logging.getLogger("app")
-        app_logger.error(f"Error checking blocklist: {e}", exc_info=True)
-        return False  # Default to allowing if check fails
+        app_logger.error(f"Blocklist check error for JTI {jti}: {str(e)}")
+        return False  # Allow request to proceed if the check fails
 
 def check_db_initialized(db_instance):
     """

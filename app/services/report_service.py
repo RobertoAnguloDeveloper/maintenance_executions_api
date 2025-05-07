@@ -25,7 +25,7 @@ from app import db # Assuming db is initialized SQLAlchemy instance
 from app.models import (
     User, FormSubmission, AnswerSubmitted, Form, Role, Environment,
     Question, Answer, QuestionType, Permission, RolePermission,
-    FormQuestion, FormAnswer, Attachment # Add any other models you might report on
+    FormQuestion, FormAnswer, Attachment, ReportTemplate # Add any other models you might report on
 )
 from app.utils.permission_manager import PermissionManager, EntityType, RoleType
 
@@ -100,116 +100,165 @@ class ReportService:
     ENTITY_CONFIG = {
         'form_submissions': {
             'model': FormSubmission, 'view_permission_entity': EntityType.SUBMISSIONS,
-            'default_columns': [ "id", "form_id", "form.title", "submitted_by", "submitted_at" ],
-            'analysis_hints': { 'date_columns': ['submitted_at', 'created_at', 'updated_at'], 'categorical_columns': ['submitted_by', 'form.title'], 'dynamic_answer_prefix': ANSWERS_PREFIX, },
+            'default_columns': [ "id", "form_id", "form.title", "submitted_by", "user.email", "user.first_name", "user.last_name", "submitted_at", "updated_at"], # Added user details
+            'analysis_hints': {
+                'date_columns': ['submitted_at', 'created_at', 'updated_at'],
+                'categorical_columns': ['submitted_by', 'form.title', 'user.email'],  # Added user.email
+                'dynamic_answer_prefix': ANSWERS_PREFIX,
+            },
             'default_sort': [{"field": "submitted_at", "direction": "desc"}],
-            'stats_generators': ['generate_submission_stats'], 'chart_generators': ['generate_submission_charts'], 'insight_generators': ['generate_submission_insights'],
+            'stats_generators': ['generate_submission_stats'], # Kept specific due to dynamic answers complexity
+            'chart_generators': ['generate_submission_charts'],# Kept specific
+            'insight_generators': ['generate_submission_insights'],# Kept specific
             'format_generators': { 'pptx': '_generate_submission_pptx' }
         },
         "users": {
             'model': User, 'view_permission_entity': EntityType.USERS,
             'default_columns': [ "id", "username", "first_name", "last_name", "email", "role.name", "environment.name", "created_at" ],
-            'analysis_hints': { 'date_columns': ['created_at', 'updated_at'], 'categorical_columns': ['role.name', 'environment.name', 'is_deleted'], },
+            'analysis_hints': {
+                'date_columns': ['created_at', 'updated_at'],
+                'categorical_columns': ['role.name', 'environment.name', 'is_deleted', 'username', 'email'], # Added username, email
+            },
             'default_sort': [{"field": "username", "direction": "asc"}],
-            'stats_generators': ['generate_user_stats'], 'chart_generators': ['generate_user_charts'], 'insight_generators': ['generate_user_insights'],
+            'stats_generators': ['generate_user_stats', '_generate_generic_stats'],       # MODIFIED
+            'chart_generators': ['generate_user_charts', '_generate_generic_charts'],     # MODIFIED
+            'insight_generators': ['generate_user_insights', '_generate_generic_insights'], # MODIFIED
             'format_generators': {}
         },
         "forms": {
             'model': Form, 'view_permission_entity': EntityType.FORMS,
             'default_columns': [ "id", "title", "description", "creator.username", "creator.environment.name", "is_public", "created_at" ],
-            'analysis_hints': { 'date_columns': ['created_at', 'updated_at'], 'categorical_columns': ['creator.username', 'creator.environment.name', 'is_public', 'is_deleted'], },
+            'analysis_hints': {
+                'date_columns': ['created_at', 'updated_at'],
+                'categorical_columns': ['creator.username', 'creator.environment.name', 'is_public', 'is_deleted', 'title'], # Added title
+            },
             'default_sort': [{"field": "title", "direction": "asc"}],
-            'stats_generators': ['generate_form_stats'], 'chart_generators': ['generate_form_charts'], 'insight_generators': ['generate_form_insights'],
+            'stats_generators': ['generate_form_stats', '_generate_generic_stats'],       # MODIFIED
+            'chart_generators': ['generate_form_charts', '_generate_generic_charts'],     # MODIFIED
+            'insight_generators': ['generate_form_insights', '_generate_generic_insights'], # MODIFIED
             'format_generators': {}
         },
         "environments": {
             'model': Environment, 'view_permission_entity': EntityType.ENVIRONMENTS,
             'default_columns': ["id", "name", "description", "created_at"],
-            'analysis_hints': {'date_columns': ['created_at', 'updated_at'], 'categorical_columns': ['name']},
+            'analysis_hints': {
+                'date_columns': ['created_at', 'updated_at'],
+                'categorical_columns': ['name']
+            },
             'default_sort': [{"field": "name", "direction": "asc"}],
-            'stats_generators': ['generate_environment_stats', '_generate_generic_stats'], 'chart_generators': ['_generate_generic_charts'], 'insight_generators': ['_generate_generic_insights'],
+            'stats_generators': ['generate_environment_stats', '_generate_generic_stats'],
+            'chart_generators': ['_generate_generic_charts'], # Already generic focused
+            'insight_generators': ['_generate_generic_insights'],
             'format_generators': {}
         },
         "roles": {
             'model': Role, 'view_permission_entity': EntityType.ROLES,
             'default_columns': ["id", "name", "description", "is_super_user", "created_at"],
-            'analysis_hints': {'categorical_columns': ['is_super_user', 'name']},
+            'analysis_hints': {
+                'categorical_columns': ['is_super_user', 'name']
+            },
             'default_sort': [{"field": "name", "direction": "asc"}],
-            'stats_generators': ['generate_role_stats', '_generate_generic_stats'], 'chart_generators': ['_generate_generic_charts'], 'insight_generators': ['_generate_generic_insights'],
+            'stats_generators': ['generate_role_stats', '_generate_generic_stats'],
+            'chart_generators': ['_generate_generic_charts'], # Already generic focused
+            'insight_generators': ['_generate_generic_insights'],
             'format_generators': {}
         },
-        "answers_submitted": {
-            'model': AnswerSubmitted, 'view_permission_entity': EntityType.SUBMISSIONS,
-            'default_columns': [ "id", "form_submission_id", "form_submission.form.title", "form_submission.submitted_by", "question", "question_type", "answer", "created_at" ],
-            'analysis_hints': { 'date_columns': ['created_at', 'updated_at'], 'categorical_columns': ['question', 'question_type', 'form_submission.submitted_by'], },
+        "answers_submitted": { # This refers to the direct model AnswerSubmitted
+            'model': AnswerSubmitted, 'view_permission_entity': EntityType.SUBMISSIONS, # Permission often tied to submissions
+            'default_columns': [ "id", "form_submission_id","form_submission.form.title", "question", "question_type", "answer", "created_at" ],
+            'analysis_hints': {
+                'date_columns': ['created_at', 'updated_at'],
+                'categorical_columns': ['question', 'question_type', 'form_submission.form.title'],
+            },
             'default_sort': [{"field": "created_at", "direction": "desc"}],
-            'stats_generators': ['generate_answers_submitted_stats', '_generate_generic_stats'], 'chart_generators': ['_generate_generic_charts'], 'insight_generators': ['_generate_generic_insights'],
+            'stats_generators': ['generate_answers_submitted_stats', '_generate_generic_stats'],
+            'chart_generators': ['_generate_generic_charts'], # Primarily generic charts
+            'insight_generators': ['_generate_generic_insights'],
             'format_generators': {}
         },
-         "attachments": {
-           'model': Attachment, 'view_permission_entity': EntityType.ATTACHMENTS,
-           'default_columns': [ "id", "form_submission_id", "form_submission.form.title", "form_submission.submitted_by", "file_type", "is_signature", "signature_author", "created_at" ],
-           'analysis_hints': { 'date_columns': ['created_at', 'updated_at'], 'categorical_columns': ['file_type', 'is_signature', 'signature_author'], },
-           'default_sort': [{"field": "created_at", "direction": "desc"}],
-           'stats_generators': ['generate_attachment_stats', '_generate_generic_stats'], 'chart_generators': ['_generate_generic_charts'], 'insight_generators': ['_generate_generic_insights'],
-           'format_generators': {}
+        "attachments": {
+            'model': Attachment, 'view_permission_entity': EntityType.ATTACHMENTS,
+            'default_columns': [ "id", "form_submission_id", "form_submission.form.title", "file_name", "file_type", "is_signature", "signature_author", "created_at" ],
+            'analysis_hints': {
+                'date_columns': ['created_at', 'updated_at'],
+                'categorical_columns': ['file_type', 'is_signature', 'signature_author', 'form_submission.form.title', 'file_name'],
+            },
+            'default_sort': [{"field": "created_at", "direction": "desc"}],
+            'stats_generators': ['generate_attachment_stats', '_generate_generic_stats'],
+            'chart_generators': ['_generate_generic_charts'], # Primarily generic charts
+            'insight_generators': ['_generate_generic_insights'],
+            'format_generators': {}
         },
-        "permissions": {
-            'model': Permission, 'view_permission_entity': EntityType.ROLES,
+        "permissions": { # Typically admin/dev focused, generic analysis is fine
+            'model': Permission, 'view_permission_entity': EntityType.ROLES, # Permissions often viewed in context of roles
             'default_columns': ["id", "name", "action", "entity"],
             'analysis_hints': {'categorical_columns': ['name', 'action', 'entity']},
             'default_sort': [{"field": "name", "direction": "asc"}],
-            'stats_generators': ['_generate_generic_stats'], 'chart_generators': ['_generate_generic_charts'], 'insight_generators': ['_generate_generic_insights'],
+            'stats_generators': ['_generate_generic_stats'],
+            'chart_generators': ['_generate_generic_charts'],
+            'insight_generators': ['_generate_generic_insights'],
             'format_generators': {}
         },
-        "role_permissions": {
+        "role_permissions": { # Admin/dev focused
             'model': RolePermission, 'view_permission_entity': EntityType.ROLES,
-            'default_columns': ["id", "role_id", "permission_id", "role.name", "permission.name"],
-             'analysis_hints': {'categorical_columns': ['role.name', 'permission.name']},
-            'default_sort': [{"field": "role_id", "direction": "asc"}],
-            'stats_generators': ['_generate_generic_stats'], 'chart_generators': ['_generate_generic_charts'], 'insight_generators': ['_generate_generic_insights'],
+            'default_columns': ["id", "role_id", "permission_id", "role.name", "permission.name", "permission.action", "permission.entity"],
+            'analysis_hints': {'categorical_columns': ['role.name', 'permission.name', 'permission.action', 'permission.entity']},
+            'default_sort': [{"field": "role_id", "direction": "asc"}, {"field": "permission_id", "direction": "asc"}],
+            'stats_generators': ['_generate_generic_stats'],
+            'chart_generators': ['_generate_generic_charts'],
+            'insight_generators': ['_generate_generic_insights'],
             'format_generators': {}
         },
-        "question_types": {
+        "question_types": { # Reference data, generic analysis is fine
             'model': QuestionType, 'view_permission_entity': EntityType.QUESTION_TYPES,
             'default_columns': ["id", "type"],
             'analysis_hints': {'categorical_columns': ['type']},
             'default_sort': [{"field": "type", "direction": "asc"}],
-            'stats_generators': ['_generate_generic_stats'], 'chart_generators': ['_generate_generic_charts'], 'insight_generators': ['_generate_generic_insights'],
+            'stats_generators': ['_generate_generic_stats'],
+            'chart_generators': ['_generate_generic_charts'],
+            'insight_generators': ['_generate_generic_insights'],
             'format_generators': {}
-         },
-        "questions": {
+        },
+        "questions": { # Reference data, generic analysis suitable
             'model': Question, 'view_permission_entity': EntityType.QUESTIONS,
             'default_columns': ["id", "text", "question_type.type", "is_signature", "question_type_id"],
-            'analysis_hints': {'categorical_columns': ['question_type.type', 'is_signature']},
+            'analysis_hints': {'categorical_columns': ['question_type.type', 'is_signature', 'text_shortened']}, # Assuming text_shortened could be a property or transformation
             'default_sort': [{"field": "text", "direction": "asc"}],
-             'stats_generators': ['_generate_generic_stats'], 'chart_generators': ['_generate_generic_charts'], 'insight_generators': ['_generate_generic_insights'],
-             'format_generators': {}
-        },
-        "answers": {
-            'model': Answer, 'view_permission_entity': EntityType.ANSWERS,
-            'default_columns': ["id", "value", "remarks"],
-            'analysis_hints': {},
-            'default_sort': [{"field": "value", "direction": "asc"}],
-            'stats_generators': ['_generate_generic_stats'], 'chart_generators': ['_generate_generic_charts'], 'insight_generators': ['_generate_generic_insights'],
+            'stats_generators': ['_generate_generic_stats'],
+            'chart_generators': ['_generate_generic_charts'],
+            'insight_generators': ['_generate_generic_insights'],
             'format_generators': {}
         },
-        "form_questions": {
+        "answers": { # Predefined answers, generic analysis suitable
+            'model': Answer, 'view_permission_entity': EntityType.ANSWERS,
+            'default_columns': ["id", "value", "remarks"],
+            'analysis_hints': {'categorical_columns': ['value_shortened']}, # Assuming value_shortened for long answers
+            'default_sort': [{"field": "value", "direction": "asc"}],
+            'stats_generators': ['_generate_generic_stats'],
+            'chart_generators': ['_generate_generic_charts'],
+            'insight_generators': ['_generate_generic_insights'],
+            'format_generators': {}
+        },
+        "form_questions": { # Junction table, generic analysis often helpful
             'model': FormQuestion, 'view_permission_entity': EntityType.FORMS,
             'default_columns': ["id", "form_id", "question_id", "order_number", "is_required", "form.title", "question.text"],
             'analysis_hints': {'categorical_columns': ['form.title', 'question.text', 'is_required']},
             'default_sort': [{"field": "form_id", "direction": "asc"}, {"field": "order_number", "direction":"asc"}],
-             'stats_generators': ['_generate_generic_stats'], 'chart_generators': ['_generate_generic_charts'], 'insight_generators': ['_generate_generic_insights'],
-             'format_generators': {}
-         },
-        "form_answers": {
+            'stats_generators': ['_generate_generic_stats'],
+            'chart_generators': ['_generate_generic_charts'],
+            'insight_generators': ['_generate_generic_insights'],
+            'format_generators': {}
+        },
+        "form_answers": { # Junction table for predefined answers, generic analysis
             'model': FormAnswer, 'view_permission_entity': EntityType.FORMS,
             'default_columns': ["id", "form_question_id", "answer_id", "form_question.question.text", "answer.value"],
             'analysis_hints': {'categorical_columns': ['form_question.question.text', 'answer.value']},
             'default_sort': [{"field": "form_question_id", "direction": "asc"}],
-             'stats_generators': ['_generate_generic_stats'], 'chart_generators': ['_generate_generic_charts'], 'insight_generators': ['_generate_generic_insights'],
-             'format_generators': {}
-         },
+            'stats_generators': ['_generate_generic_stats'],
+            'chart_generators': ['_generate_generic_charts'],
+            'insight_generators': ['_generate_generic_insights'],
+            'format_generators': {}
+        },
     }
 
     # --- Core Helper Methods ---
@@ -234,43 +283,43 @@ class ReportService:
         except (AttributeError, ValueError, IndexError, TypeError):
             return None
 
-    @staticmethod
-    def _get_sqlalchemy_attribute(base_model: Type, field_path: str, query: Query, joined_models: set, is_filter: bool) -> Tuple[Optional[Type], Optional[Any]]:
-        """Resolves model attributes and handles joins for filters/sort."""
-        current_model = base_model
-        current_alias = None
-        parts = field_path.split('.')
-        for i, part in enumerate(parts):
-            mapper = sqla_inspect(current_model)
-            is_last_part = (i == len(parts) - 1)
-            if is_last_part:
-                if part in mapper.columns or part in mapper.synonyms or hasattr(current_model, part):
-                    attr_source = current_alias if current_alias else current_model
-                    if hasattr(attr_source, part):
-                        potential_attr = getattr(attr_source, part)
-                        return current_model, potential_attr
-                    else:
-                        logger.warning(f"Attribute '{part}' found in mapper but not on model/alias '{getattr(attr_source, '__name__', str(attr_source))}'")
-                        return current_model, None
-                else:
-                    logger.warning(f"Attribute '{part}' not found on model {current_model.__name__}")
-                    return current_model, None
-            else:
-                if part in mapper.relationships:
-                    relationship = mapper.relationships[part]
-                    related_model = relationship.mapper.class_
-                    relationship_key = relationship.key
-                    related_alias = aliased(related_model)
-                    if current_alias:
-                        query = query.join(related_alias, getattr(current_alias, relationship_key))
-                    else:
-                        query = query.join(related_alias, getattr(current_model, relationship_key))
-                    current_model = related_model
-                    current_alias = related_alias
-                else:
-                    logger.warning(f"Relationship '{part}' not found on model {current_model.__name__}")
-                    return current_model, None
-        return current_model, None
+    # @staticmethod
+    # def _get_sqlalchemy_attribute(base_model: Type, field_path: str, query: Query, joined_models: set, is_filter: bool) -> Tuple[Optional[Type], Optional[Any]]:
+    #     """Resolves model attributes and handles joins for filters/sort."""
+    #     current_model = base_model
+    #     current_alias = None
+    #     parts = field_path.split('.')
+    #     for i, part in enumerate(parts):
+    #         mapper = sqla_inspect(current_model)
+    #         is_last_part = (i == len(parts) - 1)
+    #         if is_last_part:
+    #             if part in mapper.columns or part in mapper.synonyms or hasattr(current_model, part):
+    #                 attr_source = current_alias if current_alias else current_model
+    #                 if hasattr(attr_source, part):
+    #                     potential_attr = getattr(attr_source, part)
+    #                     return current_model, potential_attr
+    #                 else:
+    #                     logger.warning(f"Attribute '{part}' found in mapper but not on model/alias '{getattr(attr_source, '__name__', str(attr_source))}'")
+    #                     return current_model, None
+    #             else:
+    #                 logger.warning(f"Attribute '{part}' not found on model {current_model.__name__}")
+    #                 return current_model, None
+    #         else:
+    #             if part in mapper.relationships:
+    #                 relationship = mapper.relationships[part]
+    #                 related_model = relationship.mapper.class_
+    #                 relationship_key = relationship.key
+    #                 related_alias = aliased(related_model)
+    #                 if current_alias:
+    #                     query = query.join(related_alias, getattr(current_alias, relationship_key))
+    #                 else:
+    #                     query = query.join(related_alias, getattr(current_model, relationship_key))
+    #                 current_model = related_model
+    #                 current_alias = related_alias
+    #             else:
+    #                 logger.warning(f"Relationship '{part}' not found on model {current_model.__name__}")
+    #                 return current_model, None
+    #     return current_model, None
 
     @staticmethod
     def _apply_between_filter(model_attr: Any, field_name: str, value: List) -> Optional[Any]:
@@ -293,41 +342,112 @@ class ReportService:
 
     @staticmethod
     def _apply_filters_and_sort(query: Query, model_cls: type, filters: List[Dict], sort_by: List[Dict]) -> Query:
-        """Applies filtering and sorting to a SQLAlchemy query object."""
-        joined_models = {model_cls}
+        """
+        Applies filtering and sorting to a SQLAlchemy query object, ensuring
+        necessary joins are added correctly using aliases.
+        """
+        # Keep track of aliases used for joins to avoid redundant joins
+        # Key: relationship path string (e.g., "form_submission"), Value: alias object
+        join_aliases: Dict[str, Any] = {}
+
+        # --- Apply Filters ---
         if filters:
-            for f in filters:
+            logger.debug(f"Applying filters for {model_cls.__name__}: {filters}")
+            for f_idx, f in enumerate(filters):
                 field, op, value = f.get("field"), f.get("operator", "eq").lower(), f.get("value")
-                if not field or value is None and op not in ["isnull", "isnotnull"]: continue
+                if not field or (value is None and op not in ["isnull", "isnotnull"]):
+                    logger.debug(f"Skipping filter #{f_idx} (missing field/value): {f}")
+                    continue
+
+                logger.debug(f"Processing filter #{f_idx}: {field} {op} {value}")
                 try:
-                    target_model, model_attr = ReportService._get_sqlalchemy_attribute(model_cls, field, query, joined_models, is_filter=True)
-                    if model_attr is None: logger.warning(f"Could not resolve filter field: {field}"); continue
-                    op_map = { "eq": lambda a, v: a == v, "neq": lambda a, v: a != v, "like": lambda a, v: a.ilike(f"%{str(v)}%"), "notlike": lambda a, v: ~a.ilike(f"%{str(v)}%"), "in": lambda a, v: a.in_(v) if isinstance(v, list) else None, "notin": lambda a, v: ~a.in_(v) if isinstance(v, list) else None, "gt": lambda a, v: a > v, "lt": lambda a, v: a < v, "gte": lambda a, v: a >= v, "lte": lambda a, v: a <= v, "between": lambda a, v: ReportService._apply_between_filter(a, field, v), "isnull": lambda a, v: a == None, "isnotnull": lambda a, v: a != None,}
+                    # Resolve attribute and add necessary joins FOR FILTERING
+                    # Pass the current state of the query and aliases
+                    query, model_attr, join_aliases = ReportService._resolve_attribute_and_joins(
+                        model_cls, field, query, join_aliases
+                    )
+                    if model_attr is None:
+                        logger.warning(f"Could not resolve filter field: {field}")
+                        continue
+
+                    # Apply the filter condition (existing logic)
+                    op_map = {
+                        "eq": lambda a, v: a == v,
+                        "neq": lambda a, v: a != v,
+                        "like": lambda a, v: a.ilike(f"%{str(v)}%"),
+                        "notlike": lambda a, v: ~a.ilike(f"%{str(v)}%"),
+                        "in": lambda a, v: a.in_(v) if isinstance(v, list) else None,
+                        "notin": lambda a, v: ~a.in_(v) if isinstance(v, list) else None,
+                        "gt": lambda a, v: a > v,
+                        "lt": lambda a, v: a < v,
+                        "gte": lambda a, v: a >= v,
+                        "lte": lambda a, v: a <= v,
+                        "between": lambda a, v: ReportService._apply_between_filter(a, field, v),
+                        "isnull": lambda a, v: a == None,
+                        "isnotnull": lambda a, v: a != None,
+                    }
                     filter_func = op_map.get(op)
                     if filter_func:
-                        if op in ["isnull", "isnotnull"]: condition = filter_func(model_attr, None)
+                        condition = None
+                        if op in ["isnull", "isnotnull"]:
+                             condition = filter_func(model_attr, None)
                         else:
+                            # Handle boolean string conversion
                             if isinstance(getattr(model_attr, 'type', None), Boolean) and isinstance(value, str):
-                                bool_map = {'true': True, 'false': False, 'yes': True, 'no': False, '1': True, '0': False}; value = bool_map.get(value.lower(), value)
+                                bool_map = {'true': True, 'false': False, 'yes': True, 'no': False, '1': True, '0': False}
+                                value_lower = value.lower()
+                                if value_lower in bool_map:
+                                    value = bool_map[value_lower]
+                                else:
+                                    logger.warning(f"Could not interpret '{value}' as boolean for field '{field}'.")
+                                    continue # Skip filter if boolean conversion fails
                             condition = filter_func(model_attr, value)
-                        if condition is not None: query = query.filter(condition)
-                        else: logger.warning(f"Invalid filter value/op for '{op}' on field '{field}': {value}")
-                    else: logger.warning(f"Unsupported filter operator '{op}' for field '{field}'")
-                except Exception as e: logger.warning(f"Could not apply filter {f}: {e}", exc_info=True)
+
+                        if condition is not None:
+                            query = query.filter(condition)
+                            logger.debug(f"Applied filter #{f_idx}: {field} {op} {value}")
+                        else:
+                            logger.warning(f"Invalid filter value/op for filter #{f_idx} ('{op}' on field '{field}'): {value}")
+                    else:
+                        logger.warning(f"Unsupported filter operator '{op}' for filter #{f_idx} on field '{field}'")
+
+                except Exception as e:
+                    logger.warning(f"Could not apply filter #{f_idx} ({f}): {e}", exc_info=True)
+
+        # --- Apply Sorting ---
         if sort_by:
-             for s in sort_by:
+            logger.debug(f"Applying sorting for {model_cls.__name__}: {sort_by}")
+            for s_idx, s in enumerate(sort_by):
                 field, direction = s.get("field"), s.get("direction", "asc").lower()
-                if not field: continue
+                if not field:
+                    logger.debug(f"Skipping sort #{s_idx} (missing field)")
+                    continue
+                if direction not in ["asc", "desc"]:
+                    logger.warning(f"Invalid sort direction '{direction}' for sort #{s_idx} on field '{field}'. Defaulting to 'asc'.")
+                    direction = "asc"
+
+                logger.debug(f"Processing sort #{s_idx}: {field} {direction.upper()}")
                 try:
-                    target_model, sort_attr = ReportService._get_sqlalchemy_attribute(model_cls, field, query, joined_models, is_filter=False)
-                    if sort_attr is not None: query = query.order_by(desc(sort_attr) if direction == "desc" else asc(sort_attr))
-                    else: logger.warning(f"Could not resolve sort field: {field}")
-                except Exception as e: logger.error(f"Error applying sort for field '{field}': {e}", exc_info=True)
-        return query
+                    # Resolve attribute and add necessary joins FOR SORTING
+                    # Pass the potentially modified query from filtering stage and current aliases
+                    query, sort_attr, join_aliases = ReportService._resolve_attribute_and_joins(
+                        model_cls, field, query, join_aliases
+                    )
+
+                    if sort_attr is not None:
+                        order_func = desc if direction == "desc" else asc
+                        query = query.order_by(order_func(sort_attr))
+                        logger.debug(f"Applied sort #{s_idx}: {field} {direction.upper()}")
+                    else:
+                        logger.warning(f"Could not resolve sort field for sort #{s_idx}: {field}")
+                except Exception as e:
+                    logger.error(f"Error applying sort #{s_idx} for field '{field}': {e}", exc_info=True)
+
+        return query # Return the query with filters and sorts applied
 
     @staticmethod
     def _apply_rbac_filters(query: Query, model_cls: type, user: User) -> Query:
-        # (Unchanged implementation from previous version)
+        # (Keep existing implementation)
         if user.role and user.role.is_super_user: return query
         env_id = user.environment_id; user_role_name = user.role.name if user.role else None
         if model_cls == User: return query.filter(User.environment_id == env_id)
@@ -348,11 +468,9 @@ class ReportService:
         if hasattr(model_cls, 'environment_id'): logger.warning(f"Applying default env RBAC for {model_cls.__name__}"); return query.filter(model_cls.environment_id == env_id)
         elif hasattr(model_cls, 'user_id'): logger.warning(f"Applying default user RBAC for {model_cls.__name__}"); return query.filter(model_cls.user_id == user.id)
         logger.warning(f"No specific RBAC rule for {model_cls.__name__} for role {user_role_name}. Allowing.")
-        return query
-
-    @staticmethod
+        return query@staticmethod
     def _get_load_options(model_cls: Type, requested_columns: List[str]) -> list:
-        # (Unchanged implementation from previous version)
+        # (Keep existing implementation)
         options = []; relationship_paths = set()
         for col in requested_columns:
             if col.startswith(ANSWERS_PREFIX) and model_cls == FormSubmission: relationship_paths.add('answers_submitted'); continue
@@ -379,7 +497,7 @@ class ReportService:
 
     @staticmethod
     def _fetch_data(model_cls: type, filters: List[Dict], sort_by: List[Dict], user: User, requested_columns: List[str]) -> List[Any]:
-        # (Unchanged implementation from previous version)
+        # (Keep existing implementation)
         try:
             query = db.session.query(model_cls)
             if hasattr(model_cls, 'is_deleted'): query = query.filter(model_cls.is_deleted == False)
@@ -394,7 +512,7 @@ class ReportService:
 
     @staticmethod
     def _flatten_data(objects: List[Any], columns: List[str], report_type: str) -> DataList:
-        # (Unchanged implementation from previous version)
+        # (Keep existing implementation)
         if not objects: return []
         flat_data = []; question_info_map = {}
         if report_type == 'form_submissions':
@@ -421,11 +539,10 @@ class ReportService:
             flat_data.append(row_dict)
         return flat_data
 
-
     # --- Data Analysis ---
     @staticmethod
     def _analyze_data(data: DataList, params: ParamsDict, report_type: str) -> AnalysisDict:
-        # (Unchanged implementation from previous version)
+        # (Keep existing implementation)
         analysis: AnalysisDict = {"summary_stats": {}, "charts": {}, "insights": {}}
         if not data: analysis['insights']['status'] = "No data available for analysis."; return analysis
         try:
@@ -470,7 +587,7 @@ class ReportService:
 
     @staticmethod
     def _safe_value_counts(df: pd.DataFrame, column: str, top_n: Optional[int] = 10) -> Dict:
-        # (Unchanged implementation from previous version)
+        # (Keep existing implementation)
         if column not in df.columns or df[column].isnull().all(): return {}
         try:
             if df[column].apply(lambda x: isinstance(x, list)).any(): counts = df[column].apply(lambda x: tuple(x) if isinstance(x, list) else x).value_counts()
@@ -479,10 +596,10 @@ class ReportService:
             return {str(k): int(v) if isinstance(v, np.integer) else float(v) if isinstance(v, np.floating) else v for k, v in counts.to_dict().items()}
         except Exception as e: logger.warning(f"Could not calculate value counts for column '{column}': {e}"); return {}
 
-    # --- Specific Stats Generators (Unchanged) ---
+    # --- Specific Stats Generators ---
     @staticmethod
     def generate_submission_stats(df: pd.DataFrame, params: ParamsDict) -> Dict:
-        # (Unchanged implementation from previous version)
+        # (Keep existing implementation)
         stats = {}; question_info = params.get('_internal_question_info', {})
         for col in df.columns:
             if col.startswith(ANSWERS_PREFIX):
@@ -508,7 +625,7 @@ class ReportService:
 
     @staticmethod
     def generate_user_stats(df: pd.DataFrame, params: ParamsDict) -> Dict:
-        # (Unchanged implementation from previous version)
+        # (Keep existing implementation)
         stats = {}; stats['users_per_role'] = ReportService._safe_value_counts(df, 'role.name'); stats['users_per_environment'] = ReportService._safe_value_counts(df, 'environment.name')
         if 'created_at' in df.columns and pd.api.types.is_datetime64_any_dtype(df['created_at']):
             valid_dates = df['created_at'].dropna();
@@ -517,68 +634,126 @@ class ReportService:
 
     @staticmethod
     def generate_form_stats(df: pd.DataFrame, params: ParamsDict) -> Dict:
-       # (Unchanged implementation from previous version)
+       # (Keep existing implementation)
        stats = {}; stats['forms_per_creator_top5'] = ReportService._safe_value_counts(df, 'creator.username', top_n=5); stats['forms_per_environment'] = ReportService._safe_value_counts(df, 'creator.environment.name')
        if 'is_public' in df.columns: stats['public_vs_private_forms'] = ReportService._safe_value_counts(df, 'is_public')
        return stats
 
     @staticmethod
     def generate_environment_stats(df: pd.DataFrame, params: ParamsDict) -> Dict:
-       # (Unchanged implementation from previous version)
+       # (Keep existing implementation)
        return {'total_environments_reported': len(df)}
 
     @staticmethod
     def generate_role_stats(df: pd.DataFrame, params: ParamsDict) -> Dict:
-       # (Unchanged implementation from previous version)
+       # (Keep existing implementation)
        stats = {}
        if 'is_super_user' in df.columns: stats['roles_by_superuser_status'] = ReportService._safe_value_counts(df, 'is_super_user')
        return stats
 
     @staticmethod
     def generate_answers_submitted_stats(df: pd.DataFrame, params: ParamsDict) -> Dict:
-        # (Unchanged implementation from previous version)
+        # (Keep existing implementation)
         stats = {}; stats['answers_per_question_type'] = ReportService._safe_value_counts(df, 'question_type', top_n=10); stats['answers_per_question_text_top10'] = ReportService._safe_value_counts(df, 'question', top_n=10)
         return stats
 
     @staticmethod
     def generate_attachment_stats(df: pd.DataFrame, params: ParamsDict) -> Dict:
-        # (Unchanged implementation from previous version)
+        # (Keep existing implementation)
         stats = {}; stats['attachments_by_type'] = ReportService._safe_value_counts(df, 'file_type')
         if 'is_signature' in df.columns: stats['attachments_by_signature_status'] = ReportService._safe_value_counts(df, 'is_signature')
         stats['attachments_per_author_top5'] = ReportService._safe_value_counts(df, 'signature_author', top_n=5)
         return stats
 
-    # --- NEW: Generic Stats Generator ---
+    # --- Generic Stats Generator ---
     @staticmethod
     def _generate_generic_stats(df: pd.DataFrame, params: ParamsDict) -> Dict[str, Any]:
-        """Generates basic statistics for any entity DataFrame."""
-        # (Implementation from previous version - unchanged)
-        stats = {}; report_type = params.get("report_type", "unknown_entity"); config = params.get('_internal_config', {}); hints = config.get('analysis_hints', {}); logger.info(f"Generating generic stats for {report_type}")
+        stats: Dict[str, Any] = {}
+        report_type = params.get("report_type", "unknown_entity")
+        logger.info(f"Generating generic stats for {report_type}")
+
+        if df.empty:
+            stats['record_count'] = 0
+            return stats
+
         stats['record_count'] = len(df)
-        categorical_candidates = set(hints.get('categorical_columns', []))
-        for col in df.columns:
-            if any(c in col.lower() for c in GENERIC_CATEGORICAL_COLS): categorical_candidates.add(col)
-            if pd.api.types.is_bool_dtype(df[col]): categorical_candidates.add(col)
-        count = 0
-        for col in list(categorical_candidates):
-            if count >= 5: break
-            if col in df.columns and 1 < df[col].nunique() <= MAX_UNIQUE_GENERIC_CHART * 2:
-                col_stats = ReportService._safe_value_counts(df, col, top_n=10)
-                if col_stats: safe_col_key = ''.join(c if c.isalnum() else '_' for c in col)[:30]; stats[f'counts_{safe_col_key}'] = col_stats; count += 1
-        date_candidates = set(hints.get('date_columns', []))
-        for col in df.columns:
-            if pd.api.types.is_datetime64_any_dtype(df[col]): date_candidates.add(col)
-        for col in list(date_candidates):
-             if col in df.columns and pd.api.types.is_datetime64_any_dtype(df[col]):
-                 valid_dates = df[col].dropna()
-                 if not valid_dates.empty: safe_col_key = ''.join(c if c.isalnum() else '_' for c in col)[:30]; stats[f'range_{safe_col_key}'] = {'first': valid_dates.min().isoformat(), 'last': valid_dates.max().isoformat()}; break
-        logger.debug(f"Generated generic stats for {report_type}: {stats.keys()}")
+        
+        # --- Generic Categorical Stats ---
+        categorical_stats_count = 0
+        MAX_GENERIC_CATEGORICAL_STATS = 5 # Limit the number of distinct categorical columns we generate stats for
+
+        # Iterate through all columns present in the DataFrame `df`
+        # (which was built from user's requested columns or defaults)
+        for col_name in df.columns:
+            if categorical_stats_count >= MAX_GENERIC_CATEGORICAL_STATS:
+                break
+
+            # Ensure col_name is treated as a string for operations, though df.columns usually are.
+            current_col_name_str = str(col_name)
+
+            is_suitable_categorical = False
+            # Use dropna=True so that uniqueness is not affected by presence of NaNs for decision-making
+            num_unique = df[current_col_name_str].nunique(dropna=True) 
+            
+            # Define a range for what's considered a "countable" or "categorical" column for stats
+            # We allow more unique values for stats (top_n will limit) than for direct charting.
+            is_in_stat_range = 1 < num_unique <= (MAX_UNIQUE_GENERIC_CHART * 2) # MAX_UNIQUE_GENERIC_CHART is 15, so 2-30 unique values here.
+
+            col_dtype = df[str(col_name)].dtype # Ensure col_name is string for df access
+            current_col_name_str = str(col_name)
+
+            is_suitable_categorical = False
+            num_unique = df[current_col_name_str].nunique(dropna=True)
+
+            if pd.api.types.is_bool_dtype(col_dtype):
+                is_suitable_categorical = True
+            elif pd.api.types.is_integer_dtype(col_dtype):
+                # For integers (like IDs), keep the stricter unique check
+                if 1 < num_unique <= (MAX_UNIQUE_GENERIC_CHART * 2): # e.g., 2-30
+                    is_suitable_categorical = True
+            elif pd.api.types.is_string_dtype(col_dtype) or col_dtype == 'object':
+                # For strings/objects (like username), be more lenient on total unique count
+                # as _safe_value_counts will take top_n. We just need > 1 unique value.
+                if 1 < num_unique: # If there's more than one unique string, consider it
+                    is_suitable_categorical = True
+            
+            if is_suitable_categorical:
+                col_stats_values = ReportService._safe_value_counts(df, current_col_name_str, top_n=10)
+                if col_stats_values:
+                    safe_col_key = ''.join(c if c.isalnum() else '_' for c in current_col_name_str)[:30]
+                    stats[f'counts_{safe_col_key}'] = col_stats_values
+                    categorical_stats_count += 1
+                    logger.debug(f"Generated generic count stat for column '{current_col_name_str}' in {report_type}")
+
+        # --- Generic Date Range Stats ---
+        # This logic prioritizes hinted date columns but also scans the DataFrame.
+        hinted_date_cols = params.get('_internal_config', {}).get('analysis_hints', {}).get('date_columns', [])
+        date_candidates = set(hinted_date_cols)
+        
+        for col_name in df.columns: # Also check all df columns for datetime types
+            if pd.api.types.is_datetime64_any_dtype(df[str(col_name)].dtype): # Check dtype directly
+                date_candidates.add(str(col_name))
+        
+        # Generate stat for the first valid date column found
+        for col_name_str in list(date_candidates): # Iterate a copy
+            if col_name_str in df.columns and pd.api.types.is_datetime64_any_dtype(df[col_name_str].dtype):
+                valid_dates = df[col_name_str].dropna()
+                if not valid_dates.empty:
+                    safe_col_key = ''.join(c if c.isalnum() else '_' for c in col_name_str)[:30]
+                    stats[f'range_{safe_col_key}'] = {
+                        'first': valid_dates.min().isoformat(),
+                        'last': valid_dates.max().isoformat()
+                    }
+                    logger.debug(f"Generated generic date range stat for column '{col_name_str}' in {report_type}")
+                    break # Only take the first date column found for a generic range stat
+
+        logger.debug(f"Generated generic stats for {report_type}: {list(stats.keys())}")
         return stats
 
     # --- Insight Generators (Specific - Unchanged) ---
     @staticmethod
     def generate_submission_insights(df: pd.DataFrame, analysis: AnalysisDict, params: ParamsDict) -> Dict[str, str]:
-        # (Unchanged implementation from previous version)
+        # (Keep existing implementation)
         insights = {}; stats = analysis.get('summary_stats', {}); record_count = stats.get('record_count', 0)
         if record_count == 0: return {"status": "No submission data available for analysis."}
         insights["volume"] = f"Analyzed {record_count} total submissions."
@@ -591,7 +766,7 @@ class ReportService:
 
     @staticmethod
     def generate_user_insights(df: pd.DataFrame, analysis: AnalysisDict, params: ParamsDict) -> Dict[str, str]:
-        # (Unchanged implementation from previous version)
+        # (Keep existing implementation)
         insights = {}; stats = analysis.get('summary_stats', {}); record_count = stats.get('record_count', 0)
         if record_count == 0: return {"status": "No user data available for analysis."}
         insights["user_count"] = f"Analyzed {record_count} user records."
@@ -601,7 +776,7 @@ class ReportService:
 
     @staticmethod
     def generate_form_insights(df: pd.DataFrame, analysis: AnalysisDict, params: ParamsDict) -> Dict[str, str]:
-        # (Unchanged implementation from previous version)
+        # (Keep existing implementation)
         insights = {}; stats = analysis.get('summary_stats', {}); record_count = stats.get('record_count', 0)
         if record_count == 0: return {"status": "No form data available for analysis."}
         insights["form_count"] = f"Analyzed {record_count} form records."
@@ -609,27 +784,80 @@ class ReportService:
         if stats.get('forms_per_creator_top5'): insights["creator_activity"] = f"Top creators identified based on form count."
         return insights
 
-    # --- NEW: Generic Insights Generator ---
+    # --- Generic Insights Generator ---
     @staticmethod
     def _generate_generic_insights(df: pd.DataFrame, analysis: AnalysisDict, params: ParamsDict) -> Dict[str, str]:
-        # (Implementation from previous version - unchanged)
-        insights = {}; stats = analysis.get('summary_stats', {}); report_type = params.get("report_type", "this entity"); record_count = stats.get('record_count', 0)
-        if record_count == 0: insights["status"] = f"No data available for {report_type}."; return insights
-        insights["record_summary"] = f"Analyzed {record_count} records for {report_type}."
+        insights = {} # This function should return what IT generates
+        stats = analysis.get('summary_stats', {})
+        report_type = params.get("report_type", "this entity")
+        record_count = stats.get('record_count', 0)
+
+        if record_count == 0:
+            # If 'status' isn't already set by a more specific insight generator
+            if 'status' not in analysis.get('insights', {}):
+                 insights["status"] = f"No data available for {report_type}."
+            return insights # Return only the status if no data
+
+        # Avoid duplicating record count if a specific insight generator already added it
+        # This relies on convention that specific insights might use keys like 'user_count', 'form_count', 'volume'
+        # and that they populate analysis['insights'] directly.
+        # Note: _analyze_data updates analysis['insights'] by merging.
+        existing_insights = analysis.get('insights', {})
+        if not any(k in existing_insights for k in ['user_count', 'form_count', 'submission_count', 'record_summary', 'volume']):
+            insights["record_summary"] = f"A total of {record_count} records were analyzed for {report_type}."
+        
+        # Date range insight (already improved)
         date_range_key = next((k for k in stats if k.startswith('range_')), None)
         if date_range_key and isinstance(stats[date_range_key], dict):
-            first = stats[date_range_key].get('first', 'N/A').split(' ')[0]; last = stats[date_range_key].get('last', 'N/A').split(' ')[0]; date_col_name = date_range_key.replace('range_', '').replace('_', ' '); insights["date_range"] = f"Records span from {first} to {last} based on '{date_col_name}'."
+            first = stats[date_range_key].get('first', 'N/A')
+            last = stats[date_range_key].get('last', 'N/A')
+            date_col_name = date_range_key.replace('range_', '').replace('_', ' ')
+            if first == last:
+                insights["date_info"] = f"All analyzed records share the same timestamp for '{date_col_name}': {first.split('T')[0]}."
+            else:
+                insights["date_range"] = f"Records for '{date_col_name}' span from {first.split('T')[0]} to {last.split('T')[0]}."
+
+        # Top category insight (already improved)
         count_keys = [k for k in stats if k.startswith('counts_')]
         if count_keys:
-            primary_count_key = max(count_keys, key=lambda k: next(iter(stats[k].values()), 0) if stats[k] else 0)
-            col_name = primary_count_key.replace('counts_', '').replace('_', ' '); top_value = next(iter(stats[primary_count_key]), 'N/A'); insights["top_category"] = f"The most common value for '{col_name}' was '{top_value}'."
-        elif record_count > 0: insights["basic_summary"] = "Basic record counts generated."
+            # Sort keys to get a more consistent "primary" count key if multiple exist
+            # Example: prefer 'counts_username' over 'counts_id' if both generated
+            sorted_count_keys = sorted(count_keys, key=lambda k: (
+                0 if 'name' in k or 'title' in k or 'type' in k else 1, # Prioritize common categorical names
+                len(stats.get(k, {})), # Then by number of categories in the stat (fewer is often more focused)
+                k # Alphabetical as tie-breaker
+            ))
+            primary_count_key = sorted_count_keys[0]
+            
+            if stats.get(primary_count_key): 
+                counts_for_top_key = stats[primary_count_key]
+                col_name = primary_count_key.replace('counts_', '').replace('_', ' ')
+                if counts_for_top_key:
+                    top_value = next(iter(counts_for_top_key), 'N/A')
+                    top_count = counts_for_top_key.get(top_value, 0)
+                    
+                    is_dominant = True
+                    if len(counts_for_top_key) > 1:
+                        # Convert values to list for sorting if it's a dict
+                        all_counts_in_stat = list(counts_for_top_key.values())
+                        all_counts_in_stat.sort(reverse=True)
+                        second_value_count = all_counts_in_stat[1]
+                        if top_count <= second_value_count or top_count <= 1:
+                            is_dominant = False
+                    elif top_count <=1 and len(counts_for_top_key) == 1: # Only one category and its count is 1
+                         is_dominant = False
+
+
+                    if is_dominant:
+                        insights["top_category_info"] = f"For the column '{col_name}', the most common value was '{top_value}', occurring {top_count} times."
+                    elif top_count > 0 : 
+                        insights["category_analysis_note"] = f"Distribution analysis was performed for '{col_name}'. The most frequent value found was '{top_value}' (occurrences: {top_count})."
         return insights
 
-    # --- Charting Helpers & Generators (Specific - Unchanged) ---
+    # --- Charting Helpers & Generators (Specific) ---
     @staticmethod
     def _save_plot_to_bytes(figure) -> Optional[BytesIO]:
-        # (Unchanged implementation from previous version)
+        # (Keep existing implementation)
         if not figure: return None
         try:
             img_buffer = BytesIO();
@@ -642,14 +870,14 @@ class ReportService:
 
     @staticmethod
     def _setup_chart(figsize=(10, 5), style='seaborn-v0_8-whitegrid') -> Tuple[plt.Figure, plt.Axes]:
-        # (Unchanged implementation from previous version)
+        # (Keep existing implementation)
         plt.style.use(style); fig, ax = plt.subplots(figsize=figsize, facecolor='white'); ax.set_facecolor('white')
         plt.rcParams.update({'font.size': 10, 'axes.titlesize': 14, 'axes.labelsize': 12, 'xtick.labelsize': 10, 'ytick.labelsize': 10, 'legend.fontsize': 10})
         return fig, ax
 
     @staticmethod
     def _add_bar_labels(ax: plt.Axes, bars: Any, location: str = 'edge', color: str = 'black', fontsize=9, **kwargs):
-        # (Unchanged implementation from previous version)
+        # (Keep existing implementation)
         try:
             patches = bars.patches if hasattr(bars, 'patches') else bars
             for bar in patches:
@@ -663,7 +891,7 @@ class ReportService:
 
     @staticmethod
     def generate_submission_charts(df: pd.DataFrame, analysis: AnalysisDict) -> Dict[str, BytesIO]:
-        # (Unchanged implementation from previous version)
+        # (Keep existing implementation)
         charts = {}; stats = analysis.get('summary_stats', {}); params = analysis.get('_internal_params', {})
         if df.empty: return charts
         config = analysis.get('_internal_config', {}); hints = config.get('analysis_hints', {}); date_col = next((c for c in hints.get('date_columns', []) if c == 'submitted_at'), None)
@@ -694,18 +922,42 @@ class ReportService:
 
     @staticmethod
     def generate_user_charts(df: pd.DataFrame, analysis: AnalysisDict) -> Dict[str, BytesIO]:
-        # (Unchanged implementation from previous version)
-        charts = {}; stats = analysis.get('summary_stats', {})
-        if df.empty: return charts
-        if stats.get('users_per_role'): role_counts = pd.Series(stats['users_per_role']);
-        if not role_counts.empty: charts['user_role_distribution'] = ReportService._create_bar_chart( role_counts, 'User Count by Role', 'Role', '# Users', palette='Blues_d')
-        if stats.get('users_per_environment'): env_counts = pd.Series(stats['users_per_environment']);
-        if not env_counts.empty: charts['user_environment_distribution'] = ReportService._create_bar_chart( env_counts, 'User Count by Environment', 'Environment', '# Users', palette='Greens_d')
+        charts = {}
+        stats = analysis.get('summary_stats', {})
+        if df.empty:
+            return charts
+
+        # Handle role distribution chart
+        role_counts_data = stats.get('users_per_role')
+        if role_counts_data:  # Check if the data exists in stats
+            role_counts = pd.Series(role_counts_data)
+            if not role_counts.empty:
+                try:
+                    charts['user_role_distribution'] = ReportService._create_bar_chart(
+                        role_counts, 'User Count by Role', 'Role', '# Users', palette='Blues_d'
+                    )
+                except Exception as e:
+                    logger.error(f"Error creating user_role_distribution chart: {e}", exc_info=True)
+                    charts['user_role_distribution_error'] = f"Failed to generate: {e}"
+
+
+        # Handle environment distribution chart
+        env_counts_data = stats.get('users_per_environment')
+        if env_counts_data:  # Check if the data exists in stats
+            env_counts = pd.Series(env_counts_data)
+            if not env_counts.empty:
+                try:
+                    charts['user_environment_distribution'] = ReportService._create_bar_chart(
+                        env_counts, 'User Count by Environment', 'Environment', '# Users', palette='Greens_d'
+                    )
+                except Exception as e:
+                    logger.error(f"Error creating user_environment_distribution chart: {e}", exc_info=True)
+                    charts['user_environment_distribution_error'] = f"Failed to generate: {e}"
         return charts
 
     @staticmethod
     def generate_form_charts(df: pd.DataFrame, analysis: AnalysisDict) -> Dict[str, BytesIO]:
-       # (Unchanged implementation from previous version)
+       # (Keep existing implementation)
        charts = {}; stats = analysis.get('summary_stats', {})
        if df.empty: return charts
        if stats.get('public_vs_private_forms'): status_counts = pd.Series(stats['public_vs_private_forms']);
@@ -714,28 +966,89 @@ class ReportService:
        if not creator_counts.empty: charts['forms_per_creator'] = ReportService._create_bar_chart( creator_counts, 'Top 10 Form Creators', 'Creator Username', '# Forms', palette='Oranges_d')
        return charts
 
-    # --- NEW: Generic Chart Generator ---
+    # --- Generic Chart Generator ---
+    # In app/services/report_service.py
+
     @staticmethod
     def _generate_generic_charts(df: pd.DataFrame, analysis: AnalysisDict) -> Dict[str, BytesIO]:
-        # (Implementation from previous version - unchanged)
-        charts = {}; stats = analysis.get('summary_stats', {}); params = analysis.get('_internal_params', {}); report_type = params.get("report_type", "entity"); logger.info(f"Generating generic charts for {report_type}")
-        count = 0
+        charts = {}
+        stats = analysis.get('summary_stats', {})
+        params = analysis.get('_internal_params', {}) # Assuming _analyze_data adds this
+        report_type = params.get("report_type", "entity")
+        logger.info(f"Generating generic charts for {report_type}")
+        
+        chart_count = 0 
+        MAX_GENERIC_CHARTS = 3 
+
         for key, value_counts_dict in stats.items():
-            if count >= 3: break
+            if chart_count >= MAX_GENERIC_CHARTS:
+                break
+            
             if key.startswith('counts_') and isinstance(value_counts_dict, dict) and value_counts_dict:
                 try:
-                    counts_series = pd.Series(value_counts_dict); col_name = key.replace('counts_', '').replace('_', ' '); chart_title = f"Distribution by {col_name.title()}"; chart_key = f"generic_dist_{key.replace('counts_','')[:20]}"
-                    if not counts_series.empty and counts_series.nunique() <= MAX_UNIQUE_GENERIC_CHART:
-                        chart_bytes = ReportService._create_bar_chart( counts_series, chart_title, col_name.title(), '# Records', palette='Spectral', figsize=(8, max(4, len(counts_series)*0.5)));
-                        if chart_bytes: charts[chart_key] = chart_bytes; count += 1
-                except Exception as e: logger.error(f"Error generating generic chart for key '{key}' in {report_type}: {e}")
+                    counts_series = pd.Series(value_counts_dict)
+                    col_name_from_key = key.replace('counts_', '').replace('_', ' ')
+                    chart_title = f"Distribution by {col_name_from_key.title()}"
+                    chart_key_name = f"generic_dist_{key.replace('counts_','')[:20].replace('.', '_')}"
+
+                    if not counts_series.empty and len(counts_series.index) <= MAX_UNIQUE_GENERIC_CHART:
+                        
+                        # ---- START: Reverted Suppression Logic ----
+                        # The following block was added to suppress flat charts.
+                        # If you want to see these charts (even if flat), comment out or remove this block.
+                        # actual_counts = counts_series.values
+                        # all_top_n_counts_are_one = all(c == 1 for c in actual_counts)
+                        
+                        # if all_top_n_counts_are_one and len(actual_counts) >= 3:
+                        #     logger.info(f"INFO: Generic chart for '{col_name_from_key}' in {report_type} would be flat; consider if suppression is desired.")
+                        #     # If choosing to suppress:
+                        #     # if 'insights' not in analysis: analysis['insights'] = {}
+                        #     # analysis['insights'][f'suppressed_chart_info_{col_name_from_key.replace(" ", "_")}'] = (
+                        #     #     f"A distribution chart for '{col_name_from_key}' was not generated because the top {len(actual_counts)} "
+                        #     #     f"categories each had only one occurrence, indicating high uniqueness in this segment of data."
+                        #     # )
+                        #     # continue 
+                        # ---- END: Reverted Suppression Logic ----
+
+                        chart_bytes = ReportService._create_bar_chart(
+                            data=counts_series,
+                            title=chart_title,
+                            xlabel=col_name_from_key.title(),
+                            ylabel='# Records',
+                            palette='Spectral',
+                            figsize=(8, max(4, len(counts_series.index) * 0.5))
+                        )
+                        if chart_bytes:
+                            charts[chart_key_name] = chart_bytes
+                            chart_count += 1
+                except Exception as e:
+                    logger.error(f"Error generating generic chart for key '{key}' in {report_type}: {e}", exc_info=True)
+        
+        # This note is now more accurate: it appears if no charts were generated for any reason
+        # (no suitable stats, or other limits hit, not just suppression).
+        if chart_count == 0 and stats.get('record_count', 0) > 0 :
+            logger.info(f"No generic charts were generated for {report_type} despite having data, due to data characteristics or limits.")
+            if 'insights' not in analysis: analysis['insights'] = {}
+            
+            # Check if a more specific suppression insight for 'username' (or other columns) already exists
+            # to avoid redundant "no chart" messages.
+            # This is a simple check; a more robust way would be to track suppressed charts.
+            has_suppression_insight = any(k.startswith('suppressed_chart_info_') for k in analysis.get('insights', {}).keys())
+
+            if not has_suppression_insight: # Only add this general note if no specific suppression note was made
+                analysis['insights']['no_generic_charts_note'] = (
+                    "No generic distribution charts were generated for this section. "
+                    "This can occur if data columns have too many unique values, too few unique values (e.g., only one distinct value after filtering), "
+                    "or if other chart generation limits were met."
+                )
+
         logger.debug(f"Generated {len(charts)} generic charts for {report_type}")
         return charts
 
-    # --- Charting Helpers (Unchanged) ---
+    # --- Charting Helpers ---
     @staticmethod
     def _create_bar_chart(data: pd.Series, title: str, xlabel: str, ylabel: str, figsize=(8,4), palette="viridis", add_labels=True) -> Optional[BytesIO]:
-       # (Unchanged implementation from previous version)
+       # (Keep existing implementation)
        if data.empty: return None
        try:
            fig, ax = ReportService._setup_chart(figsize=figsize); x_data = data.index.astype(str); y_data = data.values
@@ -752,7 +1065,7 @@ class ReportService:
 
     @staticmethod
     def _create_pie_chart(data: pd.Series, title: str, figsize=(7, 5)) -> Optional[BytesIO]:
-        # (Unchanged implementation from previous version)
+        # (Keep existing implementation)
         if data.empty: return None
         try:
              fig, ax = ReportService._setup_chart(figsize=figsize)
@@ -767,7 +1080,7 @@ class ReportService:
 
     @staticmethod
     def _create_activity_heatmap(df: pd.DataFrame, date_col: str) -> Optional[BytesIO]:
-       # (Unchanged implementation from previous version)
+       # (Keep existing implementation)
        if df.empty or date_col not in df.columns: return None
        try:
            if not pd.api.types.is_datetime64_any_dtype(df[date_col]): df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
@@ -786,10 +1099,10 @@ class ReportService:
        except Exception as e: logger.error(f"Error creating activity heatmap: {e}", exc_info=True); return None
        finally: plt.close('all')
 
-    # --- Report Format Generation Helpers (Docs, PDF - Unchanged) ---
+    # --- Report Format Generation Helpers (Docs, PDF) ---
     @staticmethod
     def _add_document_title(doc_builder: Union[list, DocxDocumentClass, Presentation], title: str, level: int = 0):
-       # (Unchanged implementation from previous version)
+       # (Keep existing implementation)
         try:
             if isinstance(doc_builder, list): styles = getSampleStyleSheet(); style_key = f'h{level+1}' if 0 < level < 6 else 'h1'; doc_builder.append(Paragraph(title, styles[style_key])); doc_builder.append(Spacer(1, 0.2*inch if level > 0 else 0.3*inch))
             elif isinstance(doc_builder, DocxDocumentClass): heading = doc_builder.add_heading(title, level=level); heading.alignment = WD_ALIGN_PARAGRAPH.CENTER if level == 0 else WD_ALIGN_PARAGRAPH.LEFT
@@ -799,7 +1112,7 @@ class ReportService:
 
     @staticmethod
     def _add_text_section(doc_builder: Union[list, DocxDocumentClass], heading: str, content: Dict[str, str], level: int = 2):
-       # (Unchanged implementation from previous version)
+       # (Keep existing implementation)
        if not content: return
        styles = getSampleStyleSheet()
        try:
@@ -821,7 +1134,7 @@ class ReportService:
 
     @staticmethod
     def _add_chart_to_document(doc_builder: Union[list, DocxDocumentClass], chart_key: str, chart_bytes: Optional[BytesIO]):
-        # (Unchanged implementation from previous version)
+        # (Keep existing implementation)
         if not isinstance(chart_bytes, BytesIO):
              logger.warning(f"Chart data for '{chart_key}' invalid."); error_text = f"[Chart '{chart_key.replace('_', ' ').title()}' could not be generated]"
              try:
@@ -843,15 +1156,19 @@ class ReportService:
     # --- Report Generation Orchestrator ---
     @staticmethod
     def _generate_report_data(report_params: dict, user: User) -> ProcessedData:
-        """Fetches, flattens, and analyzes data for requested report types."""
+        """Fetches, flattens, and analyzes data for requested report types based on merged params."""
         report_type_req = report_params.get("report_type")
         processed_data: ProcessedData = {}
+
+        if not report_type_req:
+             processed_data['_error'] = {'error': "Missing 'report_type' in final parameters."}; return processed_data
 
         if report_type_req == "all": report_types_to_process = list(ReportService.ENTITY_CONFIG.keys())
         elif isinstance(report_type_req, list): report_types_to_process = report_type_req
         elif isinstance(report_type_req, str): report_types_to_process = [report_type_req]
         else: processed_data['_error'] = {'error': "Invalid report_type parameter."}; return processed_data
 
+        # Determine if detailed parameters (columns, filters, sort) are present in the FINAL merged parameters
         has_detailed_params = any(k in report_params for k in ['columns', 'filters', 'sort_by'])
         is_single_entity_request = len(report_types_to_process) == 1
 
@@ -866,32 +1183,47 @@ class ReportService:
             if report_type not in ReportService.ENTITY_CONFIG: processed_data[report_type] = {'error': f"Unsupported report type: {report_type}"}; continue
             config = ReportService.ENTITY_CONFIG[report_type]; model_cls = config.get('model'); permission_entity = config.get('view_permission_entity')
             if not model_cls or not permission_entity: processed_data[report_type] = {'error': f"Configuration incomplete for: {report_type}"}; continue
-            if not PermissionManager.has_permission(user, "view", permission_entity): processed_data[report_type] = {'error': f"Permission denied for {report_type} report."}; continue
 
+            # Permission check for viewing the entity itself
+            if not PermissionManager.has_permission(user, "view", permission_entity):
+                processed_data[report_type] = {'error': f"Permission denied for {report_type} report."};
+                logger.warning(f"User '{user.username}' permission denied for viewing entity '{permission_entity.value}'.")
+                continue
+
+            # Use detailed params ONLY if it's a single entity request AND detailed params were provided
+            # Otherwise, use default columns logic.
             use_detailed_params = is_single_entity_request and has_detailed_params
+
             columns = None; filters = []; sort_by = config.get('default_sort', [])
 
             if use_detailed_params:
+                # Use parameters from the final merged dictionary
                 columns = report_params.get("columns") # Use user's columns if provided
                 filters = report_params.get("filters", [])
                 sort_by = report_params.get("sort_by", config.get('default_sort', []))
+                logger.debug(f"Using detailed params for {report_type}: cols={len(columns) if columns else 'None'}, filters={len(filters)}, sort={len(sort_by)}")
             else:
                 # --- Default Column Logic ---
+                # This logic runs if it's a multi-entity request OR if no detailed params were provided
+                logger.debug(f"Using default column logic for {report_type} (single_entity={is_single_entity_request}, has_detailed={has_detailed_params}).")
                 try:
                     columns = list(sqla_inspect(model_cls).columns.keys())
                     logger.debug(f"Using default all direct columns for {report_type}: {len(columns)} columns")
                 except Exception as inspect_err:
                      logger.error(f"Could not inspect columns for {model_cls.__name__}: {inspect_err}")
-                     columns = config.get('default_columns', [])
-                     if not columns: processed_data[report_type] = {'error': f"Could not determine default columns for {report_type}."}; continue
+                     columns = config.get('default_columns', []) # Fallback to config default
+                     if not columns:
+                         processed_data[report_type] = {'error': f"Could not determine default columns for {report_type}."}; continue
                 # Add default related columns if defined in config and not already present from inspection
-                # This ensures basic related info (like role.name) appears even with all direct columns
                 default_related_cols = config.get('default_columns', [])
                 if default_related_cols:
                     inspected_cols_set = set(columns)
                     for d_col in default_related_cols:
                         if '.' in d_col and d_col not in inspected_cols_set:
                             columns.append(d_col)
+                # Reset filters and sort to defaults when not using detailed params
+                filters = []
+                sort_by = config.get('default_sort', [])
 
 
             if not columns or not isinstance(columns, list):
@@ -908,21 +1240,39 @@ class ReportService:
 
             if not columns: processed_data[report_type] = {'error': f"No accessible columns for {report_type}."}; continue
 
-            current_params = { "columns": columns, "filters": filters, "sort_by": sort_by, "report_type": report_type, "report_title": report_params.get("report_title", DEFAULT_REPORT_TITLE), "output_format": report_params.get("output_format", "xlsx").lower(), "_internal_question_info": question_info_map if report_type == 'form_submissions' else {}, "_internal_config": config, "sheet_name": report_params.get(f"{report_type}_sheet_name", report_type.replace("_", " ").title()), "table_options": report_params.get(f"{report_type}_table_options", report_params.get("table_options", {})), "include_data_table_in_ppt": report_params.get("include_data_table_in_ppt", False), "max_ppt_table_rows": report_params.get("max_ppt_table_rows", DEFAULT_PPTX_TABLE_ROWS),}
+            # Construct parameters specific to this entity's processing
+            # Use values from the final merged report_params
+            current_entity_params = {
+                "columns": columns,
+                "filters": filters,
+                "sort_by": sort_by,
+                "report_type": report_type, # Specific entity type
+                "report_title": report_params.get("report_title", DEFAULT_REPORT_TITLE), # Global title
+                "output_format": report_params.get("output_format", "xlsx").lower(), # Global format
+                "_internal_question_info": question_info_map if report_type == 'form_submissions' else {},
+                "_internal_config": config,
+                "sheet_name": report_params.get(f"{report_type}_sheet_name", report_type.replace("_", " ").title()), # Sheet name can be overridden
+                "table_options": report_params.get(f"{report_type}_table_options", report_params.get("table_options", {})), # Table options can be overridden
+                "include_data_table_in_ppt": report_params.get("include_data_table_in_ppt", False), # Global PPT option
+                "max_ppt_table_rows": report_params.get("max_ppt_table_rows", DEFAULT_PPTX_TABLE_ROWS), # Global PPT option
+            }
             try:
-                logger.info(f"Processing report type '{report_type}'...")
+                logger.info(f"Processing report type '{report_type}' for user '{user.username}'...")
                 fetched_objects = ReportService._fetch_data(model_cls, filters, sort_by, user, columns)
                 data = ReportService._flatten_data(fetched_objects, columns, report_type)
-                analysis_results = ReportService._analyze_data(data, current_params, report_type)
-                processed_data[report_type] = {'error': None, 'data': data, 'objects': fetched_objects, 'params': current_params, 'analysis': analysis_results }
-                logger.info(f"Successfully processed '{report_type}' ({len(data)} records).")
-            except Exception as proc_err: logger.error(f"Error processing data for {report_type}: {proc_err}", exc_info=True); processed_data[report_type] = {'error': f"Error processing data: {proc_err}", 'params': current_params, 'analysis': {}, 'data': [], 'objects':[]}
+                # Pass the entity-specific params to analysis
+                analysis_results = ReportService._analyze_data(data, current_entity_params, report_type)
+                processed_data[report_type] = {'error': None, 'data': data, 'objects': fetched_objects, 'params': current_entity_params, 'analysis': analysis_results }
+                logger.info(f"Successfully processed '{report_type}' ({len(data)} records) for user '{user.username}'.")
+            except Exception as proc_err:
+                logger.error(f"Error processing data for {report_type} for user '{user.username}': {proc_err}", exc_info=True)
+                processed_data[report_type] = {'error': f"Error processing data: {proc_err}", 'params': current_entity_params, 'analysis': {}, 'data': [], 'objects':[]}
         return processed_data
 
     # --- Format-Specific Generation Functions (XLSX, CSV, PDF, DOCX - Unchanged) ---
     @staticmethod
     def _generate_xlsx_report(processed_data: ProcessedData, global_params: ParamsDict) -> BytesIO:
-        """Generates a multi-sheet XLSX report using add_table, ensuring final sort by ID."""
+        # (Keep existing implementation with ID sort)
         output = BytesIO()
         with xlsxwriter.Workbook(output, {'in_memory': True, 'remove_timezone': True, 'strings_to_numbers': False, 'strings_to_formulas': False}) as workbook:
             header_format = workbook.add_format({'bold': True, 'text_wrap': True, 'valign': 'top', 'fg_color': '#D7E4BC', 'border': 1, 'align': 'center'})
@@ -936,7 +1286,7 @@ class ReportService:
 
                 params = result.get('params', {}); data = result.get('data', []); columns = params.get('columns', []); analysis = result.get('analysis', {}); sheet_name = params.get("sheet_name", report_type.replace("_", " ").title())[:MAX_XLSX_SHEET_NAME_LEN]; table_options = params.get('table_options', {})
 
-                # --- >>> NEW: Sort data list by 'id' <<< ---
+                # Sort data list by 'id' if present
                 if data and columns and 'id' in columns:
                     try:
                         # Attempt numeric sort first, placing non-numeric/missing IDs last
@@ -944,16 +1294,9 @@ class ReportService:
                         logger.debug(f"Sorted data for sheet '{sheet_name}' by ID ascending.")
                     except (ValueError, TypeError) as sort_err:
                          logger.warning(f"Could not sort sheet '{sheet_name}' numerically by ID, attempting string sort: {sort_err}")
-                         # Fallback: string sort (less reliable for numbers but better than error)
-                         try:
-                            data.sort(key=lambda row: str(row.get('id', '')))
-                         except Exception as sort_err_str:
-                             logger.error(f"String sort by ID also failed for sheet '{sheet_name}': {sort_err_str}")
-                             # Proceed with potentially unsorted data if all sorting fails
-                    except Exception as sort_err:
-                        logger.error(f"Error sorting data for sheet '{sheet_name}' by ID: {sort_err}", exc_info=True)
-                        # Proceed with potentially unsorted data
-                # --- >>> END NEW <<< ---
+                         try: data.sort(key=lambda row: str(row.get('id', ''))) # Fallback string sort
+                         except Exception as sort_err_str: logger.error(f"String sort by ID also failed for sheet '{sheet_name}': {sort_err_str}")
+                    except Exception as sort_err: logger.error(f"Error sorting data for sheet '{sheet_name}' by ID: {sort_err}", exc_info=True)
 
                 if not columns: logger.warning(f"Skipping sheet {report_type}: No columns."); continue
 
@@ -963,15 +1306,14 @@ class ReportService:
                     worksheet.merge_range(current_row, 0, current_row, max(3, len(columns)-1), f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", workbook.add_format({'italic': True, 'align': 'center'})); current_row += 2
 
                     table_data = []; col_max_lens = {i: len(str(columns[i])) for i in range(len(columns))}
-                    # This loop now iterates over the SORTED data list
-                    for row_dict in data:
+                    for row_dict in data: # Iterate over potentially sorted data
                         row_values = []
                         for c_idx, col_key in enumerate(columns):
                             cell_value = row_dict.get(col_key)
                             if cell_value is None: formatted_value = ''
                             elif isinstance(cell_value, bool): formatted_value = "Yes" if cell_value else "No"
                             elif isinstance(cell_value, (datetime, date)):
-                                try: formatted_value = cell_value; col_max_lens[c_idx] = max(col_max_lens.get(c_idx, 0), len(str(cell_value.isoformat())))
+                                try: formatted_value = cell_value; col_max_lens[c_idx] = max(col_max_lens.get(c_idx, 0), 20) # Fixed width for dates
                                 except ValueError: formatted_value = str(cell_value.isoformat()); col_max_lens[c_idx] = max(col_max_lens.get(c_idx, 0), len(formatted_value))
                             else: formatted_value = str(cell_value); col_max_lens[c_idx] = max(col_max_lens.get(c_idx, 0), len(formatted_value))
                             row_values.append(formatted_value)
@@ -997,36 +1339,23 @@ class ReportService:
                             except Exception as chart_err: logger.error(f"Failed chart insert {chart_name}: {chart_err}"); worksheet.write(chart_start_row, chart_col - 1, f"Error chart: {chart_name}"); chart_start_row += 1
                 except Exception as sheet_err:
                     logger.error(f"Failed sheet '{sheet_name}': {sheet_err}", exc_info=True)
-                    try: # Inner try starts
+                    try:
                         error_sheet_name = f"ERROR_{sheet_name[:25]}"
-                        # Check if an error sheet with this name *already exists* before adding
-                        # Note: workbook.sheetnames might not be fully reliable until close() in some edge cases,
-                        # but it's commonly used here. A safer check might involve trying to get the sheet by name.
                         if error_sheet_name not in workbook.sheetnames:
-                            # Create the error sheet
                             error_worksheet = workbook.add_worksheet(error_sheet_name)
-                            # Write a clear message about the original failure
                             error_worksheet.write(0, 0, f"Failed generating original sheet '{sheet_name}'. Error:")
-                            # Write the error message itself (convert to string, limit length for Excel)
                             error_msg_str = str(sheet_err)
-                            max_cell_len = 32767 # Excel cell character limit
+                            max_cell_len = 32767
                             error_worksheet.write(1, 0, error_msg_str[:max_cell_len])
-                            # Set column width for readability
                             error_worksheet.set_column(0, 0, 100)
                             logger.info(f"Created error sheet '{error_sheet_name}' due to failure on '{sheet_name}'.")
-                        else:
-                            logger.warning(f"Attempted to create error sheet '{error_sheet_name}', but it already exists.")
-
-                    except Exception as inner_err: # Inner except starts (catches errors *during* error sheet creation)
-                        # Log that creating the error sheet *also* failed
-                        logger.error(f"Could not write error sheet '{error_sheet_name}' after initial failure on '{sheet_name}': {inner_err}", exc_info=True)
-                        # Pass silently - we don't want the report generation to fail just because logging the error failed.
-                        pass # Inner except ends
+                        else: logger.warning(f"Attempted to create error sheet '{error_sheet_name}', but it already exists.")
+                    except Exception as inner_err: logger.error(f"Could not write error sheet '{error_sheet_name}' after initial failure on '{sheet_name}': {inner_err}", exc_info=True); pass
         output.seek(0); return output
 
     @staticmethod
     def _generate_csv_report(processed_data: ProcessedData, global_params: ParamsDict) -> BytesIO:
-        # (Unchanged implementation from previous version)
+        # (Keep existing implementation)
         if len(processed_data) == 1:
             report_type = list(processed_data.keys())[0]; result = processed_data[report_type]
             if result.get('error'): raise ValueError(f"CSV Error: {result['error']}")
@@ -1059,7 +1388,7 @@ class ReportService:
 
     @staticmethod
     def _generate_pdf_report(processed_data: ProcessedData, global_params: ParamsDict) -> BytesIO:
-        # (Unchanged implementation from previous version)
+        # (Keep existing implementation)
         buffer = BytesIO(); doc = SimpleDocTemplate(buffer, pagesize=letter, leftMargin=0.75*inch, rightMargin=0.75*inch, topMargin=0.75*inch, bottomMargin=0.75*inch); styles = getSampleStyleSheet(); story = []
         ReportService._add_document_title(story, global_params.get("report_title", DEFAULT_REPORT_TITLE), level=0)
         first_section = True
@@ -1083,7 +1412,7 @@ class ReportService:
 
     @staticmethod
     def _generate_docx_report(processed_data: ProcessedData, global_params: ParamsDict) -> BytesIO:
-        # (Unchanged implementation from previous version)
+        # (Keep existing implementation)
         document = docx.Document(); buffer = BytesIO()
         ReportService._add_document_title(document, global_params.get("report_title", DEFAULT_REPORT_TITLE), level=0)
         first_section = True
@@ -1105,10 +1434,10 @@ class ReportService:
              except: return BytesIO(b"Failed DOCX error report.")
         buffer.seek(0); return buffer
 
-    # --- PPTX Specific Helpers (Unchanged except table header color) ---
+    # --- PPTX Specific Helpers ---
     @staticmethod
     def _add_pptx_text_slide(prs: Presentation, title: str, content: List[Tuple[str, Optional[int], Optional[bool]]]):
-        # (Unchanged implementation from previous version)
+        # (Keep existing implementation)
         try:
             slide = prs.slides.add_slide(prs.slide_layouts[1]); slide.shapes.title.text = title
             if len(slide.placeholders) > 1:
@@ -1119,7 +1448,7 @@ class ReportService:
 
     @staticmethod
     def _add_pptx_chart_slide(prs: Presentation, chart_key: str, chart_bytes: Optional[BytesIO], analysis: AnalysisDict):
-        # (Unchanged implementation from previous version)
+        # (Keep existing implementation)
         if not isinstance(chart_bytes, BytesIO): logger.warning(f"Skipping PPTX chart '{chart_key}': Invalid data."); return
         chart_bytes.seek(0); chart_title = chart_key.replace('_', ' ').title()
         try:
@@ -1133,7 +1462,7 @@ class ReportService:
 
     @staticmethod
     def _add_pptx_data_table_slide(prs: Presentation, title: str, data: DataList, params: ParamsDict):
-        # (Unchanged implementation from previous version - includes Dark Blue Header Fix)
+        # (Keep existing implementation with Dark Blue Header Fix)
         max_rows = params.get("max_ppt_table_rows", DEFAULT_PPTX_TABLE_ROWS); columns = params.get("columns", []); data_sample = data[:max_rows]
         if not data_sample or not columns: return
         try:
@@ -1157,10 +1486,10 @@ class ReportService:
                 if note_top < prs.slide_height - PptxInches(0.5): note_shape = slide.shapes.add_textbox(left, note_top, width, PptxInches(0.5)); p_note = note_shape.text_frame.paragraphs[0]; p_note.text = f"Note: Showing first {max_rows} of {len(data)} records."; p_note.font.size = PptxPt(10); p_note.font.italic = True; p_note.alignment = PP_ALIGN.CENTER
         except Exception as table_err: logger.error(f"Error creating PPTX table slide '{title}': {table_err}", exc_info=True)
 
-    # --- Specific and Default PPTX Generators (Unchanged) ---
+    # --- Specific and Default PPTX Generators ---
     @staticmethod
     def _generate_submission_pptx(result: Dict[str, Any], global_params: ParamsDict) -> BytesIO:
-        # (Unchanged implementation from previous version)
+        # (Keep existing implementation)
         prs = Presentation(); buffer = BytesIO(); analysis = result.get('analysis', {}); params = result.get('params', {}); data = result.get('data', [])
         report_title = params.get("report_title", "Submission Analysis"); report_type_str = params.get("report_type", "").replace('_',' ').title()
         slide_title = prs.slides.add_slide(prs.slide_layouts[0]); slide_title.shapes.title.text = report_title
@@ -1180,7 +1509,7 @@ class ReportService:
 
     @staticmethod
     def _generate_default_pptx(result: Dict[str, Any], global_params: ParamsDict) -> BytesIO:
-        # (Unchanged implementation from previous version)
+        # (Keep existing implementation)
         prs = Presentation(); buffer = BytesIO(); analysis = result.get('analysis', {}); params = result.get('params', {}); data = result.get('data', [])
         report_title = params.get("report_title", "Data Analysis"); report_type_str = params.get("report_type", "Unknown").replace('_',' ').title(); entity_title = params.get("sheet_name", report_type_str)
         logger.info(f"Generating default PPTX for: {report_type_str}")
@@ -1204,10 +1533,10 @@ class ReportService:
         try: prs.save(buffer); buffer.seek(0); logger.info(f"Saved default PPTX buffer for {report_type_str}"); return buffer
         except Exception as e: logger.error(f"Failed to save default PPTX: {e}", exc_info=True); raise
 
-    # --- PPTX Router (Unchanged implementation from previous version) ---
+    # --- PPTX Router ---
     @staticmethod
     def _generate_pptx_report(processed_data: ProcessedData, global_params: ParamsDict) -> BytesIO:
-        # (Unchanged implementation from previous version - uses default fallback)
+        # (Keep existing implementation - uses default fallback)
         primary_report_type = None; primary_result = None
         for rt, res in processed_data.items():
             if not res.get('error'): primary_report_type = rt; primary_result = res; logger.info(f"PPTX focus entity: {primary_report_type}"); break
@@ -1231,59 +1560,127 @@ class ReportService:
     # --- Main Public Method (Unchanged implementation from previous version) ---
     @staticmethod
     def generate_report(report_params: dict, user: User) -> ReportResult:
-        """Generates a report based on parameters, handling permissions and multiple formats."""
+        """
+        Generates a report based on parameters, handling permissions and multiple formats.
+        Can load configuration from a saved ReportTemplate if 'template_id' is provided.
+
+        Args:
+            report_params (dict): Parameters defining the report. Can include 'template_id'.
+                                  Direct parameters override template configuration.
+            user (User): The user requesting the report.
+
+        Returns:
+            ReportResult: Tuple containing (BytesIO buffer | None, filename | None, mime_type | None, error_message | None)
+        """
+        final_report_params = {}
+        template_id = report_params.get('template_id')
+        request_params = report_params.copy() # Keep original request params separate
+
+        # 1. Load Template Configuration (if template_id provided)
+        if template_id:
+            logger.info(f"Report request includes template_id: {template_id}. Loading template...")
+            try:
+                template_id = int(template_id)
+                template = ReportTemplate.find_by_id(template_id)
+
+                if not template:
+                    logger.warning(f"Template ID {template_id} not found for report generation.")
+                    return None, None, None, f"Report template with ID {template_id} not found."
+
+                # Check permissions for the template
+                is_owner = template.user_id == user.id
+                is_admin = user.role and user.role.name == RoleType.ADMIN
+                if not is_owner and not template.is_public and not is_admin:
+                    logger.warning(f"User '{user.username}' permission denied for template ID {template_id}.")
+                    return None, None, None, f"Permission denied to use report template ID {template_id}."
+
+                # Load configuration from the template
+                template_config = template.configuration
+                if not isinstance(template_config, dict):
+                     logger.error(f"Template ID {template_id} has invalid configuration (not a dict).")
+                     return None, None, None, f"Report template {template_id} has invalid configuration."
+
+                logger.info(f"Successfully loaded configuration from template '{template.name}' (ID: {template_id}).")
+                final_report_params = template_config.copy() # Start with template config
+
+            except ValueError:
+                 logger.warning(f"Invalid template_id format: {template_id}")
+                 return None, None, None, "Invalid template_id format. Must be an integer."
+            except Exception as e:
+                 logger.exception(f"Error loading report template ID {template_id}: {e}")
+                 return None, None, None, f"An internal error occurred while loading the report template: {str(e)}"
+
+        # 2. Merge/Override with Request Parameters
+        # Parameters directly in the request override those from the template
+        # Remove 'template_id' from request_params before merging if it exists
+        request_params.pop('template_id', None)
+        final_report_params.update(request_params) # Direct request params take precedence
+
+        # --- Proceed with existing report generation logic using final_report_params ---
         try:
-            # 1. Initial setup (format, filename base)
-            output_format = report_params.get("output_format", "xlsx").lower()
-            base_filename = report_params.get("filename")
+            # 3. Initial setup (format, filename base from final params)
+            output_format = final_report_params.get("output_format", "xlsx").lower()
+            if output_format not in SUPPORTED_FORMATS:
+                 return None, None, None, f"Unsupported format: {output_format}. Supported formats: {', '.join(SUPPORTED_FORMATS)}"
 
-            # 2. Process data for requested entities
-            processed_data = ReportService._generate_report_data(report_params, user)
+            base_filename = final_report_params.get("filename") # Filename can come from template or request
 
-            # 3. Handle errors from data processing
+            # 4. Process data for requested entities using final_report_params
+            # The _generate_report_data method now receives the potentially merged params
+            processed_data = ReportService._generate_report_data(final_report_params, user)
+
+            # 5. Handle errors from data processing
             if '_error' in processed_data:
                 return None, None, None, processed_data['_error']['error']
             if not any(not res.get('error') for res in processed_data.values()):
                 all_errors = "; ".join([f"{rt}: {res['error']}" for rt, res in processed_data.items() if res.get('error')])
-                error_msg = f"No data generated. Errors: {all_errors}" if all_errors else "No data found."
+                error_msg = f"No data generated. Errors: {all_errors}" if all_errors else "No data found for the specified parameters."
                 return None, None, None, error_msg
 
-            # 4. Determine final filename
-            report_type_req = report_params.get("report_type")
+            # 6. Determine final filename (if not provided in params)
+            report_type_req = final_report_params.get("report_type") # Get report type from final params
             if not base_filename:
                 ts = datetime.now().strftime('%Y%m%d_%H%M'); name_part = "custom_report"
                 if report_type_req == "all": name_part = "full_report"
                 elif isinstance(report_type_req, list): name_part = "multi_report"
                 elif isinstance(report_type_req, str): name_part = f"report_{report_type_req}"
-                base_filename = f"{name_part}_{ts}"
+                # If loaded from template, maybe use template name?
+                if template_id and 'template' in locals() and template:
+                    safe_template_name = "".join(c if c.isalnum() else "_" for c in template.name)
+                    base_filename = f"template_{safe_template_name}_{ts}"
+                else:
+                     base_filename = f"{name_part}_{ts}"
 
-            # 5. Prepare for format generation
+            # 7. Prepare for format generation
             final_buffer: Optional[BytesIO] = None
             final_filename: str = f"{base_filename}.{output_format}"
             mime_type: Optional[str] = None
             generator_map: Dict[str, Callable] = { "xlsx": ReportService._generate_xlsx_report, "csv": ReportService._generate_csv_report, "pdf": ReportService._generate_pdf_report, "docx": ReportService._generate_docx_report, "pptx": ReportService._generate_pptx_report, }
-            mime_map = { "xlsx": 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', "csv": 'application/zip' if isinstance(report_params.get("report_type"), list) and len(report_params.get("report_type",[])) > 1 else 'text/csv', "pdf": 'application/pdf', "docx": 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', "pptx": 'application/vnd.openxmlformats-officedocument.presentationml.presentation', }
+            mime_map = { "xlsx": 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', "csv": 'application/zip' if isinstance(final_report_params.get("report_type"), list) and len(final_report_params.get("report_type",[])) > 1 else 'text/csv', "pdf": 'application/pdf', "docx": 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', "pptx": 'application/vnd.openxmlformats-officedocument.presentationml.presentation', }
 
-            # 6. Generate the report file
+            # 8. Generate the report file using the appropriate generator
             if output_format in generator_map:
                 try:
                     generator_func = generator_map[output_format]
-                    final_buffer = generator_func(processed_data, report_params) # Call the specific generator
+                    # Pass final_report_params to the generator function if it needs them
+                    # Currently, generators mainly use processed_data, but pass global params just in case
+                    final_buffer = generator_func(processed_data, final_report_params)
                     mime_type = mime_map[output_format]
                     # Adjust filename for multi-CSV zip
-                    if output_format == 'csv' and isinstance(report_params.get("report_type"), list) and len(report_params.get("report_type",[])) > 1:
+                    if output_format == 'csv' and isinstance(final_report_params.get("report_type"), list) and len(final_report_params.get("report_type",[])) > 1:
                          final_filename = f"{base_filename}.zip"
+                         mime_type = 'application/zip' # Ensure mime type is zip for multi-csv
                 except Exception as format_err:
                     # Handle errors during format generation
                     logger.error(f"Error generating {output_format}: {format_err}", exc_info=True)
                     return None, None, None, f"Error during {output_format} generation: {format_err}"
             else:
-                # Handle unsupported format request
+                # This case should be caught earlier by the format check
                  return None, None, None, f"Unsupported format: {output_format}"
 
-            # 7. Return result or handle buffer failure
+            # 9. Return result or handle buffer failure
             if final_buffer and isinstance(final_buffer, BytesIO):
-                logger.info(f"{output_format.upper()} report '{final_filename}' generated.")
+                logger.info(f"{output_format.upper()} report '{final_filename}' generated successfully for user '{user.username}'. Template ID used: {template_id if template_id else 'None'}.")
                 return final_buffer, final_filename, mime_type, None
             else:
                 # This case means the generator function ran without error but didn't return a valid BytesIO buffer
@@ -1293,13 +1690,14 @@ class ReportService:
 
         # Handle any unexpected errors during the whole process
         except Exception as e:
-            logger.exception(f"Unexpected error in report generation: {e}")
-            return None, None, None, f"An unexpected error occurred: {e}"
+            logger.exception(f"Unexpected error in report generation for user '{user.username}', params: {final_report_params}: {e}")
+            return None, None, None, f"An unexpected error occurred during report generation."
 
     # --- Schema Retrieval (Unchanged implementation from previous version) ---
     @staticmethod
     def get_database_schema() -> SchemaResult:
         """Retrieves database schema and table row counts."""
+        # (Keep existing implementation)
         try:
             inspector = sqla_inspect(db.engine); schema_data = {}; table_names = inspector.get_table_names()
             for table_name in table_names:
@@ -1324,3 +1722,87 @@ class ReportService:
             response_data = {"database_info": {"name": db_name, "version": db_version, "total_tables": len(table_names), "application_models": len(model_mapping)}, "model_mapping": model_mapping, "tables": schema_data }
             return response_data, None
         except Exception as e: logger.exception(f"Failed to retrieve DB schema: {e}"); return None, f"Error retrieving schema: {e}"
+    
+    @staticmethod
+    def _resolve_attribute_and_joins(base_model: Type, field_path: str, query: Query, current_aliases: Dict[str, Any]) -> Tuple[Query, Optional[Any], Dict[str, Any]]:
+        """
+        Helper to resolve a potentially nested attribute path (like 'form_submission.submitted_at')
+        and ensure necessary joins are added to the query using aliases. It modifies the query
+        object directly if joins are needed.
+
+        Args:
+            base_model: The starting SQLAlchemy model class (e.g., AnswerSubmitted).
+            field_path: The dot-separated attribute path string (e.g., "form_submission.submitted_at").
+            query: The current SQLAlchemy Query object to potentially modify.
+            current_aliases: A dictionary tracking aliases already used for join paths.
+                             Key: join path string (e.g., "form_submission"), Value: alias object.
+
+        Returns:
+            Tuple containing:
+                - The potentially modified Query object (with joins added).
+                - The resolved SQLAlchemy attribute object (e.g., AliasedClass.attribute) or None.
+                - The updated dictionary of current_aliases.
+        """
+        parts = field_path.split('.')
+        current_model_or_alias = base_model # Start with the base model type
+        current_path_key = "" # Tracks the path for aliasing keys
+
+        logger.debug(f"Resolving path: '{field_path}' starting from {base_model.__name__}")
+
+        for i, part in enumerate(parts):
+            is_last_part = (i == len(parts) - 1)
+
+            # Inspect the current model or alias we are traversing from
+            # If current_model_or_alias is an AliasedClass, inspect its mapper
+            if isinstance(current_model_or_alias, type): # It's a model class
+                 current_mapper = sqla_inspect(current_model_or_alias)
+                 current_class_for_attr = current_model_or_alias
+            else: # It's an AliasedClass instance
+                 current_mapper = sqla_inspect(current_model_or_alias.entity)
+                 current_class_for_attr = current_model_or_alias # Use alias directly for getattr
+
+            if is_last_part:
+                # Last part should be a column/attribute on the current model/alias
+                if hasattr(current_class_for_attr, part):
+                    resolved_attribute = getattr(current_class_for_attr, part)
+                    logger.debug(f"Resolved attribute '{field_path}' to {resolved_attribute}")
+                    # Return the query (possibly modified with joins) and the final attribute
+                    return query, resolved_attribute, current_aliases
+                else:
+                    logger.warning(f"Attribute '{part}' not found on {current_mapper.class_.__name__} (aliased: {not isinstance(current_model_or_alias, type)}) for path '{field_path}'")
+                    return query, None, current_aliases
+            else:
+                # Intermediate part must be a relationship defined on the current mapper
+                if part in current_mapper.relationships:
+                    relationship = current_mapper.relationships[part]
+                    related_model = relationship.mapper.class_
+                    relationship_key = relationship.key # The attribute name for the relationship (e.g., 'form_submission')
+
+                    # Build the key for the alias dictionary (e.g., "form_submission" or "form_submission.form")
+                    new_path_key = f"{current_path_key}.{relationship_key}" if current_path_key else relationship_key
+
+                    if new_path_key not in current_aliases:
+                        # Need to add a join with a new alias
+                        logger.debug(f"Adding join for path '{new_path_key}' from {current_class_for_attr} using relationship '{relationship_key}'")
+                        related_alias = aliased(related_model)
+                        current_aliases[new_path_key] = related_alias # Store the new alias
+
+                        # Join from the previous model/alias to the new alias using the relationship attribute
+                        # Ensure we use the correct source for the relationship attribute
+                        join_source = current_model_or_alias if not isinstance(current_model_or_alias, type) else base_model
+                        query = query.join(related_alias, getattr(join_source, relationship_key))
+                        current_model_or_alias = related_alias # Continue traversal from the new alias
+                    else:
+                        # Join already exists, just continue traversal from the existing alias
+                        logger.debug(f"Reusing join alias for path '{new_path_key}'")
+                        current_model_or_alias = current_aliases[new_path_key] # Continue from the existing alias
+
+                    current_path_key = new_path_key # Update the path key for the next level
+
+                else:
+                    logger.warning(f"Relationship '{part}' not found on {current_mapper.class_.__name__} (aliased: {not isinstance(current_model_or_alias, type)}) for path '{field_path}'")
+                    return query, None, current_aliases
+
+        # Should not be reached if path is valid
+        logger.error(f"Path resolution failed unexpectedly for '{field_path}'")
+        return query, None, current_aliases

@@ -22,6 +22,7 @@ class User(TimestampMixin, SoftDeleteMixin, db.Model):
     role = db.relationship('Role', back_populates='users')
     environment = db.relationship('Environment', back_populates='users')
     created_forms = db.relationship('Form', back_populates='creator')
+    report_templates = db.relationship('ReportTemplate', back_populates='user', lazy='dynamic')
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)

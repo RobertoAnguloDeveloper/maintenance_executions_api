@@ -23,6 +23,7 @@ from .count_views import count_bp
 from .entity_basic_views import entity_basic_bp
 # Import the new report blueprint
 from .report_views import report_bp
+from .report_template_views import report_template_bp
 
 from flask import jsonify
 
@@ -55,7 +56,8 @@ def register_blueprints(app):
         (count_bp, '/api/counts'),
         (entity_basic_bp, '/api/entity_basic'),
         # Add the new report blueprint registration
-        (report_bp, '/api/reports')
+        (report_bp, '/api/reports'),
+        (report_template_bp, '/api/report-templates')
     ]
 
     # Iterate through the blueprints list and register each one

@@ -30,6 +30,7 @@ jwt = JWTManager()
 
 # Import the model here or inside create_app within context if preferred
 from app.models.token_blocklist import TokenBlocklist
+from app.models.report_template import ReportTemplate
 
 @jwt.token_in_blocklist_loader
 def check_if_token_revoked(jwt_header, jwt_payload: dict) -> bool:
@@ -82,7 +83,7 @@ def check_db_initialized(db_instance):
     try:
         # First check if tables exist using SQLAlchemy inspector
         inspector = inspect(db_instance.engine)
-        required_tables = ['roles', 'users', 'permissions', 'environments', 'token_blocklist']
+        required_tables = ['roles', 'users', 'permissions', 'environments', 'token_blocklist','report_templates']
         existing_tables = inspector.get_table_names()
 
         if not all(table in existing_tables for table in required_tables):
@@ -194,7 +195,7 @@ def create_app(config_class=None):
             from app.models import ( # noqa F401
                 User, Role, Permission, RolePermission, Environment,
                 QuestionType, Question, Answer, Form, FormQuestion,
-                FormAnswer, FormSubmission, AnswerSubmitted, Attachment, TokenBlocklist 
+                FormAnswer, FormSubmission, AnswerSubmitted, Attachment, TokenBlocklist, ReportTemplate 
             )
 
             # --- Register Blueprints (within context) ---

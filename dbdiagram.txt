@@ -25,6 +25,8 @@ Table roles {
 Table permissions {
   id integer [primary key]
   name varchar(50) [not null, unique]
+  action varchar(10) [not null]
+  entity varchar(50) [not null]
   description text
   created_at timestamp [not null]
   updated_at timestamp [not null]
@@ -75,6 +77,7 @@ Table questions {
   id integer [primary key]
   text varchar(255) [not null]
   question_type_id integer [not null]
+  is_signature boolean [not null]
   remarks text
   created_at timestamp [not null]
   updated_at timestamp [not null]
@@ -144,9 +147,13 @@ Table form_answers {
 //Tabla: form_responses
 Table answers_submitted {
   id integer [primary key]
-  form_answers_id integer [not null]
-  text_answer text [null]
-  form_submissions_id integer [not null]
+  question text [null]
+  question_type varchar(255) [not null]
+  answer text [null]
+  form_submission_id integer [not null]
+  column integer [null]
+  row integer [null]
+  cell_content text [null]
   created_at timestamp [not null]
   updated_at timestamp [not null]
   is_deleted boolean [not null]
@@ -160,6 +167,8 @@ Table attachments {
   file_type varchar(50) [not null]
   file_path varchar(255) [not null]
   is_signature boolean [not null]
+  signature_position varchar[255] [null]
+  signature_author varchar(255) [null]
   created_at timestamp [not null]
   updated_at timestamp [not null]
   is_deleted boolean [not null]
@@ -181,8 +190,7 @@ Ref: forms.user_id > users.id
 
 // Respuestas y submissions
 Ref: form_answers.form_question_id > form_questions.id
-Ref: answers_submitted.form_answers_id > form_answers.id
-Ref: answers_submitted.form_submissions_id > form_submissions.id
+Ref: answers_submitted.form_submission_id > form_submissions.id
 Ref: form_answers.answer_id > answers.id
 Ref: attachments.form_submission_id > form_submissions.id
 Ref: form_submissions.form_id > forms.id

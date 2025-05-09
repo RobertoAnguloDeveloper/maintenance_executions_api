@@ -1,514 +1,1860 @@
-# API Report Generation Request Bodies for POST /api/reports/generate
+# Report Generation API Documentation
 
-This file contains various JSON request body examples for testing the `/api/reports/generate` endpoint based on the provided API documentation and database schema.
+## Overview
 
-## How to Create a Report using Postman
+The Report Generation API allows users to generate custom reports in various formats (XLSX, CSV, PDF, DOCX, PPTX) for different entities in the system. This documentation provides all possible request bodies organized by individual entities and entity combinations.
 
-To generate a report using this API endpoint via Postman, you need to configure the following parts of your request:
+## Base Endpoint
 
-1.  **Method:** `POST`
-    * Select `POST` from the dropdown list next to the URL field in Postman.
+```
+POST /reports/generate
+```
 
-2.  **URL:** `YOUR_API_BASE_URL/api/reports/generate`
-    * Replace `YOUR_API_BASE_URL` with the actual base URL where the API is hosted (e.g., `http://localhost:5000`, `https://api.example.com`).
+## Authentication
 
-3.  **Headers:** You need to set two essential headers:
-    * `Authorization`:
-        * **Key:** `Authorization`
-        * **Value:** `Bearer <YOUR_JWT_TOKEN>`
-        * **Purpose:** This authenticates your request. Replace `<YOUR_JWT_TOKEN>` with the valid JSON Web Token you obtained after logging in (e.g., via the `/api/users/login` endpoint).
-    * `Content-Type`:
-        * **Key:** `Content-Type`
-        * **Value:** `application/json`
-        * **Purpose:** This tells the server that the data you are sending in the request body is in JSON format.
+All endpoints require JWT authentication. Include a valid JWT token in the Authorization header:
 
-4.  **Body:** This is where you define the specifics of the report you want.
-    * Select the `Body` tab in Postman.
-    * Choose the `raw` option.
-    * Select `JSON` from the dropdown list (usually appears to the right of the `raw` option).
-    * Enter the JSON payload defining your report.
+```
+Authorization: Bearer <your_token>
+```
 
-    **Detailed Body Parameters:**
+## Common Request Parameters
 
-    * `report_type` (string | array of strings) - **Required**
-        * **Purpose:** Specifies the data entity (or entities) to report on.
-        * **Type:** String for a single entity, or an array of strings for a multi-entity report.
-        * **Valid Values (based on docs/schema):** `"users"`, `"forms"`, `"form_submissions"`, `"environments"`, `"roles"`, `"permissions"`, `"role_permissions"`, `"questions"`, `"answers"`, `"form_questions"`, `"form_answers"`, `"answers_submitted"`, `"attachments"`, `"all"` (for all entities), or an array like `["users", "forms"]`.
-        * **Example (Single):** `"report_type": "users"`
-        * **Example (Multi):** `"report_type": ["users", "forms", "form_submissions"]`
-        * **Example (All):** `"report_type": "all"`
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| report_type | string or array | Yes | Entity or entities to include in the report |
+| output_format | string | No | Output format: "xlsx", "csv", "pdf", "docx", "pptx" (default: "xlsx") |
+| columns | array | No | Specific columns to include (defaults to predefined columns) |
+| filters | array | No | Filters to apply to the data |
+| sort_by | array | No | Sorting options for the data |
+| filename | string | No | Custom filename (without extension) |
+| report_title | string | No | Custom report title |
+| template_id | integer | No | ID of a saved report template to use |
+| include_data_table_in_ppt | boolean | No | Include data table in PPTX (default: false) |
+| charts | array | No | Custom chart configurations |
 
-    * `output_format` (string) - *Optional*
-        * **Purpose:** Specifies the desired file format for the report.
-        * **Type:** String.
-        * **Valid Values (from docs):** `"xlsx"`, `"csv"`, `"pdf"`, `"docx"`, `"pptx"`.
-        * **Default:** `"xlsx"` (if omitted).
-        * **Example:** `"output_format": "pdf"`
+## 1. USERS
 
-    * `columns` (array of strings) - *Optional*
-        * **Purpose:** Selects specific columns (fields) to include in the report. If omitted, a default set of columns for the `report_type` is used.
-        * **Type:** Array of strings.
-        * **Valid Values:** Field names from the primary entity table or related tables using dot notation (e.g., `role.name`, `form.title`, `creator.username`, `answers.Your Question Text`). The exact available fields depend on the `report_type` and the backend implementation (refer to schema or `/api/reports/schema` endpoint if admin).
-        * **Example (Users):** `"columns": ["id", "username", "email", "role.name"]`
-        * **Example (Submissions):** `"columns": ["id", "form.title", "submitted_by", "submitted_at", "answers.Safety Check Completed"]`
+### Available Columns
+id, username, first_name, last_name, email, contact_number, role_id, environment_id, role.name, role.description, role.is_super_user, environment.name, environment.description, created_at, updated_at, is_deleted, deleted_at
 
-    * `filters` (array of objects) - *Optional*
-        * **Purpose:** Filters the data included in the report based on specified criteria.
-        * **Type:** Array, where each element is a filter object.
-        * **Filter Object Structure:**
-            * `field` (string): The field to filter on (can use dot notation for related fields, e.g., `role.id`, `form.title`, `answers_submitted.answer`).
-            * `operator` (string): The comparison operator to use. Common values include:
-                * `eq`: Equals (=)
-                * `neq`: Not Equals (!=)
-                * `gt`: Greater Than (>)
-                * `gte`: Greater Than or Equal To (>=)
-                * `lt`: Less Than (<)
-                * `lte`: Less Than or Equal To (<=)
-                * `like`: Pattern matching (case-insensitive, use `%` as wildcard).
-                * `ilike`: Case-insensitive pattern matching (often same as `like` in PostgreSQL).
-                * `in`: Value is within a list.
-                * `notin`: Value is not within a list.
-                * `between`: Value is between two specified values (inclusive).
-                * `is`: Checks for `NULL` or `NOT NULL`.
-            * `value`: The value to compare against. The type depends on the field and operator:
-                * String for `eq`, `neq`, `like`, `ilike`.
-                * Number (integer/float) for `eq`, `neq`, `gt`, `gte`, `lt`, `lte`.
-                * Boolean (`true`/`false`) for `eq`, `neq`.
-                * Array for `in`, `notin`, `between` (e.g., `["value1", "value2"]` for `in`, `[startDate, endDate]` for `between`).
-                * `null` or `"null"` for `is` (e.g., `{"field": "contact_number", "operator": "is", "value": null}`).
-        * **Example (Filter by Role ID):** `"filters": [{"field": "role_id", "operator": "eq", "value": 4}]`
-        * **Example (Filter by Date Range):** `"filters": [{"field": "submitted_at", "operator": "between", "value": ["2025-04-01T00:00:00Z", "2025-04-30T23:59:59Z"]}]`
-        * **Example (Filter by Name Like):** `"filters": [{"field": "name", "operator": "like", "value": "%Production%"}]`
-        * **Example (Filter by Multiple Values):** `"filters": [{"field": "form.id", "operator": "in", "value": [1, 5, 10]}]`
+### Default Columns
+id, username, first_name, last_name, email, contact_number, role.name, environment.name, created_at
 
-    * `sort_by` (array of objects) - *Optional*
-        * **Purpose:** Defines the sorting order for the report data.
-        * **Type:** Array, where each element is a sort object.
-        * **Sort Object Structure:**
-            * `field` (string): The field to sort by (can use dot notation, e.g., `role.name`, `submitted_at`).
-            * `direction` (string): The sort direction. Valid values: `"asc"` (ascending) or `"desc"` (descending).
-        * **Example (Sort by Date Desc):** `"sort_by": [{"field": "submitted_at", "direction": "desc"}]`
-        * **Example (Multi-Sort):** `"sort_by": [{"field": "role.name", "direction": "asc"}, {"field": "username", "direction": "asc"}]`
+### Request Bodies
 
-    * `filename` (string) - *Optional*
-        * **Purpose:** Suggests a base filename for the generated report file. The server might add extensions or timestamps.
-        * **Type:** String.
-        * **Example:** `"filename": "active_users_report"`
+#### Basic Excel Report
+```json
+{
+ "report_type": "users",
+ "output_format": "xlsx"
+}
+```
 
-    * `report_title` (string) - *Optional*
-        * **Purpose:** Sets a custom title within the report content (primarily for PDF and PPTX formats).
-        * **Type:** String.
-        * **Example:** `"report_title": "Q1 User Activity Summary"`
+#### CSV Report
+```json
+{
+ "report_type": "users",
+ "output_format": "csv"
+}
+```
 
-    * `include_data_table_in_ppt` (boolean) - *Optional (PPTX only)*
-        * **Purpose:** Whether to include a data table slide in the PowerPoint output.
-        * **Type:** Boolean (`true` or `false`).
-        * **Default:** Not specified, likely `false`.
-        * **Example:** `"include_data_table_in_ppt": true`
+#### PDF Report
+```json
+{
+ "report_type": "users",
+ "output_format": "pdf"
+}
+```
 
-    * `max_ppt_table_rows` (integer) - *Optional (PPTX only)*
-        * **Purpose:** Limits the number of rows shown in the data table if `include_data_table_in_ppt` is true.
-        * **Type:** Integer.
-        * **Default:** Not specified.
-        * **Example:** `"max_ppt_table_rows": 20`
+#### DOCX Report
+```json
+{
+ "report_type": "users",
+ "output_format": "docx"
+}
+```
 
-    * `[entity]_sheet_name` (string) - *Optional (Multi-entity XLSX only)*
-        * **Purpose:** Customizes the sheet name for a specific entity in a multi-entity XLSX report. Replace `[entity]` with the plural entity name (e.g., `users`, `forms`).
-        * **Type:** String.
-        * **Example:** `"users_sheet_name": "System Users List"`
+#### PPTX Report
+```json
+{
+ "report_type": "users",
+ "output_format": "pptx",
+ "include_data_table_in_ppt": true
+}
+```
 
-    * `table_options` (object) - *Optional (XLSX only)*
-        * **Purpose:** Applies specific styling options to tables within the XLSX report.
-        * **Type:** Object.
-        * **Object Structure (Example):**
-            * `style` (string): Name of a predefined Excel table style (e.g., "Table Style Medium 2", "Table Style Light 9").
-            * `banded_rows` (boolean): Whether to apply banded row styling.
-        * **Example:** `"table_options": {"style": "Table Style Medium 9", "banded_rows": true}`
+#### Filtered Report
+```json
+{
+ "report_type": "users",
+ "filters": [
+   {"field": "environment.name", "operator": "eq", "value": "Production"},
+   {"field": "role.name", "operator": "neq", "value": "admin"}
+ ],
+ "sort_by": [
+   {"field": "username", "direction": "asc"}
+ ]
+}
+```
 
----
+#### Custom Columns Report
+```json
+{
+ "report_type": "users",
+ "columns": [
+   "id", "username", "email", "role.name", "environment.name"
+ ]
+}
+```
 
-## Report Examples
+#### Users with Charts
+```json
+{
+ "report_type": "users",
+ "output_format": "pdf",
+ "report_title": "User Distribution Analysis",
+ "charts": [
+   {
+     "type": "bar",
+     "column": "role.name",
+     "title": "Users by Role"
+   },
+   {
+     "type": "pie",
+     "column": "environment.name",
+     "title": "Users by Environment"
+   },
+   {
+     "type": "line",
+     "column": "created_at",
+     "title": "User Creation Timeline"
+   }
+ ]
+}
+```
 
-*(The rest of the examples from the previous version follow here...)*
+#### Users with Custom Filename
+```json
+{
+ "report_type": "users",
+ "filename": "active_users_export",
+ "report_title": "Active Users Report"
+}
+```
 
-## 1. Basic Reports (Default XLSX Format)
+## 2. ROLES
 
-* **Users Report:**
-    ```json
-    {
-      "report_type": "users"
-    }
-    ```
-* **Forms Report:**
-    ```json
-    {
-      "report_type": "forms"
-    }
-    ```
-* **Form Submissions Report:**
-    ```json
-    {
-      "report_type": "form_submissions"
-    }
-    ```
-* **Environments Report:**
-    ```json
-    {
-      "report_type": "environments"
-    }
-    ```
-* **Roles Report:**
-    ```json
-    {
-      "report_type": "roles"
-    }
-    ```
+### Available Columns
+id, name, description, is_super_user, created_at, updated_at, is_deleted, deleted_at
 
-## 2. Reports with Column Selection
+### Default Columns
+id, name, description, is_super_user, created_at
 
-* **Specific User Columns:**
-    ```json
-    {
-      "report_type": "users",
-      "columns": [
-        "id",
-        "username",
-        "email",
-        "first_name",
-        "last_name",
-        "role.name",
-        "environment.name",
-        "created_at"
-      ]
-    }
-    ```
-* **Specific Form Submission Columns**:
-    ```json
-    {
-      "report_type": "form_submissions",
-      "columns": [
-        "id",
-        "form.title",
-        "submitted_by",
-        "submitted_at",
-        "form.creator.username",
-        "created_at"
-      ]
-    }
-    ```
+### Request Bodies
 
-## 3. Reports with Filtering
+#### Basic Excel Report
+```json
+{
+ "report_type": "roles",
+ "output_format": "xlsx"
+}
+```
 
-* **Filter Users by Role ID:**
-    ```json
-    {
-      "report_type": "users",
-      "filters": [
-        {
-          "field": "role_id",
-          "operator": "eq",
-          "value": 4 // Example: Technician role ID from backup
-        }
-      ]
-    }
-    ```
-* **Filter Environments by Name Like 'Production' (if applicable) and Date**:
-    ```json
-    {
-      "report_type": "environments",
-      "filters": [
-        {
-          "field": "name",
-          "operator": "like",
-          "value": "Production"
-        },
-        {
-          "field": "created_at",
-          "operator": "gte",
-          "value": "2025-01-01T00:00:00Z"
-        }
-      ]
-    }
-    ```
-* **Filter Form Submissions by Date Range:**
-    ```json
-    {
-      "report_type": "form_submissions",
-      "filters": [
-        {
-          "field": "submitted_at",
-          "operator": "between",
-          "value": ["2025-04-01T00:00:00Z", "2025-04-30T23:59:59Z"] // Example date range
-        }
-      ]
-    }
-    ```
-* **Filter Form Submissions by Specific Form ID and Answer Value**:
-    ```json
-    {
-      "report_type": "form_submissions",
-      "filters": [
-        {
-          "field": "form.id",
-          "operator": "eq",
-          "value": 1 // Example form ID from backup
-        },
-        {
-          "field": "answers_submitted.question",
-          "operator": "eq",
-          "value": "Select your department" // Example question text from backup
-        },
-        {
-          "field": "answers_submitted.answer",
-          "operator": "eq",
-          "value": "Maintenance Department" // Example answer text from backup
-        }
-      ]
-    }
-    ```
+#### CSV Report
+```json
+{
+ "report_type": "roles",
+ "output_format": "csv"
+}
+```
 
-## 4. Reports with Sorting
+#### PDF Report
+```json
+{
+ "report_type": "roles",
+ "output_format": "pdf"
+}
+```
 
-* **Sort Users by Username Descending:**
-    ```json
-    {
-      "report_type": "users",
-      "sort_by": [
-        {
-          "field": "username",
-          "direction": "desc"
-        }
-      ]
-    }
-    ```
-* **Sort Role Permissions by Role Name and Permission Entity**:
-    ```json
-    {
-      "report_type": "role_permissions",
-      "sort_by": [
-        {
-          "field": "role.name",
-          "direction": "asc"
-        },
-        {
-          "field": "permission.entity",
-          "direction": "asc"
-        }
-      ]
-    }
-    ```
+#### DOCX Report
+```json
+{
+ "report_type": "roles",
+ "output_format": "docx"
+}
+```
 
-## 5. Reports with Different Output Formats
+#### PPTX Report
+```json
+{
+ "report_type": "roles",
+ "output_format": "pptx",
+ "include_data_table_in_ppt": true
+}
+```
 
-* **Forms Report as CSV**:
-    ```json
-    {
-      "report_type": "forms",
-      "output_format": "csv",
-      "columns": [
-        "id",
-        "title",
-        "description",
-        "creator.username",
-        "is_public",
-        "created_at"
-      ]
-    }
-    ```
-* **Form Submissions Report as PDF with Title**:
-    ```json
-    {
-      "report_type": "form_submissions",
-      "output_format": "pdf",
-      "report_title": "Form Submissions Summary Report",
-      "filters": [
-        {
-          "field": "submitted_at",
-          "operator": "between",
-          "value": ["2025-04-01T00:00:00Z", "2025-04-30T23:59:59Z"]
-        }
-      ]
-    }
-    ```
-* **Active Users Report as DOCX with Custom Filename**:
-    ```json
-    {
-      "report_type": "users",
-      "output_format": "docx",
-      "filename": "active_users_report",
-      "filters": [
-        {
-          "field": "is_deleted",
-          "operator": "eq",
-          "value": false
-        }
-      ]
-    }
-    ```
-* **Form Submissions Report as PPTX**:
-    ```json
-    {
-      "report_type": "form_submissions",
-      "output_format": "pptx",
-      "report_title": "Monthly Submission Trends",
-      "include_data_table_in_ppt": true,
-      "max_ppt_table_rows": 15
-    }
-    ```
+#### Filtered Report
+```json
+{
+ "report_type": "roles",
+ "filters": [
+   {"field": "is_super_user", "operator": "eq", "value": false}
+ ],
+ "sort_by": [
+   {"field": "name", "direction": "asc"}
+ ]
+}
+```
 
-## 6. Multi-Entity Reports
+#### Roles with Charts
+```json
+{
+ "report_type": "roles",
+ "output_format": "pdf",
+ "report_title": "Roles Analysis",
+ "charts": [
+   {
+     "type": "pie",
+     "column": "is_super_user",
+     "title": "Roles by Superuser Status"
+   },
+   {
+     "type": "bar",
+     "column": "name",
+     "title": "Role Distribution"
+   }
+ ]
+}
+```
 
-* **Report on All Entities (XLSX)**:
-    ```json
-    {
-      "report_type": "all",
-      "output_format": "xlsx",
-      "filename": "full_system_data_report"
-    }
-    ```
-* **Report on Specific Entities (CSV in ZIP)**:
-    ```json
-    {
-      "report_type": ["users", "forms", "form_submissions"],
-      "output_format": "csv",
-      "filename": "user_form_activity"
-    }
-    ```
-* **Report on Specific Entities (XLSX with Custom Sheet Names & Styling)**:
-    ```json
-    {
-      "report_type": ["users", "environments"],
-      "output_format": "xlsx",
-      "users_sheet_name": "System Users",
-      "environments_sheet_name": "Available Environments",
-      "filename": "system_configuration",
-      "table_options": {
-        "style": "Table Style Medium 2",
-        "banded_rows": true
-      }
-    }
-    ```
+## 3. PERMISSIONS
 
-## 7. Complex Combined Request
+### Available Columns
+id, name, action, entity, description, created_at, updated_at, is_deleted, deleted_at
 
-* **Filtered, Sorted, Specific Columns, Custom Filename:**
-    ```json
-    {
-      "report_type": "form_submissions",
-      "columns": [
-        "id",
-        "form.title",
-        "submitted_by",
-        "submitted_at",
-        "answers.What is your full name?", // Using specific answer text; needs careful mapping
-        "answers.Select your department"
-      ],
-      "filters": [
-        {
-          "field": "form.id",
-          "operator": "eq",
-          "value": 1 // Example form ID from backup
-        },
-        {
-          "field": "submitted_at",
-          "operator": "between",
-          "value": ["2025-01-01T00:00:00Z", "2025-03-31T23:59:59Z"]
-        }
-      ],
-      "sort_by": [
-        {
-          "field": "submitted_at",
-          "direction": "desc"
-        }
-      ],
-      "output_format": "xlsx",
-      "filename": "q1_form1_submissions"
-    }
-    ```
+### Default Columns
+id, name, action, entity, description
 
-## 8. Additional Examples
+### Request Bodies
 
-* **Questions Report (Filtered, CSV)**: Report on questions that are marked as required.
-    ```json
-    {
-      "report_type": "questions",
-      "output_format": "csv",
-      "filters": [
-        {
-          "field": "is_required",
-          "operator": "eq",
-          "value": true
-        }
-      ],
-      "columns": [
-        "id",
-        "text",
-        "type.name",
-        "remarks",
-        "is_required"
-      ]
-    }
-    ```
-* **Answers Submitted Report (Filtered, Sorted, PDF)**: Report on answers submitted for a specific form submission, sorted by question text.
-    ```json
-    {
-      "report_type": "answers_submitted",
-      "output_format": "pdf",
-      "report_title": "Submission Details - ID 5",
-      "filters": [
-        {
-          "field": "form_submission_id",
-          "operator": "eq",
-          "value": 5 // Example submission ID
-        }
-      ],
-      "sort_by": [
-        {
-          "field": "question_text",
-          "direction": "asc"
-        }
-      ],
-      "columns": [
-        "id",
-        "question_text",
-        "question_type_text",
-        "answer_text",
-        "column",
-        "row",
-        "cell_content"
-      ]
-    }
-    ```
-* **Attachments Report (Filtered, XLSX)**: Report on attachments that are signatures.
-    ```json
-    {
-      "report_type": "attachments",
-      "output_format": "xlsx",
-      "filters": [
-        {
-          "field": "is_signature",
-          "operator": "eq",
-          "value": true
-        }
-      ],
-      "columns": [
-        "id",
-        "form_submission_id",
-        "filename",
-        "file_type",
-        "signature_position",
-        "signature_author",
-        "created_at"
-      ]
-    }
-    ```
-* **Roles and Permissions Multi-Entity Report (XLSX)**: Report combining roles and permissions with custom sheet names.
-    ```json
-    {
-      "report_type": ["roles", "permissions"],
-      "output_format": "xlsx",
-      "roles_sheet_name": "System Roles",
-      "permissions_sheet_name": "Available Permissions",
-      "filename": "roles_and_permissions_overview"
-    }
-    ```
+#### Basic Excel Report
+```json
+{
+ "report_type": "permissions",
+ "output_format": "xlsx"
+}
+```
+
+#### CSV Report
+```json
+{
+ "report_type": "permissions",
+ "output_format": "csv"
+}
+```
+
+#### PDF Report
+```json
+{
+ "report_type": "permissions",
+ "output_format": "pdf"
+}
+```
+
+#### DOCX Report
+```json
+{
+ "report_type": "permissions",
+ "output_format": "docx"
+}
+```
+
+#### PPTX Report
+```json
+{
+ "report_type": "permissions",
+ "output_format": "pptx",
+ "include_data_table_in_ppt": true
+}
+```
+
+#### Filtered Report
+```json
+{
+ "report_type": "permissions",
+ "filters": [
+   {"field": "action", "operator": "eq", "value": "create"}
+ ],
+ "sort_by": [
+   {"field": "entity", "direction": "asc"}
+ ]
+}
+```
+
+#### Permissions with Charts
+```json
+{
+ "report_type": "permissions",
+ "output_format": "pdf",
+ "charts": [
+   {
+     "type": "pie",
+     "column": "action",
+     "title": "Permissions by Action Type"
+   },
+   {
+     "type": "bar",
+     "column": "entity",
+     "title": "Permissions by Entity"
+   }
+ ]
+}
+```
+
+## 4. ROLE_PERMISSIONS
+
+### Available Columns
+id, role_id, permission_id, role.name, role.description, role.is_super_user, permission.name, permission.action, permission.entity, permission.description, created_at, updated_at, is_deleted, deleted_at
+
+### Default Columns
+id, role_id, permission_id, role.name, permission.name, permission.action, permission.entity
+
+### Request Bodies
+
+#### Basic Excel Report
+```json
+{
+ "report_type": "role_permissions",
+ "output_format": "xlsx"
+}
+```
+
+#### CSV Report
+```json
+{
+ "report_type": "role_permissions",
+ "output_format": "csv"
+}
+```
+
+#### PDF Report
+```json
+{
+ "report_type": "role_permissions",
+ "output_format": "pdf"
+}
+```
+
+#### DOCX Report
+```json
+{
+ "report_type": "role_permissions",
+ "output_format": "docx"
+}
+```
+
+#### PPTX Report
+```json
+{
+ "report_type": "role_permissions",
+ "output_format": "pptx",
+ "include_data_table_in_ppt": true
+}
+```
+
+#### Filtered Report
+```json
+{
+ "report_type": "role_permissions",
+ "filters": [
+   {"field": "role.name", "operator": "eq", "value": "site_manager"}
+ ],
+ "sort_by": [
+   {"field": "permission.action", "direction": "asc"}
+ ]
+}
+```
+
+#### Role Permissions with Charts
+```json
+{
+ "report_type": "role_permissions",
+ "output_format": "pdf",
+ "charts": [
+   {
+     "type": "bar",
+     "column": "role.name",
+     "title": "Permissions Count by Role"
+   },
+   {
+     "type": "pie",
+     "column": "permission.action",
+     "title": "Permission Actions Distribution"
+   }
+ ]
+}
+```
+
+## 5. ENVIRONMENTS
+
+### Available Columns
+id, name, description, created_at, updated_at, is_deleted, deleted_at
+
+### Default Columns
+id, name, description, created_at
+
+### Request Bodies
+
+#### Basic Excel Report
+```json
+{
+ "report_type": "environments",
+ "output_format": "xlsx"
+}
+```
+
+#### CSV Report
+```json
+{
+ "report_type": "environments",
+ "output_format": "csv"
+}
+```
+
+#### PDF Report
+```json
+{
+ "report_type": "environments",
+ "output_format": "pdf"
+}
+```
+
+#### DOCX Report
+```json
+{
+ "report_type": "environments",
+ "output_format": "docx"
+}
+```
+
+#### PPTX Report
+```json
+{
+ "report_type": "environments",
+ "output_format": "pptx",
+ "include_data_table_in_ppt": true
+}
+```
+
+#### Sorted Report
+```json
+{
+ "report_type": "environments",
+ "sort_by": [
+   {"field": "created_at", "direction": "desc"}
+ ]
+}
+```
+
+#### Environments with Charts
+```json
+{
+ "report_type": "environments",
+ "output_format": "pdf",
+ "charts": [
+   {
+     "type": "bar",
+     "column": "name",
+     "title": "Environment Overview"
+   }
+ ]
+}
+```
+
+## 6. QUESTION_TYPES
+
+### Available Columns
+id, type, created_at, updated_at, is_deleted, deleted_at
+
+### Default Columns
+id, type, created_at
+
+### Request Bodies
+
+#### Basic Excel Report
+```json
+{
+ "report_type": "question_types",
+ "output_format": "xlsx"
+}
+```
+
+#### CSV Report
+```json
+{
+ "report_type": "question_types",
+ "output_format": "csv"
+}
+```
+
+#### PDF Report
+```json
+{
+ "report_type": "question_types",
+ "output_format": "pdf"
+}
+```
+
+#### DOCX Report
+```json
+{
+ "report_type": "question_types",
+ "output_format": "docx"
+}
+```
+
+#### PPTX Report
+```json
+{
+ "report_type": "question_types",
+ "output_format": "pptx",
+ "include_data_table_in_ppt": true
+}
+```
+
+#### Question Types with Charts
+```json
+{
+ "report_type": "question_types",
+ "output_format": "pdf",
+ "charts": [
+   {
+     "type": "pie",
+     "column": "type",
+     "title": "Question Type Distribution"
+   }
+ ]
+}
+```
+
+## 7. QUESTIONS
+
+### Available Columns
+id, text, question_type_id, is_signature, remarks, question_type.type, created_at, updated_at, is_deleted, deleted_at
+
+### Default Columns
+id, text, question_type.type, is_signature, remarks, created_at
+
+### Request Bodies
+
+#### Basic Excel Report
+```json
+{
+ "report_type": "questions",
+ "output_format": "xlsx"
+}
+```
+
+#### CSV Report
+```json
+{
+ "report_type": "questions",
+ "output_format": "csv"
+}
+```
+
+#### PDF Report
+```json
+{
+ "report_type": "questions",
+ "output_format": "pdf"
+}
+```
+
+#### DOCX Report
+```json
+{
+ "report_type": "questions",
+ "output_format": "docx"
+}
+```
+
+#### PPTX Report
+```json
+{
+ "report_type": "questions",
+ "output_format": "pptx",
+ "include_data_table_in_ppt": true
+}
+```
+
+#### Filtered Report
+```json
+{
+ "report_type": "questions",
+ "filters": [
+   {"field": "question_type.type", "operator": "eq", "value": "text"},
+   {"field": "is_signature", "operator": "eq", "value": false}
+ ],
+ "sort_by": [
+   {"field": "text", "direction": "asc"}
+ ]
+}
+```
+
+#### Questions with Charts
+```json
+{
+ "report_type": "questions",
+ "output_format": "pdf",
+ "charts": [
+   {
+     "type": "pie",
+     "column": "question_type.type",
+     "title": "Questions by Type"
+   },
+   {
+     "type": "bar",
+     "column": "is_signature",
+     "title": "Signature vs Non-Signature Questions"
+   }
+ ]
+}
+```
+
+## 8. ANSWERS
+
+### Available Columns
+id, value, remarks, created_at, updated_at, is_deleted, deleted_at
+
+### Default Columns
+id, value, remarks, created_at
+
+### Request Bodies
+
+#### Basic Excel Report
+```json
+{
+ "report_type": "answers",
+ "output_format": "xlsx"
+}
+```
+
+#### CSV Report
+```json
+{
+ "report_type": "answers",
+ "output_format": "csv"
+}
+```
+
+#### PDF Report
+```json
+{
+ "report_type": "answers",
+ "output_format": "pdf"
+}
+```
+
+#### DOCX Report
+```json
+{
+ "report_type": "answers",
+ "output_format": "docx"
+}
+```
+
+#### PPTX Report
+```json
+{
+ "report_type": "answers",
+ "output_format": "pptx",
+ "include_data_table_in_ppt": true
+}
+```
+
+#### Sorted Report
+```json
+{
+ "report_type": "answers",
+ "sort_by": [
+   {"field": "value", "direction": "asc"}
+ ]
+}
+```
+
+#### Answers with Charts
+```json
+{
+ "report_type": "answers",
+ "output_format": "pdf",
+ "charts": [
+   {
+     "type": "bar",
+     "column": "created_at",
+     "title": "Answers Creation Timeline"
+   }
+ ]
+}
+```
+
+## 9. FORMS
+
+### Available Columns
+id, title, description, user_id, is_public, creator.username, creator.email, creator.first_name, creator.last_name, creator.environment.name, creator.environment.description, created_at, updated_at, is_deleted, deleted_at
+
+### Default Columns
+id, title, description, creator.username, creator.environment.name, is_public, created_at
+
+### Request Bodies
+
+#### Basic Excel Report
+```json
+{
+ "report_type": "forms",
+ "output_format": "xlsx"
+}
+```
+
+#### CSV Report
+```json
+{
+ "report_type": "forms",
+ "output_format": "csv"
+}
+```
+
+#### PDF Report
+```json
+{
+ "report_type": "forms",
+ "output_format": "pdf"
+}
+```
+
+#### DOCX Report
+```json
+{
+ "report_type": "forms",
+ "output_format": "docx"
+}
+```
+
+#### PPTX Report
+```json
+{
+ "report_type": "forms",
+ "output_format": "pptx",
+ "include_data_table_in_ppt": true
+}
+```
+
+#### Filtered Report
+```json
+{
+ "report_type": "forms",
+ "filters": [
+   {"field": "is_public", "operator": "eq", "value": true}
+ ],
+ "sort_by": [
+   {"field": "created_at", "direction": "desc"}
+ ]
+}
+```
+
+#### Forms with Charts
+```json
+{
+ "report_type": "forms",
+ "output_format": "pdf",
+ "charts": [
+   {
+     "type": "pie",
+     "column": "is_public",
+     "title": "Public vs Private Forms"
+   },
+   {
+     "type": "bar",
+     "column": "creator.username",
+     "title": "Forms per Creator"
+   },
+   {
+     "type": "line",
+     "column": "created_at",
+     "title": "Form Creation Timeline"
+   }
+ ]
+}
+```
+
+## 10. FORM_QUESTIONS
+
+### Available Columns
+id, form_id, question_id, order_number, form.title, form.description, form.is_public, question.text, question.is_signature, question.question_type.type, created_at, updated_at, is_deleted, deleted_at
+
+### Default Columns
+id, form_id, question_id, order_number, form.title, question.text, question.question_type.type
+
+### Request Bodies
+
+#### Basic Excel Report
+```json
+{
+ "report_type": "form_questions",
+ "output_format": "xlsx"
+}
+```
+
+#### CSV Report
+```json
+{
+ "report_type": "form_questions",
+ "output_format": "csv"
+}
+```
+
+#### PDF Report
+```json
+{
+ "report_type": "form_questions",
+ "output_format": "pdf"
+}
+```
+
+#### DOCX Report
+```json
+{
+ "report_type": "form_questions",
+ "output_format": "docx"
+}
+```
+
+#### PPTX Report
+```json
+{
+ "report_type": "form_questions",
+ "output_format": "pptx",
+ "include_data_table_in_ppt": true
+}
+```
+
+#### Filtered Report
+```json
+{
+ "report_type": "form_questions",
+ "filters": [
+   {"field": "form.title", "operator": "like", "value": "Inspection"}
+ ],
+ "sort_by": [
+   {"field": "form_id", "direction": "asc"},
+   {"field": "order_number", "direction": "asc"}
+ ]
+}
+```
+
+#### Form Questions with Charts
+```json
+{
+ "report_type": "form_questions",
+ "output_format": "pdf",
+ "charts": [
+   {
+     "type": "bar",
+     "column": "form.title",
+     "title": "Questions by Form"
+   },
+   {
+     "type": "pie",
+     "column": "question.question_type.type",
+     "title": "Question Types Distribution"
+   }
+ ]
+}
+```
+
+## 11. FORM_ANSWERS
+
+### Available Columns
+id, form_question_id, answer_id, remarks, form_question.form.title, form_question.form.description, form_question.question.text, form_question.question.question_type.type, form_question.order_number, answer.value, answer.remarks, created_at, updated_at, is_deleted, deleted_at
+
+### Default Columns
+id, form_question_id, answer_id, form_question.question.text, answer.value, remarks
+
+### Request Bodies
+
+#### Basic Excel Report
+```json
+{
+ "report_type": "form_answers",
+ "output_format": "xlsx"
+}
+```
+
+#### CSV Report
+```json
+{
+ "report_type": "form_answers",
+ "output_format": "csv"
+}
+```
+
+#### PDF Report
+```json
+{
+ "report_type": "form_answers",
+ "output_format": "pdf"
+}
+```
+
+#### DOCX Report
+```json
+{
+ "report_type": "form_answers",
+ "output_format": "docx"
+}
+```
+
+#### PPTX Report
+```json
+{
+ "report_type": "form_answers",
+ "output_format": "pptx",
+ "include_data_table_in_ppt": true
+}
+```
+
+#### Filtered Report
+```json
+{
+ "report_type": "form_answers",
+ "filters": [
+   {"field": "form_question.form.title", "operator": "eq", "value": "Safety Checklist"}
+ ],
+ "sort_by": [
+   {"field": "form_question_id", "direction": "asc"}
+ ]
+}
+```
+
+#### Form Answers with Charts
+```json
+{
+ "report_type": "form_answers",
+ "output_format": "pdf",
+ "charts": [
+   {
+     "type": "bar",
+     "column": "form_question.form.title",
+     "title": "Answers by Form"
+   },
+   {
+     "type": "pie",
+     "column": "form_question.question.question_type.type",
+     "title": "Answers by Question Type"
+   }
+ ]
+}
+```
+
+## 12. FORM_SUBMISSIONS
+
+### Available Columns
+id, form_id, submitted_by, submitted_at, form.title, form.description, form.is_public, form.creator.username, form.creator.email, form.creator.environment.name, created_at, updated_at, is_deleted, deleted_at
+plus dynamic columns for form answers in the format: answers.<question_text>
+
+### Default Columns
+id, form_id, form.title, submitted_by, submitted_at, created_at
+
+### Request Bodies
+
+#### Basic Excel Report
+```json
+{
+ "report_type": "form_submissions",
+ "output_format": "xlsx"
+}
+```
+
+#### CSV Report
+```json
+{
+ "report_type": "form_submissions",
+ "output_format": "csv"
+}
+```
+
+#### PDF Report
+```json
+{
+ "report_type": "form_submissions",
+ "output_format": "pdf"
+}
+```
+
+#### DOCX Report
+```json
+{
+ "report_type": "form_submissions",
+ "output_format": "docx"
+}
+```
+
+#### PPTX Report
+```json
+{
+ "report_type": "form_submissions",
+ "output_format": "pptx",
+ "include_data_table_in_ppt": true
+}
+```
+
+#### Filtered Report with Dynamic Columns
+```json
+{
+ "report_type": "form_submissions",
+ "columns": [
+   "id", "form.title", "submitted_by", "submitted_at",
+   "answers.What is your name?",
+   "answers.What department do you work in?",
+   "answers.Inspection date"
+ ],
+ "filters": [
+   {"field": "form.title", "operator": "eq", "value": "Quality Inspection"},
+   {"field": "submitted_at", "operator": "between", "value": ["2023-01-01", "2023-12-31"]}
+ ],
+ "sort_by": [
+   {"field": "submitted_at", "direction": "desc"}
+ ]
+}
+```
+
+#### Form Submissions with Charts
+```json
+{
+ "report_type": "form_submissions",
+ "output_format": "pdf",
+ "charts": [
+   {
+     "type": "bar",
+     "column": "submitted_by",
+     "title": "Submissions by User"
+   },
+   {
+     "type": "pie",
+     "column": "form.title",
+     "title": "Submissions by Form"
+   },
+   {
+     "type": "line",
+     "column": "submitted_at",
+     "title": "Submission Timeline"
+   },
+   {
+     "type": "bar",
+     "column": "answers.What department do you work in?",
+     "title": "Submissions by Department"
+   }
+ ]
+}
+```
+
+## 13. ANSWERS_SUBMITTED
+
+### Available Columns
+id, question, question_type, answer, form_submission_id, column, row, cell_content, form_submission.submitted_by, form_submission.submitted_at, form_submission.form.title, form_submission.form.description, created_at, updated_at, is_deleted, deleted_at
+
+### Default Columns
+id, form_submission_id, form_submission.form.title, question, question_type, answer, created_at
+
+### Request Bodies
+
+#### Basic Excel Report
+```json
+{
+ "report_type": "answers_submitted",
+ "output_format": "xlsx"
+}
+```
+
+#### CSV Report
+```json
+{
+ "report_type": "answers_submitted",
+ "output_format": "csv"
+}
+```
+
+#### PDF Report
+```json
+{
+ "report_type": "answers_submitted",
+ "output_format": "pdf"
+}
+```
+
+#### DOCX Report
+```json
+{
+ "report_type": "answers_submitted",
+ "output_format": "docx"
+}
+```
+
+#### PPTX Report
+```json
+{
+ "report_type": "answers_submitted",
+ "output_format": "pptx",
+ "include_data_table_in_ppt": true
+}
+```
+
+#### Filtered Report
+```json
+{
+ "report_type": "answers_submitted",
+ "filters": [
+   {"field": "question_type", "operator": "eq", "value": "dropdown"},
+   {"field": "form_submission.submitted_at", "operator": "between", "value": ["2023-06-01", "2023-06-30"]}
+ ],
+ "sort_by": [
+   {"field": "form_submission.submitted_at", "direction": "desc"}
+ ]
+}
+```
+
+#### Answers Submitted with Charts
+```json
+{
+ "report_type": "answers_submitted",
+ "output_format": "pdf",
+ "charts": [
+   {
+     "type": "pie",
+     "column": "question_type",
+     "title": "Answers by Question Type"
+   },
+   {
+     "type": "bar",
+     "column": "question",
+     "title": "Answers by Question"
+   },
+   {
+     "type": "bar",
+     "column": "form_submission.form.title",
+     "title": "Answers by Form"
+   }
+ ]
+}
+```
+
+## 14. ATTACHMENTS
+
+### Available Columns
+id, form_submission_id, file_type, file_path, is_signature, signature_position, signature_author, form_submission.submitted_by, form_submission.submitted_at, form_submission.form.title, form_submission.form.description, created_at, updated_at, is_deleted, deleted_at
+
+### Default Columns
+id, form_submission_id, form_submission.form.title, file_path, file_type, is_signature, signature_author, created_at
+
+### Request Bodies
+
+#### Basic Excel Report
+```json
+{
+ "report_type": "attachments",
+ "output_format": "xlsx"
+}
+```
+
+#### CSV Report
+```json
+{
+ "report_type": "attachments",
+ "output_format": "csv"
+}
+```
+
+#### PDF Report
+```json
+{
+ "report_type": "attachments",
+ "output_format": "pdf"
+}
+```
+
+#### DOCX Report
+```json
+{
+ "report_type": "attachments",
+ "output_format": "docx"
+}
+```
+
+#### PPTX Report
+```json
+{
+ "report_type": "attachments",
+ "output_format": "pptx",
+ "include_data_table_in_ppt": true
+}
+```
+
+#### Filtered Report
+```json
+{
+ "report_type": "attachments",
+ "filters": [
+   {"field": "is_signature", "operator": "eq", "value": true}
+ ],
+ "sort_by": [
+   {"field": "created_at", "direction": "desc"}
+ ]
+}
+```
+
+#### Attachments with Charts
+```json
+{
+ "report_type": "attachments",
+ "output_format": "pdf",
+ "charts": [
+   {
+     "type": "pie",
+     "column": "file_type",
+     "title": "Attachments by File Type"
+   },
+   {
+     "type": "pie",
+     "column": "is_signature",
+     "title": "Signature vs Non-Signature Attachments"
+   },
+   {
+     "type": "bar",
+     "column": "signature_author",
+     "title": "Signatures by Author"
+   },
+   {
+     "type": "bar",
+     "column": "form_submission.form.title",
+     "title": "Attachments by Form"
+   }
+ ]
+}
+```
+
+## 15. TOKEN_BLOCKLIST
+
+### Available Columns
+id, jti, created_at
+
+### Default Columns
+id, jti, created_at
+
+### Request Bodies
+
+#### Basic Excel Report
+```json
+{
+ "report_type": "token_blocklist",
+ "output_format": "xlsx"
+}
+```
+
+#### CSV Report
+```json
+{
+ "report_type": "token_blocklist",
+ "output_format": "csv"
+}
+```
+
+#### PDF Report
+```json
+{
+ "report_type": "token_blocklist",
+ "output_format": "pdf"
+}
+```
+
+#### DOCX Report
+```json
+{
+ "report_type": "token_blocklist",
+ "output_format": "docx"
+}
+```
+
+#### PPTX Report
+```json
+{
+ "report_type": "token_blocklist",
+ "output_format": "pptx",
+ "include_data_table_in_ppt": true
+}
+```
+
+#### Sorted Report
+```json
+{
+ "report_type": "token_blocklist",
+ "sort_by": [
+   {"field": "created_at", "direction": "desc"}
+ ]
+}
+```
+
+#### Token Blocklist with Charts
+```json
+{
+ "report_type": "token_blocklist",
+ "output_format": "pdf",
+ "charts": [
+   {
+     "type": "line",
+     "column": "created_at",
+     "title": "Token Blocklist Timeline"
+   }
+ ]
+}
+```
+
+# MULTI-ENTITY REPORTS
+
+## 1. All Entities Report
+
+### PDF Format
+
+```json
+{
+ "report_type": "all",
+ "output_format": "pdf",
+ "report_title": "Complete System Data Export"
+}
+```
+
+### CSV Format
+
+```json
+{
+ "report_type": "all",
+ "output_format": "csv",
+ "report_title": "Complete System Data Export"
+}
+```
+
+### DOCX Format
+
+```json
+{
+ "report_type": "all",
+ "output_format": "docx",
+ "report_title": "Complete System Data Export"
+}
+```
+
+## 2. Users and Roles Report
+
+### Excel Format
+
+```json
+{
+ "report_type": ["users", "roles"],
+ "output_format": "xlsx",
+ "report_title": "Users and Roles Analysis"
+}
+```
+
+### PDF Format
+
+```json
+{
+ "report_type": ["users", "roles"],
+ "output_format": "pdf",
+ "report_title": "Users and Roles Analysis"
+}
+```
+
+### CSV Format
+
+```json
+{
+ "report_type": ["users", "roles"],
+ "output_format": "csv",
+ "report_title": "Users and Roles Analysis"
+}
+```
+
+### DOCX Format
+
+```json
+{
+ "report_type": ["users", "roles"],
+ "output_format": "docx",
+ "report_title": "Users and Roles Analysis"
+}
+```
+
+### With Filters and Charts
+
+```json
+{
+ "report_type": ["users", "roles"],
+ "output_format": "pdf",
+ "report_title": "Users and Roles Analysis",
+ "filters": [
+   {"field": "users.environment.name", "operator": "eq", "value": "Production"}
+ ],
+ "charts": [
+   {
+     "type": "pie",
+     "column": "users.role.name",
+     "title": "Users by Role"
+   },
+   {
+     "type": "pie",
+     "column": "roles.is_super_user",
+     "title": "Roles by Superuser Status"
+   }
+ ]
+}
+```
+
+## 3. Form Submissions with Attachments Report
+
+### Excel Format
+
+```json
+{
+ "report_type": ["form_submissions", "attachments"],
+ "output_format": "xlsx",
+ "report_title": "Form Submissions with Attachments"
+}
+```
+
+### PDF Format
+
+```json
+{
+ "report_type": ["form_submissions", "attachments"],
+ "output_format": "pdf",
+ "report_title": "Form Submissions with Attachments"
+}
+```
+
+### CSV Format
+
+```json
+{
+ "report_type": ["form_submissions", "attachments"],
+ "output_format": "csv",
+ "report_title": "Form Submissions with Attachments"
+}
+```
+
+### DOCX Format
+
+```json
+{
+ "report_type": ["form_submissions", "attachments"],
+ "output_format": "docx",
+ "report_title": "Form Submissions with Attachments"
+}
+```
+
+### With Filters and Charts
+
+```json
+{
+ "report_type": ["form_submissions", "attachments"],
+ "output_format": "pdf",
+ "report_title": "Equipment Inspection Submissions with Attachments",
+ "filters": [
+   {"field": "form_submissions.form.title", "operator": "eq", "value": "Equipment Inspection"}
+ ],
+ "charts": [
+   {
+     "type": "bar",
+     "column": "form_submissions.submitted_by",
+     "title": "Submissions by User"
+   },
+   {
+     "type": "pie",
+     "column": "attachments.file_type",
+     "title": "Attachments by File Type"
+   },
+   {
+     "type": "line",
+     "column": "form_submissions.submitted_at",
+     "title": "Submission Timeline"
+   }
+ ]
+}
+```
+
+## 4. Forms, Questions, and Submissions Report
+
+### Excel Format
+
+```json
+{
+ "report_type": ["forms", "form_questions", "form_submissions"],
+ "output_format": "xlsx",
+ "report_title": "Complete Form Analysis"
+}
+```
+
+### PDF Format
+
+```json
+{
+ "report_type": ["forms", "form_questions", "form_submissions"],
+ "output_format": "pdf",
+ "report_title": "Complete Form Analysis"
+}
+```
+
+### CSV Format
+
+```json
+{
+ "report_type": ["forms", "form_questions", "form_submissions"],
+ "output_format": "csv",
+ "report_title": "Complete Form Analysis"
+}
+```
+
+### DOCX Format
+
+```json
+{
+ "report_type": ["forms", "form_questions", "form_submissions"],
+ "output_format": "docx",
+ "report_title": "Complete Form Analysis"
+}
+```
+
+### With Filters and Charts
+
+```json
+{
+ "report_type": ["forms", "form_questions", "form_submissions"],
+ "output_format": "pdf",
+ "report_title": "Public Forms Analysis",
+ "filters": [
+   {"field": "forms.is_public", "operator": "eq", "value": true}
+ ],
+ "charts": [
+   {
+     "type": "bar",
+     "column": "forms.creator.username",
+     "title": "Forms per Creator"
+   },
+   {
+     "type": "pie",
+     "column": "form_questions.question.question_type.type",
+     "title": "Question Type Distribution"
+   },
+   {
+     "type": "line",
+     "column": "form_submissions.submitted_at",
+     "title": "Submission Timeline"
+   }
+ ]
+}
+```
+
+## 5. Roles and Permissions Analysis
+
+### Excel Format
+
+```json
+{
+ "report_type": ["roles", "permissions", "role_permissions"],
+ "output_format": "xlsx",
+ "report_title": "Roles and Permissions Analysis"
+}
+```
+
+### PDF Format
+
+```json
+{
+ "report_type": ["roles", "permissions", "role_permissions"],
+ "output_format": "pdf",
+ "report_title": "Roles and Permissions Analysis"
+}
+```
+
+### CSV Format
+
+```json
+{
+ "report_type": ["roles", "permissions", "role_permissions"],
+ "output_format": "csv",
+ "report_title": "Roles and Permissions Analysis"
+}
+```
+
+### DOCX Format
+
+```json
+{
+ "report_type": ["roles", "permissions", "role_permissions"],
+ "output_format": "docx",
+ "report_title": "Roles and Permissions Analysis"
+}
+```
+
+### With Charts
+
+```json
+{
+ "report_type": ["roles", "permissions", "role_permissions"],
+ "output_format": "pdf",
+ "report_title": "Roles and Permissions Analysis",
+ "charts": [
+   {
+     "type": "pie",
+     "column": "roles.is_super_user",
+     "title": "Regular vs. Superuser Roles"
+   },
+   {
+     "type": "bar",
+     "column": "permissions.action",
+     "title": "Permissions by Action Type"
+   },
+   {
+     "type": "bar",
+     "column": "role_permissions.role.name",
+     "title": "Permission Count by Role"
+   }
+ ]
+}
+```
+
+## 6. User Activity Report
+
+### Excel Format
+
+```json
+{
+ "report_type": ["users", "form_submissions", "attachments"],
+ "output_format": "xlsx",
+ "report_title": "User Activity Report"
+}
+```
+
+### PDF Format
+
+```json
+{
+ "report_type": ["users", "form_submissions", "attachments"],
+ "output_format": "pdf",
+ "report_title": "User Activity Report"
+}
+```
+
+### PPTX Format
+
+```json
+{
+ "report_type": ["users", "form_submissions", "attachments"],
+ "output_format": "pptx",
+ "report_title": "User Activity Report",
+ "include_data_table_in_ppt": true
+}
+```
+
+### With Filters and Charts
+
+```json
+{
+ "report_type": ["users", "form_submissions", "attachments"],
+ "output_format": "pptx",
+ "report_title": "User Activity Report 2023",
+ "filters": [
+   {"field": "form_submissions.submitted_at", "operator": "between", "value": ["2023-01-01", "2023-12-31"]}
+ ],
+ "charts": [
+   {
+     "type": "bar",
+     "column": "users.role.name",
+     "title": "Users by Role"
+   },
+   {
+     "type": "line",
+     "column": "form_submissions.submitted_at",
+     "title": "Submission Timeline"
+   },
+   {
+     "type": "pie",
+     "column": "attachments.file_type",
+     "title": "Attachment Types"
+   }
+ ],
+ "include_data_table_in_ppt": true
+}
+```
+
+## 7. CSV Export of Form Submissions with Answers
+
+### CSV Format
+
+```json
+{
+ "report_type": ["form_submissions", "answers_submitted"],
+ "output_format": "csv",
+ "report_title": "Form Submissions with Answers"
+}
+```
+
+### With Filters
+
+```json
+{
+ "report_type": ["form_submissions", "answers_submitted"],
+ "output_format": "csv",
+ "filters": [
+   {"field": "form_submissions.form.title", "operator": "eq", "value": "Customer Feedback"}
+ ],
+ "report_title": "Customer Feedback Responses"
+}
+```
+
+## 8. Environment and User Analysis
+
+### Excel Format
+
+```json
+{
+ "report_type": ["environments", "users"],
+ "output_format": "xlsx",
+ "report_title": "Environment User Distribution"
+}
+```
+
+### PDF Format
+
+```json
+{
+ "report_type": ["environments", "users"],
+ "output_format": "pdf",
+ "report_title": "Environment User Distribution"
+}
+```
+
+### With Charts
+
+```json
+{
+ "report_type": ["environments", "users"],
+ "output_format": "pdf",
+ "report_title": "Environment User Distribution",
+ "charts": [
+   {
+     "type": "bar",
+     "column": "environments.name",
+     "title": "Environments Overview"
+   },
+   {
+     "type": "pie",
+     "column": "users.environment.name",
+     "title": "User Distribution by Environment"
+   }
+ ]
+}
+```
+
+## 9. Question Type Usage Analysis
+
+### Excel Format
+
+```json
+{
+ "report_type": ["question_types", "questions", "form_questions"],
+ "output_format": "xlsx",
+ "report_title": "Question Type Usage Analysis"
+}
+```
+
+### PDF Format
+
+```json
+{
+ "report_type": ["question_types", "questions", "form_questions"],
+ "output_format": "pdf",
+ "report_title": "Question Type Usage Analysis"
+}
+```
+
+### With Charts
+
+```json
+{
+ "report_type": ["question_types", "questions", "form_questions"],
+ "output_format": "pdf",
+ "report_title": "Question Type Usage Analysis",
+ "charts": [
+   {
+     "type": "pie",
+     "column": "question_types.type",
+     "title": "Available Question Types"
+   },
+   {
+     "type": "bar",
+     "column": "questions.question_type.type",
+     "title": "Questions by Type"
+   },
+   {
+     "type": "bar",
+     "column": "form_questions.form.title",
+     "title": "Questions per Form"
+   }
+ ]
+}
+```
+
+## 10. Forms with Answers Analysis
+
+### Excel Format
+
+```json
+{
+ "report_type": ["forms", "form_answers"],
+ "output_format": "xlsx",
+ "report_title": "Forms with Answers Analysis"
+}
+```
+
+### PDF Format
+
+```json
+{
+ "report_type": ["forms", "form_answers"],
+ "output_format": "pdf",
+ "report_title": "Forms with Answers Analysis"
+}
+```
+
+### With Charts
+
+```json
+{
+ "report_type": ["forms", "form_answers"],
+ "output_format": "pdf",
+ "report_title": "Forms with Answers Analysis",
+ "charts": [
+   {
+     "type": "pie",
+     "column": "forms.is_public",
+     "title": "Public vs Private Forms"
+   },
+   {
+     "type": "bar",
+     "column": "form_answers.form_question.form.title",
+     "title": "Answers per Form"
+   }
+ ]
+}
+```

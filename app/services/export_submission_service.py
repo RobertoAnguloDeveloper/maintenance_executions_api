@@ -146,30 +146,25 @@ def _parse_numeric_value(value_input: Optional[Union[str, int, float]], default_
 
 def _get_alignment_code(align_input: Optional[Union[str, int]], default_align_str: str) -> int:
     """Converts alignment string (LEFT, CENTER, RIGHT, JUSTIFY) or int code to ReportLab integer code."""
-    # ReportLab integer codes for ParagraphStyle.alignment:
-    # 0=left, 1=center, 2=right, 4=justify
     code_map = {"LEFT": 0, "CENTER": 1, "RIGHT": 2, "JUSTIFY": 4}
     
     if isinstance(align_input, int) and align_input in code_map.values():
         return align_input
         
     if isinstance(align_input, str):
-        # Try to convert to int if it's a digit string representing a valid code
         if align_input.isdigit():
             try:
                 val = int(align_input)
                 if val in code_map.values():
                     return val
             except ValueError:
-                pass # Not a simple integer string, proceed to check string name
-                
-        # Process as string name
+                pass 
         effective_align_str = align_input.upper()
         if effective_align_str in code_map:
             return code_map[effective_align_str]
 
     logger.warning(f"Invalid alignment value '{align_input}'. Using default '{default_align_str}'.")
-    return code_map.get(default_align_str.upper(), 1) # Fallback to default_align_str, then to center
+    return code_map.get(default_align_str.upper(), 1)
 
 
 class ExportSubmissionService:
@@ -182,7 +177,7 @@ class ExportSubmissionService:
             opacity = max(0.0, min(1.0, opacity))
             img_data = image_file.read()
             image_file.seek(0) 
-            img = PILImage.open(io.BytesIO(img_data)) # img is a PIL.Image.Image object
+            img = PILImage.open(io.BytesIO(img_data))
             orig_width, orig_height = img.size
             new_width, new_height = float(orig_width), float(orig_height)
 
@@ -203,31 +198,31 @@ class ExportSubmissionService:
                 logger.warning(f"Invalid image dimensions after resize: {new_width}x{new_height}. Using original.")
                 new_width, new_height = float(orig_width), float(orig_height)
 
-            img_resized = img.resize((int(new_width), int(new_height)), PILImage.LANCZOS) # Use a different variable for resized image
+            img_resized = img.resize((int(new_width), int(new_height)), PILImage.LANCZOS)
             
             if img_resized.mode != 'RGBA': 
-                img_converted = img_resized.convert('RGBA') # Use a different variable for converted image
+                img_converted = img_resized.convert('RGBA')
             else:
-                img_converted = img_resized # No conversion needed
+                img_converted = img_resized
 
-            # Create a new image with the target opacity using PILImage.new
-            # The 'img_converted' is the one we want to apply opacity to.
-            img_with_opacity = PILImage.new("RGBA", img_converted.size) # CORRECTED: Use PILImage.new
+            img_with_opacity = PILImage.new("RGBA", img_converted.size)
             
-            # Blend the original converted image with a transparent background
-            # This is a more robust way to handle opacity than pixel iteration for complex images
-            # For simple opacity, directly modifying alpha is also an option if performance is critical
-            # and images are simple.
-            
-            # Alternative simpler alpha modification:
             if img_converted.mode == 'RGBA':
+                # More direct way to apply opacity to an RGBA image
+                # Create a new image with the same size and mode, filled with a transparent color
+                # Then blend the original image onto this using the alpha channel modified by opacity
                 alpha = img_converted.split()[3]
                 alpha = alpha.point(lambda i: int(i * opacity))
-                img_converted.putalpha(alpha)
-                img_with_opacity = img_converted # Use the image with modified alpha
-            else: # Fallback if not RGBA after trying to convert (should not happen often)
-                img_with_opacity = img_converted
+                
+                # Create a completely transparent image of the same size
+                transparent_layer = PILImage.new('RGBA', img_converted.size, (0,0,0,0))
+                # Composite the image with its modified alpha onto the transparent layer
+                img_with_opacity = PILImage.composite(img_converted, transparent_layer, alpha)
+                # Ensure the final image has the modified alpha channel correctly set
+                img_with_opacity.putalpha(alpha)
 
+            else: # Fallback if not RGBA after trying to convert (should not happen often)
+                img_with_opacity = img_converted # No opacity applied if not RGBA
 
             result_io = io.BytesIO()
             img_with_opacity.save(result_io, format='PNG')
@@ -319,7 +314,6 @@ class ExportSubmissionService:
                     img_w_attr = getattr(processed_image_io, 'img_width'); img_h_attr = getattr(processed_image_io, 'img_height')
                     if not header_width and not header_height and not header_size and img_w_attr > page_content_width:
                         scale_ratio = page_content_width / img_w_attr; img_w_attr *= scale_ratio; img_h_attr *= scale_ratio
-                    # Use ReportLabImage for adding to story
                     img_obj = ReportLabImage(processed_image_io, width=img_w_attr, height=img_h_attr)
                     align_val_h = header_alignment.upper()
                     if align_val_h not in ['LEFT', 'CENTER', 'RIGHT']: align_val_h = 'CENTER'
@@ -384,6 +378,7 @@ class ExportSubmissionService:
             
             qa_layout = str(final_config.get("qa_layout", "answer_below"))
             answer_same_line_max_len = int(final_config.get("answer_same_line_max_length", 70))
+            # CORRECTED: Use the helper function for color to hex conversion
             answer_color_for_html = _color_to_hex_string(final_config["answer_font_color"])
 
 

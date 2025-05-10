@@ -20,6 +20,7 @@ from app.models.attachment import Attachment
 from app.models.answer_submitted import AnswerSubmitted
 from app.models.form import Form
 from app.models.form_question import FormQuestion
+from app.services.report.answer_formatters.answer_formatter_factory import AnswerFormatterFactory
 
 
 logger = logging.getLogger(__name__)
@@ -228,6 +229,30 @@ class ExportSubmissionService:
                 title=f"Form Submission - {form.title}"
             )
             
+            styles.add(ParagraphStyle(
+                name='TableHeader',
+                parent=styles['Normal'],
+                fontSize=9,
+                fontName='Helvetica-Bold',
+                alignment=1,  # Center
+                spaceAfter=6
+            ))
+
+            styles.add(ParagraphStyle(
+                name='TableCell',
+                parent=styles['Normal'],
+                fontSize=9,
+                spaceAfter=0
+            ))
+
+            styles.add(ParagraphStyle(
+                name='DropdownSelected',
+                parent=styles['Answer'],
+                fontSize=11,
+                leftIndent=ANSWER_FORMATTING['left_indent'] + 10,
+                bulletIndent=ANSWER_FORMATTING['left_indent']
+            ))
+            
             # Prepare styles using global settings
             styles = getSampleStyleSheet()
             styles.add(ParagraphStyle(
@@ -357,8 +382,9 @@ class ExportSubmissionService:
                 q_text = f"{answer.question}"
                 story.append(Paragraph(q_text, styles['Question']))
                 
-                a_text = answer.answer if answer.answer else "No answer provided"
-                story.append(Paragraph(a_text, styles['Answer']))
+                # Use our new formatter factory approach
+                answer_flowables = ExportSubmissionService._format_answer(answer, styles)
+                story.extend(answer_flowables)
             
             # Add signatures if requested
             if include_signatures:
@@ -573,6 +599,196 @@ class ExportSubmissionService:
         except Exception as e:
             logger.error(f"Error exporting submission to PDF: {str(e)}")
             return None, str(e)
+        
+    @staticmethod
+    def _format_answer(answer, styles):
+        """
+        Format an answer using the appropriate formatter based on question type
+        
+        Args:
+            answer: AnswerSubmitted instance
+            styles: ReportLab styles dictionary
+            
+        Returns:
+            List of Flowable objects for the PDF
+        """
+        # Get the question type
+        question_type = answer.question_type.lower() if hasattr(answer, 'question_type') else None
+        
+        # Get answer text, handle None values
+        answer_text = answer.answer if answer.answer else None
+        
+        # Use formatter factory to get the right formatter
+        formatter = AnswerFormatterFactory.get_formatter(question_type)
+        
+        # Return the formatted flowables
+        return formatter.format(answer_text, styles)
+        
+    @staticmethod
+    def _format_answer_by_type(answer, styles):
+        """Enhanced formatter with more question types"""
+        question_type = answer.question_type.lower() if hasattr(answer, 'question_type') else ""
+        
+        # Get answer text, handle None values
+        answer_text = answer.answer if answer.answer else "No answer provided"
+        
+        # Container for flowables
+        flowables = []
+        
+        # Format based on question type
+        if question_type == "table":
+            flowables.extend(ExportSubmissionService._format_table_answer(answer_text, styles))
+        elif question_type in ["dropdown", "select", "multiselect"]:
+            flowables.append(ExportSubmissionService._format_dropdown_answer(answer_text, styles))
+        elif question_type in ["checkbox", "radio"]:
+            flowables.append(ExportSubmissionService._format_option_answer(answer_text, styles))
+        elif question_type == "file":
+            flowables.append(ExportSubmissionService._format_file_answer(answer_text, styles))
+        else:
+            # Default formatting for text and other types
+            flowables.append(Paragraph(answer_text, styles['Answer']))
+        
+        return flowables
+
+    @staticmethod
+    def _format_table_answer(answer_text, styles):
+        """
+        Format table type answers for PDF display
+        
+        Args:
+            answer_text: String containing table data (expected format: JSON or CSV-like)
+            styles: ReportLab styles dictionary
+            
+        Returns:
+            List of Flowable objects
+        """
+        flowables = []
+        
+        try:
+            # Try to parse as JSON first
+            import json
+            try:
+                table_data = json.loads(answer_text)
+                
+                # If it's a list of lists or list of dicts (common formats)
+                if isinstance(table_data, list):
+                    # Handle list of dictionaries (convert to list of lists with headers)
+                    if table_data and isinstance(table_data[0], dict):
+                        # Extract headers from the first dict
+                        headers = list(table_data[0].keys())
+                        
+                        # Build table data with headers
+                        rows = [headers]  # First row is headers
+                        for item in table_data:
+                            rows.append([str(item.get(header, "")) for header in headers])
+                    
+                    # Handle list of lists
+                    elif table_data and isinstance(table_data[0], list):
+                        rows = [[str(cell) for cell in row] for row in table_data]
+                        
+                    else:
+                        # Fallback
+                        rows = [["Data could not be formatted as a table"]]
+                        
+                    # Create column widths - auto sizing
+                    col_count = len(rows[0]) if rows else 1
+                    available_width = 6.5 * inch  # Approximate available width on the page
+                    col_width = available_width / col_count
+                    
+                    # Create the table
+                    pdf_table = Table(rows, colWidths=[col_width] * col_count)
+                    
+                    # Style the table
+                    style = TableStyle([
+                        ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+                        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                        ('FONTSIZE', (0, 0), (-1, -1), 9),
+                        ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
+                        ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
+                    ])
+                    pdf_table.setStyle(style)
+                    
+                    flowables.append(pdf_table)
+                    flowables.append(Spacer(1, 5))
+                else:
+                    # Not a recognized format, display as text
+                    flowables.append(Paragraph(answer_text, styles['Answer']))
+                    
+            except json.JSONDecodeError:
+                # Not valid JSON, try parsing as CSV or display as is
+                if "~" in answer_text or "," in answer_text:
+                    # Try to parse as CSV-like format (using ~ or , as separators)
+                    separator = "~" if "~" in answer_text else ","
+                    
+                    rows = []
+                    for line in answer_text.strip().split("\n"):
+                        rows.append([cell.strip() for cell in line.split(separator)])
+                    
+                    # Create the table with auto-sized columns
+                    col_count = max([len(row) for row in rows]) if rows else 1
+                    available_width = 6.5 * inch
+                    col_width = available_width / col_count
+                    
+                    pdf_table = Table(rows, colWidths=[col_width] * col_count)
+                    
+                    # Style the table
+                    style = TableStyle([
+                        ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+                        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                        ('FONTSIZE', (0, 0), (-1, -1), 9),
+                        ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
+                        ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
+                    ])
+                    pdf_table.setStyle(style)
+                    
+                    flowables.append(pdf_table)
+                    flowables.append(Spacer(1, 5))
+                else:
+                    # Display as regular text
+                    flowables.append(Paragraph(answer_text, styles['Answer']))
+        
+        except Exception as e:
+            logger.error(f"Error formatting table answer: {str(e)}")
+            flowables.append(Paragraph(f"Table data could not be formatted: {answer_text}", styles['Answer']))
+        
+        return flowables
+
+    @staticmethod
+    def _format_dropdown_answer(answer_text, styles):
+        """
+        Format dropdown type answers for PDF display
+        
+        Args:
+            answer_text: Selected option text
+            styles: ReportLab styles dictionary
+            
+        Returns:
+            Paragraph flowable
+        """
+        try:
+            # Check if it's a multi-select dropdown (might be JSON array)
+            import json
+            try:
+                data = json.loads(answer_text)
+                if isinstance(data, list):
+                    # Format as a bulleted list
+                    bullets = ""
+                    for item in data:
+                        bullets += f"• {item}<br/>"
+                    return Paragraph(bullets, styles['Answer'])
+                else:
+                    # Single value as JSON
+                    return Paragraph(str(data), styles['Answer'])
+            except json.JSONDecodeError:
+                # Not JSON, just return the text
+                return Paragraph(answer_text, styles['Answer'])
+        except Exception as e:
+            logger.error(f"Error formatting dropdown answer: {str(e)}")
+            return Paragraph(answer_text, styles['Answer'])
 
     @staticmethod
     def _get_signature_images(submission_id: int, upload_path: str) -> List[Dict]:

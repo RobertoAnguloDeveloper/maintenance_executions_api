@@ -149,10 +149,8 @@ class ExportSubmissionService:
         signatures_size: float = 100,
         signatures_alignment: str = "vertical"
     ) -> Tuple[Optional[BytesIO], Optional[str]]:
-        """
-        Export a form submission to PDF with structured organization of tables and dropdowns.
-        """
         try:
+            # ... (initial setup: submission, form, buffer, doc, styles, story, header image processing, title, submission info - remains the same) ...
             submission = FormSubmission.query.filter_by(id=submission_id, is_deleted=False).first()
             if not submission:
                 return None, "Submission not found"
@@ -196,7 +194,6 @@ class ExportSubmissionService:
                     
                     page_content_width = letter[0] - PAGE_MARGINS['left'] - PAGE_MARGINS['right']
                     
-                    # Scale image to fit if too large and no specific dimensions given
                     if not header_width and not header_height and not header_size:
                          if img_w_attr > page_content_width:
                             scale_ratio = page_content_width / img_w_attr
@@ -205,7 +202,6 @@ class ExportSubmissionService:
                     
                     img_obj = Image(processed_image_io, width=img_w_attr, height=img_h_attr)
                     
-                    # Alignment using a single-cell table
                     align_val = header_alignment.upper()
                     if align_val not in ['LEFT', 'CENTER', 'RIGHT']:
                         align_val = 'CENTER'
@@ -214,13 +210,13 @@ class ExportSubmissionService:
                     header_table.setStyle(TableStyle([
                         ('ALIGN', (0, 0), (0, 0), align_val),
                         ('VALIGN', (0, 0), (0, 0), 'MIDDLE'),
-                        ('LEFTPADDING', (0,0), (0,0), 0), # Ensure no extra padding
+                        ('LEFTPADDING', (0,0), (0,0), 0),
                         ('RIGHTPADDING', (0,0), (0,0), 0),
                         ('TOPPADDING', (0,0), (0,0), 0),
                         ('BOTTOMPADDING', (0,0), (0,0), 0),
                     ]))
                     story.append(header_table)
-                    story.append(Spacer(1, 0.1 * inch)) # Reduced spacer
+                    story.append(Spacer(1, 0.1 * inch))
 
             # Title and Description
             story.append(Paragraph(form.title, styles['FormTitle']))
@@ -233,7 +229,7 @@ class ExportSubmissionService:
                 [Paragraph('<b>Submitted by:</b>', styles['Normal']), Paragraph(str(submission.submitted_by or 'N/A'), styles['Normal'])],
                 [Paragraph('<b>Date:</b>', styles['Normal']), Paragraph(submission.submitted_at.strftime('%Y-%m-%d %H:%M:%S') if submission.submitted_at else 'N/A', styles['Normal'])]
             ]
-            info_table = Table(info_data, colWidths=[1.5 * inch, None]) # Let ReportLab determine second col width
+            info_table = Table(info_data, colWidths=[1.5 * inch, None])
             info_table.setStyle(TableStyle([
                 ('VALIGN', (0,0), (-1,-1), 'TOP'),
                 ('LEFTPADDING', (0,0), (-1,-1), 0),
@@ -242,14 +238,14 @@ class ExportSubmissionService:
             story.append(info_table)
             story.append(Spacer(1, 0.2 * inch))
 
-            # Fetch and categorize answers
+
             all_answers = AnswerSubmitted.query.filter_by(form_submission_id=submission_id, is_deleted=False).all()
             non_signature_answers = [a for a in all_answers if a.question_type and a.question_type.lower() != 'signature']
 
-            table_pattern_re = re.compile(r'^(Table\s+\d+)(?:\s+(.*))?$') # Renamed for clarity
+            table_pattern_re = re.compile(r'^(Table\s+\d+)(?:\s+(.*))?$')
             pattern_based_tables_data = defaultdict(lambda: {'headers': [], 'rows': defaultdict(dict), 'row_order': [], 'raw_json_csv_data': None})
             cell_based_tables_data = defaultdict(lambda: {
-                'name': '', 'headers': {}, 'cells': {}, 'row_indices': set(), 'col_indices': set()
+                'name': '', 'headers': {}, 'cells': {}, 'row_indices': set(), 'col_indices': set(), 'header_row_present': False
             })
             dropdown_groups = defaultdict(list)
             regular_answers = []
@@ -259,23 +255,34 @@ class ExportSubmissionService:
                 ans_type = ans.question_type.lower() if ans.question_type else ""
 
                 # PRIORITY 1: Cell-based tables
-                if ans_type == 'table' and ans.column is not None:
+                # Assumption: question_type 'table' and answer.column is not None indicates this structure.
+                # Headers are identified by answer.row == 0. Data rows are answer.row > 0.
+                if ans_type == 'table' and ans.column is not None and ans.row is not None: # Ensure row is also not None
                     table_id = q_text
                     cell_based_tables_data[table_id]['name'] = table_id
                     current_data = ans.cell_content if ans.cell_content is not None else ans.answer
                     current_data_str = str(current_data) if current_data is not None else ""
 
-                    if ans.row is not None:  # Data cell
-                        cell_based_tables_data[table_id]['cells'][(ans.row, ans.column)] = current_data_str
-                        cell_based_tables_data[table_id]['row_indices'].add(ans.row)
-                        cell_based_tables_data[table_id]['col_indices'].add(ans.column)
-                    else:  # Header cell (convention: ans.row is None)
+                    if ans.row == 0:  # This is a header cell
                         cell_based_tables_data[table_id]['headers'][ans.column] = current_data_str
                         cell_based_tables_data[table_id]['col_indices'].add(ans.column)
+                        cell_based_tables_data[table_id]['header_row_present'] = True
+                    elif ans.row > 0:  # This is a data cell (adjust if your data rows can also be 0, then headers need a different row index like -1)
+                        # Adjust row index to be 0-based for data if headers are row 0
+                        # For example, if PDF table data should start at row 0 internally after headers.
+                        # Let's assume ans.row from DB for data is 1-based if headers are 0.
+                        # Or, more simply, store all rows as they are and handle during rendering.
+                        # For simplicity, we'll store raw row index and sort later.
+                        # If PDF row 1 is DB row 1 (after header at DB row 0), then:
+                        data_row_index = ans.row # Keep original row index for now.
+                        cell_based_tables_data[table_id]['cells'][(data_row_index, ans.column)] = current_data_str
+                        cell_based_tables_data[table_id]['row_indices'].add(data_row_index)
+                        cell_based_tables_data[table_id]['col_indices'].add(ans.column)
+                    # else: what if ans.row < 0? Or some other convention. Current logic assumes ans.row >= 0.
                     continue
 
-                # PRIORITY 2: Pattern-based tables
-                match_obj = table_pattern_re.match(q_text) # Renamed for clarity
+                # ... (PRIORITY 2: Pattern-based tables - logic remains the same as previous full code response) ...
+                match_obj = table_pattern_re.match(q_text)
                 if match_obj:
                     table_name = match_obj.group(1)
                     qualifier = match_obj.group(2) or ""
@@ -298,27 +305,29 @@ class ExportSubmissionService:
                                 pattern_based_tables_data[table_name]['rows'][row_num][col_num] = str(ans.answer or "")
                         except (ValueError, IndexError):
                             regular_answers.append(ans)
-                    elif ans.answer: # No qualifier, might be JSON/CSV in ans.answer
+                    elif ans.answer: 
                         pattern_based_tables_data[table_name]['raw_json_csv_data'] = ans.answer
-                    else: # Match but no specific structure, treat as regular if it has answer
+                    else: 
                          if ans.answer: regular_answers.append(ans)
                     continue
-
-                # PRIORITY 3: Dropdowns
+                
+                # ... (PRIORITY 3: Dropdowns - logic remains the same) ...
                 if ans_type in ['dropdown', 'select', 'multiselect']:
                     dropdown_groups[q_text].append(ans)
                     continue
                 
+                # ... (PRIORITY 4: Regular answers - logic remains the same) ...
                 regular_answers.append(ans)
 
-            # Render Regular Answers
+
+            # ... (Render Regular Answers - logic remains the same) ...
             sorted_regular_answers = sorted(regular_answers, key=lambda a: a.question or "")
             for ans_item in sorted_regular_answers:
                 story.append(Paragraph(str(ans_item.question or "Untitled Question"), styles['Question']))
                 answer_val = str(ans_item.answer) if ans_item.answer is not None else "No answer provided"
                 story.append(Paragraph(answer_val, styles['Answer']))
 
-            # Render Dropdown Groups
+            # ... (Render Dropdown Groups - logic remains the same) ...
             processed_dropdown_data = {}
             for q_text_dd, ans_list_dd in dropdown_groups.items():
                 combined_vals = []
@@ -331,11 +340,11 @@ class ExportSubmissionService:
                             else:
                                 combined_vals.append(str(parsed_json))
                         except json.JSONDecodeError:
-                            if ',' in dd_ans.answer: # CSV-like
+                            if ',' in dd_ans.answer: 
                                 combined_vals.extend([v.strip() for v in dd_ans.answer.split(',')])
                             else:
                                 combined_vals.append(dd_ans.answer)
-                processed_dropdown_data[q_text_dd] = list(dict.fromkeys(combined_vals)) # Remove duplicates
+                processed_dropdown_data[q_text_dd] = list(dict.fromkeys(combined_vals))
 
             for q_text_dd_final, vals_dd in processed_dropdown_data.items():
                 story.append(Paragraph(str(q_text_dd_final), styles['Question']))
@@ -347,56 +356,72 @@ class ExportSubmissionService:
                         story.append(Paragraph(str(vals_dd[0]), styles['Answer']))
                 else:
                     story.append(Paragraph("No selection", styles['Answer']))
-            
-            page_content_width = letter[0] - PAGE_MARGINS['left'] - PAGE_MARGINS['right']
 
-            # Render Cell-Based Tables
+            page_content_width = letter[0] - PAGE_MARGINS['left'] - PAGE_MARGINS['right']
+            
+            # Render Cell-Based Tables (MODIFIED FOR ROW 0 AS HEADER)
             for table_id_cb, content_cb in cell_based_tables_data.items():
                 story.append(Paragraph(str(content_cb['name']), styles['Question']))
-                sorted_cols = sorted(list(content_cb['col_indices']))
-                sorted_rows = sorted(list(content_cb['row_indices']))
+                
+                # Ensure all potential columns are captured, even if only in data or only in headers
+                all_cols_indices = content_cb['col_indices']
+                sorted_cols = sorted(list(all_cols_indices))
+                
+                # Separate header row (row 0) from data rows (row > 0)
+                # Data rows should be sorted excluding the header row index.
+                data_row_indices = sorted([r for r in content_cb['row_indices'] if r > 0])
 
                 header_styled_row: List[Paragraph] = []
                 actual_col_count = len(sorted_cols)
 
-                if content_cb['headers']:
+                if content_cb['header_row_present']: # Headers are from row == 0
                     for col_idx in sorted_cols:
-                        header_styled_row.append(Paragraph(str(content_cb['headers'].get(col_idx, f"Col {col_idx+1}")), styles['TableHeader']))
-                elif actual_col_count > 0: # Default headers if none explicit but columns exist
+                        header_text = str(content_cb['headers'].get(col_idx, f"Col {col_idx+1}")) # Default if somehow a col has data but no header
+                        header_styled_row.append(Paragraph(header_text, styles['TableHeader']))
+                elif actual_col_count > 0 and not content_cb['header_row_present'] and data_row_indices: # No row 0 headers, but data exists
+                    # Create default headers based on data columns if no explicit row 0 headers
                     header_styled_row = [Paragraph(f"Column {idx+1}", styles['TableHeader']) for idx in sorted_cols]
-                
+
                 table_rows_styled: List[List[Paragraph]] = []
                 if header_styled_row:
                     table_rows_styled.append(header_styled_row)
 
-                for row_idx in sorted_rows:
-                    row_data_styled = [Paragraph(str(content_cb['cells'].get((row_idx, col_idx), "")), styles['TableCell']) for col_idx in sorted_cols]
-                    table_rows_styled.append(row_data_styled)
+                for data_row_idx in data_row_indices: # Iterate only through data rows (row > 0)
+                    current_row_styled = [Paragraph(str(content_cb['cells'].get((data_row_idx, col_idx), "")), styles['TableCell']) for col_idx in sorted_cols]
+                    table_rows_styled.append(current_row_styled)
 
-                if table_rows_styled:
+                if table_rows_styled: # Only create table if there's header or cell data
                     col_widths_cb = [page_content_width / actual_col_count] * actual_col_count if actual_col_count > 0 else [page_content_width]
                     rl_table_cb = Table(table_rows_styled, colWidths=col_widths_cb, repeatRows=1 if header_styled_row else 0)
                     style_cmds_cb = [('GRID', (0,0), (-1,-1), 0.5, colors.grey), ('VALIGN', (0,0), (-1,-1), 'MIDDLE')]
-                    if header_styled_row: # Header specific styles
+                    if header_styled_row:
                          style_cmds_cb.extend([
-                            ('BACKGROUND', (0,0), (-1,0), colors.lightgrey), # Applied to first row only
-                            # ('TEXTCOLOR', (0,0), (-1,0), colors.black), # Already in style
-                            # ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'), # Already in style
+                            ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
                          ])
                     rl_table_cb.setStyle(TableStyle(style_cmds_cb))
+                    story.append(rl_table_cb)
+                    story.append(Spacer(1, 0.15*inch))
+                elif header_styled_row: # Only headers were defined (e.g. from row 0, but no data rows > 0)
+                    col_widths_cb = [page_content_width / actual_col_count] * actual_col_count if actual_col_count > 0 else [page_content_width]
+                    rl_table_cb = Table([header_styled_row], colWidths=col_widths_cb)
+                    rl_table_cb.setStyle(TableStyle([
+                        ('GRID', (0,0), (-1,-1), 0.5, colors.grey), ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+                        ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
+                    ]))
                     story.append(rl_table_cb)
                     story.append(Spacer(1, 0.15*inch))
                 else:
                     story.append(Paragraph("No data for this table.", styles['Answer']))
 
-            # Render Pattern-Based Tables
+
+            # ... (Render Pattern-Based Tables - logic remains the same as previous full code response) ...
             for table_name_pb, info_pb in pattern_based_tables_data.items():
                 story.append(Paragraph(str(table_name_pb), styles['Question']))
                 data_for_pb_table: List[List[Paragraph]] = []
 
                 if info_pb['raw_json_csv_data']:
                     raw_str = info_pb['raw_json_csv_data']
-                    try: # JSON
+                    try: 
                         parsed = json.loads(raw_str)
                         if isinstance(parsed, list) and parsed:
                             if isinstance(parsed[0], dict):
@@ -404,20 +429,20 @@ class ExportSubmissionService:
                                 data_for_pb_table.append([Paragraph(str(h), styles['TableHeader']) for h in headers])
                                 for item_dict in parsed:
                                     data_for_pb_table.append([Paragraph(str(item_dict.get(h, "")), styles['TableCell']) for h in headers])
-                            elif isinstance(parsed[0], list): # List of lists
+                            elif isinstance(parsed[0], list): 
                                 data_for_pb_table.append([Paragraph(str(h_item), styles['TableHeader']) for h_item in parsed[0]])
                                 for r_item_list in parsed[1:]:
                                     data_for_pb_table.append([Paragraph(str(c_item), styles['TableCell']) for c_item in r_item_list])
-                    except json.JSONDecodeError: # CSV-like
+                    except json.JSONDecodeError: 
                         if '\n' in raw_str:
                             lines = [line.strip() for line in raw_str.strip().split('\n')]
                             sep = '~' if '~' in lines[0] else ','
                             if lines:
                                 data_for_pb_table.append([Paragraph(str(h.strip()), styles['TableHeader']) for h in lines[0].split(sep)])
                                 for data_line in lines[1:]:
-                                    data_for_pb_table.append([Paragraph(str(c.strip()), styles['TableCell']) for c in data_line.split(sep)])
+                                     data_for_pb_table.append([Paragraph(str(c.strip()), styles['TableCell']) for c in data_line.split(sep)])
                 
-                if not data_for_pb_table: # Fallback to structured headers/rows from pattern
+                if not data_for_pb_table: 
                     headers_from_pattern = sorted(info_pb['headers'], key=lambda x: x[0])
                     header_texts = [h_text for _, h_text in headers_from_pattern]
                     
@@ -435,7 +460,7 @@ class ExportSubmissionService:
                     for r_idx_pat in sorted(info_pb['row_order']):
                         r_data_pat = rows_from_pattern_dict.get(r_idx_pat, {})
                         data_for_pb_table.append([Paragraph(str(r_data_pat.get(c_idx_pat, "")), styles['TableCell']) for c_idx_pat in range(current_max_cols)])
-
+                
                 if data_for_pb_table:
                     actual_cols_pb = len(data_for_pb_table[0]) if data_for_pb_table else 1
                     col_widths_pb = [page_content_width / actual_cols_pb] * actual_cols_pb if actual_cols_pb > 0 else [page_content_width]
@@ -443,20 +468,18 @@ class ExportSubmissionService:
                     rl_table_pb.setStyle(TableStyle([
                         ('GRID', (0,0), (-1,-1), 0.5, colors.grey), ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
                         ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
-                        # ('TEXTCOLOR', (0,0), (-1,0), colors.black), # In Style
-                        # ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold') # In Style
                     ]))
                     story.append(rl_table_pb)
                     story.append(Spacer(1, 0.15*inch))
                 else:
-                    story.append(Paragraph("No data for this table.", styles['Answer']))
+                    story.append(Paragraph("No data available for this table.", styles['Answer']))
 
-            # Signatures
+            # ... (Signatures - logic remains the same as previous full code response) ...
             if include_signatures:
                 sig_attachments = Attachment.query.filter_by(form_submission_id=submission_id, is_signature=True, is_deleted=False).all()
                 if sig_attachments:
                     story.append(Spacer(1, SIGNATURE_FORMATTING['section_space_before']))
-                    story.append(Paragraph("Signatures:", styles['SignatureLabel'])) # Using SignatureLabel style
+                    story.append(Paragraph("Signatures:", styles['SignatureLabel'])) 
                     story.append(Spacer(1, 0.1 * inch))
 
                     sig_scale = signatures_size / 100.0
@@ -464,8 +487,8 @@ class ExportSubmissionService:
                     sig_img_h = SIGNATURE_FORMATTING['image_height'] * sig_scale
 
                     if signatures_alignment.lower() == "horizontal" and len(sig_attachments) > 1:
-                        max_sigs_per_row = int(page_content_width / (sig_img_w + 0.2*inch)) if sig_img_w > 0 else 1 # Add spacing
-                        max_sigs_per_row = max(1, max_sigs_per_row) # At least 1
+                        max_sigs_per_row = int(page_content_width / (sig_img_w + 0.2*inch)) if sig_img_w > 0 else 1 
+                        max_sigs_per_row = max(1, max_sigs_per_row) 
 
                         sig_rows_data = []
                         current_sig_row_items = []
@@ -474,8 +497,7 @@ class ExportSubmissionService:
                             file_path = os.path.join(upload_path, att.file_path)
                             sig_author = att.signature_author or "N/A"
                             sig_position = att.signature_position or "N/A"
-                            # (Add filename parsing for author/position if needed, as in original code)
-
+                            
                             if os.path.exists(file_path):
                                 try:
                                     sig_block_elements.append(Image(file_path, width=sig_img_w, height=sig_img_h))
@@ -492,19 +514,17 @@ class ExportSubmissionService:
                                 current_sig_row_items = []
                         
                         for sig_row_group in sig_rows_data:
-                            # Create a table for this row of signatures
                             col_w_sig = page_content_width / len(sig_row_group) if sig_row_group else page_content_width
                             sig_table_this_row = Table([sig_row_group], colWidths=[col_w_sig]*len(sig_row_group))
                             sig_table_this_row.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'TOP'), ('LEFTPADDING', (0,0), (-1,-1), 5)]))
                             story.append(sig_table_this_row)
                             story.append(Spacer(1, 0.1*inch))
-                    else: # Vertical
+                    else: 
                         for att in sig_attachments:
                             sig_block_vertical: List[Flowable] = []
                             file_path = os.path.join(upload_path, att.file_path)
                             sig_author_v = att.signature_author or "N/A"
                             sig_position_v = att.signature_position or "N/A"
-                            # (Add filename parsing for author/position if needed)
 
                             if os.path.exists(file_path):
                                 try: 
@@ -512,13 +532,13 @@ class ExportSubmissionService:
                                 except Exception: sig_block_vertical.append(Paragraph("<i>[Signature Image Error]</i>", styles['SignatureText']))
                             else: sig_block_vertical.append(Paragraph("<i>[Signature Image Missing]</i>", styles['SignatureText']))
                             
-                            story.extend(sig_block_vertical) # Add image if exists
+                            story.extend(sig_block_vertical) 
                             story.append(Paragraph("<b>___________________________</b>", styles['SignatureText']))
                             story.append(Paragraph(f"<b>Signed by:</b> {sig_author_v}", styles['SignatureText']))
                             story.append(Paragraph(f"<b>Position:</b> {sig_position_v}", styles['SignatureText']))
                             story.append(Spacer(1, SIGNATURE_FORMATTING['space_between']))
                     story.append(Spacer(1, SIGNATURE_FORMATTING['section_space_after']))
-            
+
             doc.build(story)
             buffer.seek(0)
             return buffer, None
@@ -526,14 +546,6 @@ class ExportSubmissionService:
         except Exception as e:
             logger.error(f"Error exporting structured submission to PDF: {submission_id} - {str(e)}", exc_info=True)
             return None, f"An error occurred during PDF generation: {str(e)}"
-
-    # Keep other static methods from the original file if they are used by other parts of your application
-    # For example, export_submission_to_pdf might call export_structured_submission_to_pdf
-    # or have its own simpler implementation.
-    # The _consolidate_table_questions, _parse_table_structure, _format_answer_simple, etc.
-    # methods from the original file are not directly used in this refactored
-    # export_structured_submission_to_pdf, so their inclusion depends on whether other
-    # functionalities rely on them.
 
     @staticmethod
     def export_submission_to_pdf(
@@ -548,12 +560,7 @@ class ExportSubmissionService:
         header_alignment: str = "center",
         signatures_size: float = 100,
         signatures_alignment: str = "vertical"
-        # Removed 'structured' parameter as this will now be the default enhanced behavior
     ) -> Tuple[Optional[BytesIO], Optional[str]]:
-        """
-        Exports a form submission to PDF, now defaults to the structured approach.
-        This method can be a wrapper or an alias to export_structured_submission_to_pdf.
-        """
         logger.info(f"Calling enhanced export_structured_submission_to_pdf for submission_id: {submission_id}")
         return ExportSubmissionService.export_structured_submission_to_pdf(
             submission_id=submission_id,
@@ -568,11 +575,6 @@ class ExportSubmissionService:
             signatures_size=signatures_size,
             signatures_alignment=signatures_alignment
         )
-
-    # If the methods below are not used by any other part of your application after this refactor,
-    # they could potentially be removed. Review their usage carefully.
-    # For completeness, I am including them as they were in the original provided snippets,
-    # but they are not directly called by the refactored export_structured_submission_to_pdf.
 
     @staticmethod
     def _consolidate_table_questions(answers): # Original function, not used by refactored structured PDF
@@ -750,28 +752,28 @@ class ExportSubmissionService:
 
     @staticmethod
     def _get_signature_images(submission_id: int, upload_path: str) -> List[Dict]: # Original helper
-        signatures_list = [] # Renamed
-        attachments_list = Attachment.query.filter_by( # Renamed
+        signatures_list = [] 
+        attachments_list = Attachment.query.filter_by( 
             form_submission_id=submission_id,
             is_signature=True,
             is_deleted=False
         ).all()
         
-        for attachment_item in attachments_list: # Renamed
-            file_path_item = os.path.join(upload_path, attachment_item.file_path) # Renamed
-            exists_bool = os.path.exists(file_path_item) # Renamed
+        for attachment_item in attachments_list: 
+            file_path_item = os.path.join(upload_path, attachment_item.file_path) 
+            exists_bool = os.path.exists(file_path_item) 
             
-            sig_pos_item = attachment_item.signature_position # Renamed
-            sig_auth_item = attachment_item.signature_author # Renamed
+            sig_pos_item = attachment_item.signature_position 
+            sig_auth_item = attachment_item.signature_author 
             
             if not sig_pos_item or not sig_auth_item:
                 try:
-                    filename_str = os.path.basename(attachment_item.file_path) # Renamed
-                    parts_list = filename_str.split('+') # Renamed
+                    filename_str = os.path.basename(attachment_item.file_path) 
+                    parts_list = filename_str.split('+') 
                     if len(parts_list) >= 4:
                         if not sig_pos_item: sig_pos_item = parts_list[1].replace('_', ' ')
                         if not sig_auth_item: sig_auth_item = parts_list[2].replace('_', ' ')
-                except Exception as e_sig: # Renamed
+                except Exception as e_sig: 
                     logger.warning(f"Could not parse signature metadata from filename: {str(e_sig)}")
             
             signatures_list.append({

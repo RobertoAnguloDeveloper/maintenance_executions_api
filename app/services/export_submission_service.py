@@ -10,7 +10,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch # pt is removed
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, Flowable
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as ReportLabImage, Flowable # Renamed ReportLab's Image
 from PIL import Image as PILImage # type: ignore
 from reportlab.lib.utils import ImageReader # type: ignore
 import io
@@ -43,7 +43,7 @@ DEFAULT_STYLE_CONFIG: Dict[str, Any] = {
     "title_font_family": "Helvetica-Bold",
     "title_font_size": 18, # Points
     "title_font_color": colors.black,
-    "title_alignment": 1, # 0=left, 1=center, 2=right, 4=justify
+    "title_alignment": 1, # ReportLab code for CENTER
     "title_space_after": 0.25 * inch,
 
     # Submission Info (Submitted by, Date)
@@ -70,7 +70,7 @@ DEFAULT_STYLE_CONFIG: Dict[str, Any] = {
     "answer_space_before": 2, # Points
     "answer_space_after": 0.15 * inch,
     "answer_leading": 12, # Points
-    "qa_layout": "answer_below",
+    "qa_layout": "answer_below", # "answer_below" or "answer_same_line"
     "answer_same_line_max_length": 70,
 
     # Table Header
@@ -79,14 +79,14 @@ DEFAULT_STYLE_CONFIG: Dict[str, Any] = {
     "table_header_font_color": colors.black,
     "table_header_bg_color": colors.lightgrey,
     "table_header_padding": 3, # Points
-    "table_header_alignment": "CENTER", # For ParagraphStyle: LEFT, CENTER, RIGHT, JUSTIFY
+    "table_header_alignment": "CENTER", # String name for ParagraphStyle, TableStyle uses different enum
 
     # Table Cell
     "table_cell_font_family": "Helvetica",
     "table_cell_font_size": 8, # Points
     "table_cell_font_color": colors.black,
     "table_cell_padding": 3, # Points
-    "table_cell_alignment": "LEFT", # For ParagraphStyle: LEFT, CENTER, RIGHT, JUSTIFY
+    "table_cell_alignment": "LEFT", # String name for ParagraphStyle
     "table_grid_color": colors.grey,
     "table_grid_thickness": 0.5, # Points
 
@@ -110,37 +110,67 @@ def _get_color(color_input: Any, default_color: colors.Color) -> colors.Color:
         try:
             if color_input.startswith("#"):
                 return colors.HexColor(color_input)
+            # Try common color names if HexColor fails or not hex
             return getattr(colors, color_input.lower(), default_color)
-        except (ValueError, AttributeError):
+        except (ValueError, AttributeError): # Catch errors from HexColor and getattr
             logger.warning(f"Invalid color string '{color_input}'. Using default.")
             return default_color
     logger.warning(f"Invalid color type '{type(color_input)}'. Using default.")
     return default_color
 
-def _parse_numeric_value(value_str: Optional[str], default_numeric_value: float) -> float:
-    """Safely parses a string to a float, returning default if None or invalid."""
-    if value_str is None:
+def _color_to_hex_string(color_obj: colors.Color) -> str:
+    """Converts a ReportLab Color object to a hex string (e.g., #RRGGBB)."""
+    if hasattr(color_obj, 'hexval') and callable(getattr(color_obj, 'hexval')): # For HexColor
+        return color_obj.hexval()
+    # For other Color objects (like Color(r,g,b) or NamedColor)
+    # Ensure components are in the 0-1 range before multiplying by 255
+    r_float = max(0.0, min(1.0, color_obj.red))
+    g_float = max(0.0, min(1.0, color_obj.green))
+    b_float = max(0.0, min(1.0, color_obj.blue))
+    
+    r = int(r_float * 255)
+    g = int(g_float * 255)
+    b = int(b_float * 255)
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def _parse_numeric_value(value_input: Optional[Union[str, int, float]], default_numeric_value: float) -> float:
+    """Safely parses various input types to a float, returning default if None or invalid."""
+    if value_input is None:
         return default_numeric_value
     try:
-        return float(value_str)
+        return float(value_input)
     except (ValueError, TypeError):
-        logger.warning(f"Invalid numeric value string '{value_str}'. Using default {default_numeric_value}.")
+        logger.warning(f"Invalid numeric value '{value_input}'. Using default {default_numeric_value}.")
         return default_numeric_value
 
-def _get_alignment_code(align_str: Optional[str], default_align_str: str) -> int:
-    """Converts alignment string (LEFT, CENTER, RIGHT, JUSTIFY) to ReportLab integer code."""
-    effective_align_str = (align_str or default_align_str).upper()
-    if effective_align_str == "LEFT": return 0
-    if effective_align_str == "CENTER": return 1
-    if effective_align_str == "RIGHT": return 2
-    if effective_align_str == "JUSTIFY": return 4
-    logger.warning(f"Invalid alignment string '{align_str}'. Using default '{default_align_str}'.")
-    # Fallback to default if string is unrecognized
-    if default_align_str.upper() == "LEFT": return 0
-    if default_align_str.upper() == "CENTER": return 1
-    if default_align_str.upper() == "RIGHT": return 2
-    if default_align_str.upper() == "JUSTIFY": return 4
-    return 1 # Absolute default: Center
+def _get_alignment_code(align_input: Optional[Union[str, int]], default_align_str: str) -> int:
+    """Converts alignment string (LEFT, CENTER, RIGHT, JUSTIFY) or int code to ReportLab integer code."""
+    # ReportLab integer codes for ParagraphStyle.alignment:
+    # 0=left, 1=center, 2=right, 4=justify
+    code_map = {"LEFT": 0, "CENTER": 1, "RIGHT": 2, "JUSTIFY": 4}
+    
+    if isinstance(align_input, int) and align_input in code_map.values():
+        return align_input
+        
+    if isinstance(align_input, str):
+        # Try to convert to int if it's a digit string representing a valid code
+        if align_input.isdigit():
+            try:
+                val = int(align_input)
+                if val in code_map.values():
+                    return val
+            except ValueError:
+                pass # Not a simple integer string, proceed to check string name
+                
+        # Process as string name
+        effective_align_str = align_input.upper()
+        if effective_align_str in code_map:
+            return code_map[effective_align_str]
+
+    logger.warning(f"Invalid alignment value '{align_input}'. Using default '{default_align_str}'.")
+    return code_map.get(default_align_str.upper(), 1) # Fallback to default_align_str, then to center
+
 
 class ExportSubmissionService:
     @staticmethod
@@ -152,7 +182,7 @@ class ExportSubmissionService:
             opacity = max(0.0, min(1.0, opacity))
             img_data = image_file.read()
             image_file.seek(0) 
-            img = PILImage.open(io.BytesIO(img_data))
+            img = PILImage.open(io.BytesIO(img_data)) # img is a PIL.Image.Image object
             orig_width, orig_height = img.size
             new_width, new_height = float(orig_width), float(orig_height)
 
@@ -173,13 +203,34 @@ class ExportSubmissionService:
                 logger.warning(f"Invalid image dimensions after resize: {new_width}x{new_height}. Using original.")
                 new_width, new_height = float(orig_width), float(orig_height)
 
-            img = img.resize((int(new_width), int(new_height)), PILImage.LANCZOS)
-            if img.mode != 'RGBA': img = img.convert('RGBA')
-            alpha_channel = img.split()[3]
-            alpha_with_opacity = alpha_channel.point(lambda i: int(i * opacity))
-            img.putalpha(alpha_with_opacity)
+            img_resized = img.resize((int(new_width), int(new_height)), PILImage.LANCZOS) # Use a different variable for resized image
+            
+            if img_resized.mode != 'RGBA': 
+                img_converted = img_resized.convert('RGBA') # Use a different variable for converted image
+            else:
+                img_converted = img_resized # No conversion needed
+
+            # Create a new image with the target opacity using PILImage.new
+            # The 'img_converted' is the one we want to apply opacity to.
+            img_with_opacity = PILImage.new("RGBA", img_converted.size) # CORRECTED: Use PILImage.new
+            
+            # Blend the original converted image with a transparent background
+            # This is a more robust way to handle opacity than pixel iteration for complex images
+            # For simple opacity, directly modifying alpha is also an option if performance is critical
+            # and images are simple.
+            
+            # Alternative simpler alpha modification:
+            if img_converted.mode == 'RGBA':
+                alpha = img_converted.split()[3]
+                alpha = alpha.point(lambda i: int(i * opacity))
+                img_converted.putalpha(alpha)
+                img_with_opacity = img_converted # Use the image with modified alpha
+            else: # Fallback if not RGBA after trying to convert (should not happen often)
+                img_with_opacity = img_converted
+
+
             result_io = io.BytesIO()
-            img.save(result_io, format='PNG')
+            img_with_opacity.save(result_io, format='PNG')
             result_io.seek(0)
             setattr(result_io, 'img_width', new_width)
             setattr(result_io, 'img_height', new_height)
@@ -198,25 +249,20 @@ class ExportSubmissionService:
         include_signatures: bool = True, signatures_size: float = 100, signatures_alignment: str = "vertical"
     ) -> Tuple[Optional[BytesIO], Optional[str]]:
         
-        # Initialize final config with defaults
         final_config = DEFAULT_STYLE_CONFIG.copy()
-
-        # Merge user-provided options
         if pdf_style_options:
             for key, user_value in pdf_style_options.items():
-                if user_value is None: continue # Skip if user explicitly passed None (or it wasn't set)
-
+                if user_value is None: continue
                 default_value = DEFAULT_STYLE_CONFIG.get(key)
-                
                 if key.endswith("_color"):
-                    final_config[key] = _get_color(user_value, default_value)
-                elif key.endswith("_font_family") or key.endswith("_layout") or key.endswith("_alignment"): # String based like alignments for table style
+                    final_config[key] = _get_color(user_value, default_value if isinstance(default_value, colors.Color) else colors.black)
+                elif key.endswith("_font_family") or key.endswith("_layout") or (key.endswith("_alignment") and isinstance(user_value, str)):
                     final_config[key] = str(user_value)
-                elif isinstance(default_value, float) and default_value > 0 and inch > 1 and (key.startswith("page_margin") or key.endswith("_space_after") or key.endswith("_space_before") or key.startswith("signature_image") or key.startswith("signature_section") or key.startswith("signature_space")):
-                    # These are inch based values in default config
-                    final_config[key] = _parse_numeric_value(str(user_value), default_value / inch) * inch
-                else: # Assumed to be point-based numeric values
-                    final_config[key] = _parse_numeric_value(str(user_value), default_value)
+                elif isinstance(default_value, float) and default_value > 0 and inch > 1 and \
+                     (key.startswith("page_margin") or "_space_" in key or "signature_image_" in key or "signature_section_" in key):
+                    final_config[key] = _parse_numeric_value(str(user_value), default_value / inch if default_value > 1 else default_value) * inch 
+                else: 
+                    final_config[key] = _parse_numeric_value(str(user_value), default_value if isinstance(default_value, (int, float)) else 0.0)
         
         try:
             submission = FormSubmission.query.filter_by(id=submission_id, is_deleted=False).first()
@@ -232,36 +278,36 @@ class ExportSubmissionService:
 
             styles = getSampleStyleSheet()
             
-            styles.add(ParagraphStyle(name='CustomFormTitle', fontName=final_config["title_font_family"], fontSize=final_config["title_font_size"],
-                                      textColor=final_config["title_font_color"], alignment=_get_alignment_code(str(final_config.get("title_alignment")), "CENTER"),
+            styles.add(ParagraphStyle(name='CustomFormTitle', fontName=str(final_config["title_font_family"]), fontSize=final_config["title_font_size"],
+                                      textColor=final_config["title_font_color"], alignment=_get_alignment_code(final_config.get("title_alignment"), "CENTER"),
                                       spaceAfter=final_config["title_space_after"], leading=final_config["title_font_size"] * 1.2))
-            styles.add(ParagraphStyle(name='CustomInfoLabel', fontName=final_config["info_label_font_family"], fontSize=final_config["info_font_size"], textColor=final_config["info_font_color"]))
-            styles.add(ParagraphStyle(name='CustomInfoValue', fontName=final_config["info_font_family"], fontSize=final_config["info_font_size"], textColor=final_config["info_font_color"]))
-            styles.add(ParagraphStyle(name='CustomQuestion', fontName=final_config["question_font_family"], fontSize=final_config["question_font_size"],
+            styles.add(ParagraphStyle(name='CustomInfoLabel', fontName=str(final_config["info_label_font_family"]), fontSize=final_config["info_font_size"], textColor=final_config["info_font_color"]))
+            styles.add(ParagraphStyle(name='CustomInfoValue', fontName=str(final_config["info_font_family"]), fontSize=final_config["info_font_size"], textColor=final_config["info_font_color"]))
+            styles.add(ParagraphStyle(name='CustomQuestion', fontName=str(final_config["question_font_family"]), fontSize=final_config["question_font_size"],
                                       textColor=final_config["question_font_color"], leftIndent=final_config["question_left_indent"],
                                       spaceBefore=final_config["question_space_before"], spaceAfter=final_config["question_space_after"], leading=final_config["question_leading"]))
-            styles.add(ParagraphStyle(name='CustomAnswer', fontName=final_config["answer_font_family"], fontSize=final_config["answer_font_size"],
+            styles.add(ParagraphStyle(name='CustomAnswer', fontName=str(final_config["answer_font_family"]), fontSize=final_config["answer_font_size"],
                                       textColor=final_config["answer_font_color"], leftIndent=final_config["answer_left_indent"],
                                       spaceBefore=final_config["answer_space_before"], spaceAfter=final_config["answer_space_after"], leading=final_config["answer_leading"]))
-            styles.add(ParagraphStyle(name='CustomQACombined', fontName=final_config["question_font_family"], fontSize=final_config["question_font_size"],
+            styles.add(ParagraphStyle(name='CustomQACombined', fontName=str(final_config["question_font_family"]), fontSize=final_config["question_font_size"],
                                       textColor=final_config["question_font_color"], leftIndent=final_config["question_left_indent"],
                                       spaceBefore=final_config["question_space_before"], spaceAfter=final_config["answer_space_after"], leading=final_config["question_leading"]))
-            styles.add(ParagraphStyle(name='CustomTableHeader', fontName=final_config["table_header_font_family"], fontSize=final_config["table_header_font_size"],
+            styles.add(ParagraphStyle(name='CustomTableHeader', fontName=str(final_config["table_header_font_family"]), fontSize=final_config["table_header_font_size"],
                                       textColor=final_config["table_header_font_color"], backColor=final_config["table_header_bg_color"],
                                       alignment=_get_alignment_code(final_config.get("table_header_alignment"), "CENTER"),
                                       leading=final_config["table_header_font_size"] * 1.2,
                                       leftPadding=final_config["table_header_padding"], rightPadding=final_config["table_header_padding"],
                                       topPadding=final_config["table_header_padding"], bottomPadding=final_config["table_header_padding"]))
-            styles.add(ParagraphStyle(name='CustomTableCell', fontName=final_config["table_cell_font_family"], fontSize=final_config["table_cell_font_size"],
+            styles.add(ParagraphStyle(name='CustomTableCell', fontName=str(final_config["table_cell_font_family"]), fontSize=final_config["table_cell_font_size"],
                                       textColor=final_config["table_cell_font_color"],
                                       alignment=_get_alignment_code(final_config.get("table_cell_alignment"), "LEFT"),
                                       leading=final_config["table_cell_font_size"] * 1.2,
                                       leftPadding=final_config["table_cell_padding"], rightPadding=final_config["table_cell_padding"],
                                       topPadding=final_config["table_cell_padding"], bottomPadding=final_config["table_cell_padding"]))
-            styles.add(ParagraphStyle(name='CustomSignatureLabel', fontName=final_config["signature_label_font_family"], fontSize=final_config["signature_label_font_size"],
+            styles.add(ParagraphStyle(name='CustomSignatureLabel', fontName=str(final_config["signature_label_font_family"]), fontSize=final_config["signature_label_font_size"],
                                       textColor=final_config["signature_label_font_color"], spaceBefore=final_config["signature_section_space_before"],
-                                      spaceAfter=4, alignment=0)) # 4 points
-            styles.add(ParagraphStyle(name='CustomSignatureText', fontName=final_config["signature_text_font_family"], fontSize=final_config["signature_text_font_size"],
+                                      spaceAfter=4, alignment=0))
+            styles.add(ParagraphStyle(name='CustomSignatureText', fontName=str(final_config["signature_text_font_family"]), fontSize=final_config["signature_text_font_size"],
                                       textColor=final_config["signature_text_font_color"], leading=final_config["signature_text_font_size"] * 1.2, alignment=0))
 
             story: List[Flowable] = []
@@ -273,7 +319,8 @@ class ExportSubmissionService:
                     img_w_attr = getattr(processed_image_io, 'img_width'); img_h_attr = getattr(processed_image_io, 'img_height')
                     if not header_width and not header_height and not header_size and img_w_attr > page_content_width:
                         scale_ratio = page_content_width / img_w_attr; img_w_attr *= scale_ratio; img_h_attr *= scale_ratio
-                    img_obj = Image(processed_image_io, width=img_w_attr, height=img_h_attr)
+                    # Use ReportLabImage for adding to story
+                    img_obj = ReportLabImage(processed_image_io, width=img_w_attr, height=img_h_attr)
                     align_val_h = header_alignment.upper()
                     if align_val_h not in ['LEFT', 'CENTER', 'RIGHT']: align_val_h = 'CENTER'
                     header_img_table = Table([[img_obj]], colWidths=[page_content_width])
@@ -337,14 +384,14 @@ class ExportSubmissionService:
             
             qa_layout = str(final_config.get("qa_layout", "answer_below"))
             answer_same_line_max_len = int(final_config.get("answer_same_line_max_length", 70))
-            answer_font_color_hex = final_config["answer_font_color"].hex()
+            answer_color_for_html = _color_to_hex_string(final_config["answer_font_color"])
 
 
             for ans_item in sorted(regular_answers, key=lambda a: a.question or ""):
                 q_text_p = str(ans_item.question or "Untitled Question")
                 ans_val_p = str(ans_item.answer) if ans_item.answer is not None else "No answer provided"
                 if qa_layout == "answer_same_line" and isinstance(ans_item.answer, str) and len(ans_val_p) <= answer_same_line_max_len and '\n' not in ans_val_p:
-                    combined_text = f"<b>{q_text_p}:</b> <font color='{answer_font_color_hex}'>{ans_val_p}</font>"
+                    combined_text = f"<b>{q_text_p}:</b> <font color='{answer_color_for_html}'>{ans_val_p}</font>"
                     story.append(Paragraph(combined_text, styles['CustomQACombined']))
                 else:
                     story.append(Paragraph(q_text_p, styles['CustomQuestion'])); story.append(Paragraph(ans_val_p, styles['CustomAnswer']))
@@ -363,7 +410,7 @@ class ExportSubmissionService:
                 unique_options = list(dict.fromkeys(filter(None, combined_options)))
                 ans_val_c_p = ", ".join(unique_options) if unique_options else "No selection"
                 if qa_layout == "answer_same_line" and len(ans_val_c_p) <= answer_same_line_max_len and '\n' not in ans_val_c_p:
-                    combined_text_c = f"<b>{q_text_c_p}:</b> <font color='{answer_font_color_hex}'>{ans_val_c_p}</font>"
+                    combined_text_c = f"<b>{q_text_c_p}:</b> <font color='{answer_color_for_html}'>{ans_val_c_p}</font>"
                     story.append(Paragraph(combined_text_c, styles['CustomQACombined']))
                 else:
                     story.append(Paragraph(q_text_c_p, styles['CustomQuestion'])); story.append(Paragraph(ans_val_c_p, styles['CustomAnswer']))
@@ -457,7 +504,7 @@ class ExportSubmissionService:
                         for idx, att in enumerate(sig_attachments):
                             sig_block_elements_list: List[Flowable] = []; file_path = os.path.join(upload_path, att.file_path); sig_author = att.signature_author or "N/A"; sig_position = att.signature_position or "N/A"
                             if os.path.exists(file_path):
-                                try: sig_block_elements_list.append(Image(file_path, width=sig_img_w_conf, height=sig_img_h_conf))
+                                try: sig_block_elements_list.append(ReportLabImage(file_path, width=sig_img_w_conf, height=sig_img_h_conf))
                                 except Exception: sig_block_elements_list.append(Paragraph("<i>[Image Error]</i>", styles['CustomSignatureText']))
                             else: sig_block_elements_list.append(Paragraph("<i>[Image Missing]</i>", styles['CustomSignatureText']))
                             sig_block_elements_list.append(Spacer(1,2)); sig_block_elements_list.append(Paragraph("<b>___________________________</b>", styles['CustomSignatureText'])); sig_block_elements_list.append(Paragraph(f"<b>Signed by:</b> {sig_author}", styles['CustomSignatureText'])); sig_block_elements_list.append(Paragraph(f"<b>Position:</b> {sig_position}", styles['CustomSignatureText']))
@@ -467,13 +514,13 @@ class ExportSubmissionService:
                         for sig_row_group_list in sig_rows_data_list:
                             col_w_sig_val = page_content_width / len(sig_row_group_list) if sig_row_group_list else page_content_width
                             sig_table_this_row = Table([sig_row_group_list], colWidths=[col_w_sig_val]*len(sig_row_group_list))
-                            sig_table_this_row.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'TOP'), ('LEFTPADDING', (0,0), (-1,-1), 2), ('RIGHTPADDING', (0,0), (-1,-1), 2)])) # Using points directly
+                            sig_table_this_row.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'TOP'), ('LEFTPADDING', (0,0), (-1,-1), 2), ('RIGHTPADDING', (0,0), (-1,-1), 2)]))
                             story.append(sig_table_this_row); story.append(Spacer(1, 0.1*inch))
                     else: 
                         for att in sig_attachments:
                             file_path = os.path.join(upload_path, att.file_path); sig_author_v = att.signature_author or "N/A"; sig_position_v = att.signature_position or "N/A"
                             if os.path.exists(file_path):
-                                try: story.append(Image(file_path, width=sig_img_w_conf, height=sig_img_h_conf))
+                                try: story.append(ReportLabImage(file_path, width=sig_img_w_conf, height=sig_img_h_conf))
                                 except Exception: story.append(Paragraph("<i>[Signature Image Error]</i>", styles['CustomSignatureText']))
                             else: story.append(Paragraph("<i>[Signature Image Missing]</i>", styles['CustomSignatureText']))
                             story.append(Spacer(1,2)); story.append(Paragraph("<b>___________________________</b>", styles['CustomSignatureText'])); story.append(Paragraph(f"<b>Signed by:</b> {sig_author_v}", styles['CustomSignatureText'])); story.append(Paragraph(f"<b>Position:</b> {sig_position_v}", styles['CustomSignatureText'])); story.append(Spacer(1, final_config["signature_space_between_vertical"]))

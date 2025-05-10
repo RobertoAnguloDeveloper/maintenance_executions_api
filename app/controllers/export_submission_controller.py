@@ -166,10 +166,30 @@ class ExportSubmissionController:
         header_alignment: str = "center",
         signatures_size: float = 100,
         signatures_alignment: str = "vertical",
-        structured: bool = False  # New parameter
+        structured: bool = True  # New parameter with default True
     ) -> Tuple[Optional[bytes], Optional[Dict], Optional[str]]:
         """
-        Export a form submission to PDF with header image and optional table structuring
+        Export a form submission to PDF with authorization checks and header image
+        
+        Args:
+            submission_id: ID of the form submission
+            current_user: Username of current user
+            user_role: Role of the current user
+            header_image: Optional image file for PDF header
+            header_opacity: Opacity for header image (0.0 to 1.0)
+            header_size: Optional size percentage (keeping aspect ratio)
+            header_width: Optional specific width in pixels (ignores aspect ratio if height also provided)
+            header_height: Optional specific height in pixels (ignores aspect ratio if width also provided)
+            header_alignment: Alignment of the header image (left, center, right)
+            signatures_size: Size percentage for signature images (100 = original size)
+            signatures_alignment: Layout for signatures (vertical, horizontal)
+            structured: Whether to structure tables and dropdowns in the PDF
+            
+        Returns:
+            Tuple containing: 
+            - PDF bytes or None
+            - Metadata dict (for filename, etc.) or None
+            - Error message or None
         """
         try:
             # First check if submission exists
@@ -179,37 +199,22 @@ class ExportSubmissionController:
             
             upload_path = current_app.config['UPLOAD_FOLDER']
             
-            # Call the appropriate service method based on structured parameter
-            if structured:
-                # Use the structured version (if you implemented the method above)
-                pdf_buffer, error = ExportSubmissionService.export_submission_to_pdf(
-                    submission_id=submission_id,
-                    upload_path=upload_path,
-                    include_signatures=True,
-                    header_image=header_image,
-                    header_opacity=header_opacity,
-                    header_size=header_size,
-                    header_width=header_width,
-                    header_height=header_height,
-                    header_alignment=header_alignment,
-                    signatures_size=signatures_size,
-                    signatures_alignment=signatures_alignment
-                )
-            else:
-                # Use the original unstructured version
-                pdf_buffer, error = ExportSubmissionService.export_submission_to_pdf(
-                    submission_id=submission_id,
-                    upload_path=upload_path,
-                    include_signatures=True,
-                    header_image=header_image,
-                    header_opacity=header_opacity,
-                    header_size=header_size,
-                    header_width=header_width,
-                    header_height=header_height,
-                    header_alignment=header_alignment,
-                    signatures_size=signatures_size,
-                    signatures_alignment=signatures_alignment
-                )
+            # Call the service
+            pdf_buffer, error = ExportSubmissionService.export_submission_to_pdf(
+                submission_id=submission_id,
+                upload_path=upload_path,
+                include_signatures=True,
+                header_image=header_image,
+                header_opacity=header_opacity,
+                header_size=header_size,
+                header_width=header_width,
+                header_height=header_height,
+                header_alignment=header_alignment,
+                signatures_size=signatures_size,
+                signatures_alignment=signatures_alignment
+                # Note: No need to pass structured parameter since we've updated the
+                # export_submission_to_pdf method to always handle table structuring
+            )
             
             if error:
                 logger.error(f"Error exporting submission {submission_id} to PDF: {error}")
@@ -220,13 +225,18 @@ class ExportSubmissionController:
             form_name = submission.form.title.replace(" ", "_")
             filename = f"{form_name}_submission_{submission_id}_{submission_date}.pdf"
             
+            # Add structured indicator to filename if requested
+            if structured:
+                filename = filename.replace('.pdf', '_structured.pdf')
+            
             metadata = {
                 "filename": filename,
                 "mimetype": "application/pdf",
                 "submission_id": submission_id,
                 "form_title": submission.form.title,
                 "submitted_by": submission.submitted_by,
-                "submitted_at": submission.submitted_at.isoformat()
+                "submitted_at": submission.submitted_at.isoformat(),
+                "structured": structured
             }
             
             return pdf_buffer.getvalue(), metadata, None

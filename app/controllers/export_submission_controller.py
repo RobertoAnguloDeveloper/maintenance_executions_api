@@ -86,25 +86,6 @@ class ExportSubmissionController:
     ) -> Tuple[Optional[bytes], Optional[Dict], Optional[str]]:
         """
         Export a form submission to PDF with authorization checks and header image
-        
-        Args:
-            submission_id: ID of the form submission
-            current_user: Username of current user
-            user_role: Role of the current user
-            header_image: Optional image file for PDF header
-            header_opacity: Opacity for header image (0.0 to 1.0)
-            header_size: Optional size percentage (keeping aspect ratio)
-            header_width: Optional specific width in pixels (ignores aspect ratio if height also provided)
-            header_height: Optional specific height in pixels (ignores aspect ratio if width also provided)
-            header_alignment: Alignment of the header image (left, center, right)
-            signatures_size: Size percentage for signature images (100 = original size)
-            signatures_alignment: Layout for signatures (vertical, horizontal)
-            
-        Returns:
-            Tuple containing: 
-            - PDF bytes or None
-            - Metadata dict (for filename, etc.) or None
-            - Error message or None
         """
         try:
             # First check if submission exists
@@ -113,6 +94,40 @@ class ExportSubmissionController:
                 return None, None, "Submission not found"
             
             upload_path = current_app.config['UPLOAD_FOLDER']
+            
+            # Validate parameters to avoid passing bad values
+            try:
+                # Convert to float if string
+                header_opacity = float(header_opacity) if header_opacity is not None else 1.0
+                header_opacity = max(0.0, min(1.0, header_opacity))  # Ensure within range
+                
+                if header_size is not None:
+                    header_size = float(header_size) 
+                    
+                if header_width is not None:
+                    header_width = float(header_width)
+                    
+                if header_height is not None:
+                    header_height = float(header_height)
+                    
+                signatures_size = float(signatures_size) if signatures_size is not None else 100.0
+                
+                # Validate alignment values
+                if header_alignment not in ["left", "center", "right"]:
+                    header_alignment = "center"  # Default to center
+                    
+                if signatures_alignment not in ["vertical", "horizontal"]:
+                    signatures_alignment = "vertical"  # Default to vertical
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Parameter validation error: {str(e)}")
+                # Use defaults instead of failing
+                header_opacity = 1.0
+                header_size = None
+                header_width = None
+                header_height = None
+                header_alignment = "center"
+                signatures_size = 100.0
+                signatures_alignment = "vertical"
             
             # Call the service
             pdf_buffer, error = ExportSubmissionService.export_submission_to_pdf(
@@ -132,7 +147,7 @@ class ExportSubmissionController:
             if error:
                 logger.error(f"Error exporting submission {submission_id} to PDF: {error}")
                 return None, None, error
-                
+                    
             # Create metadata for the file
             submission_date = submission.submitted_at.strftime("%Y%m%d")
             form_name = submission.form.title.replace(" ", "_")
@@ -151,4 +166,4 @@ class ExportSubmissionController:
             
         except Exception as e:
             logger.error(f"Error in export_submission_to_pdf controller: {str(e)}")
-            return None, None, str(e)
+            return None, None, f"Internal server error: {str(e)}"

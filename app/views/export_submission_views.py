@@ -60,6 +60,7 @@ def export_submission_to_pdf_with_logo(submission_id):
     - header_alignment: Alignment of the header image (left, center, right)
     - signatures_size: Size percentage for signature images (100 = original size)
     - signatures_alignment: Layout for signatures (vertical, horizontal)
+    - structured: Whether to structure tables and dropdowns (default: true)
     """
     try:
         current_user = get_jwt_identity()
@@ -74,13 +75,14 @@ def export_submission_to_pdf_with_logo(submission_id):
         header_alignment = "center"  # Default alignment
         signatures_size = 100  # Default signature size (100%)
         signatures_alignment = "vertical"  # Default signature alignment
+        structured = True  # Default to true for better formatting
         
         if 'header_image' in request.files:
             header_image = request.files['header_image']
             
             # Validate file type
-            if not header_image.filename or not header_image.filename.lower().endswith(('.png', '.jpg', '.jpeg')):
-                return jsonify({"error": "Header image must be PNG or JPEG format"}), 400
+            if not header_image.filename or not header_image.filename.lower().endswith(('.png', '.jpg', '.jpeg', '.svg')):
+                return jsonify({"error": "Header image must be PNG, JPEG, or SVG format"}), 400
         
         # Get opacity from form data (0-100 scale)
         if 'header_opacity' in request.form and request.form['header_opacity']:
@@ -144,6 +146,14 @@ def export_submission_to_pdf_with_logo(submission_id):
                 return jsonify({"error": f"Invalid signatures alignment. Must be one of: {', '.join(valid_sig_alignments)}"}), 400
             signatures_alignment = sig_alignment
         
+        # Get structured parameter
+        if 'structured' in request.form:
+            structured_value = request.form['structured'].lower()
+            structured = structured_value in ['true', 'yes', '1', 'on']
+        
+        # Log key parameters for debugging
+        logger.debug(f"Exporting PDF with logo: submission_id={submission_id}, header_size={header_size}, structured={structured}")
+        
         # Call the controller
         pdf_data, metadata, error = ExportSubmissionController.export_submission_to_pdf_with_logo(
             submission_id=submission_id,
@@ -156,7 +166,8 @@ def export_submission_to_pdf_with_logo(submission_id):
             header_height=header_height,
             header_alignment=header_alignment,
             signatures_size=signatures_size,
-            signatures_alignment=signatures_alignment
+            signatures_alignment=signatures_alignment,
+            structured=structured  # Pass the structured parameter
         )
         
         if error:

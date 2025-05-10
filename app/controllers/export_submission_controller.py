@@ -165,10 +165,11 @@ class ExportSubmissionController:
         header_height: float = None,
         header_alignment: str = "center",
         signatures_size: float = 100,
-        signatures_alignment: str = "vertical"
+        signatures_alignment: str = "vertical",
+        structured: bool = False  # New parameter
     ) -> Tuple[Optional[bytes], Optional[Dict], Optional[str]]:
         """
-        Export a form submission to PDF with authorization checks and header image
+        Export a form submission to PDF with header image and optional table structuring
         """
         try:
             # First check if submission exists
@@ -178,54 +179,37 @@ class ExportSubmissionController:
             
             upload_path = current_app.config['UPLOAD_FOLDER']
             
-            # Validate parameters to avoid passing bad values
-            try:
-                # Convert to float if string
-                header_opacity = float(header_opacity) if header_opacity is not None else 1.0
-                header_opacity = max(0.0, min(1.0, header_opacity))  # Ensure within range
-                
-                if header_size is not None:
-                    header_size = float(header_size) 
-                    
-                if header_width is not None:
-                    header_width = float(header_width)
-                    
-                if header_height is not None:
-                    header_height = float(header_height)
-                    
-                signatures_size = float(signatures_size) if signatures_size is not None else 100.0
-                
-                # Validate alignment values
-                if header_alignment not in ["left", "center", "right"]:
-                    header_alignment = "center"  # Default to center
-                    
-                if signatures_alignment not in ["vertical", "horizontal"]:
-                    signatures_alignment = "vertical"  # Default to vertical
-            except (ValueError, TypeError) as e:
-                logger.warning(f"Parameter validation error: {str(e)}")
-                # Use defaults instead of failing
-                header_opacity = 1.0
-                header_size = None
-                header_width = None
-                header_height = None
-                header_alignment = "center"
-                signatures_size = 100.0
-                signatures_alignment = "vertical"
-            
-            # Call the service
-            pdf_buffer, error = ExportSubmissionService.export_submission_to_pdf(
-                submission_id=submission_id,
-                upload_path=upload_path,
-                include_signatures=True,
-                header_image=header_image,
-                header_opacity=header_opacity,
-                header_size=header_size,
-                header_width=header_width,
-                header_height=header_height,
-                header_alignment=header_alignment,
-                signatures_size=signatures_size,
-                signatures_alignment=signatures_alignment
-            )
+            # Call the appropriate service method based on structured parameter
+            if structured:
+                # Use the structured version (if you implemented the method above)
+                pdf_buffer, error = ExportSubmissionService.export_submission_to_pdf(
+                    submission_id=submission_id,
+                    upload_path=upload_path,
+                    include_signatures=True,
+                    header_image=header_image,
+                    header_opacity=header_opacity,
+                    header_size=header_size,
+                    header_width=header_width,
+                    header_height=header_height,
+                    header_alignment=header_alignment,
+                    signatures_size=signatures_size,
+                    signatures_alignment=signatures_alignment
+                )
+            else:
+                # Use the original unstructured version
+                pdf_buffer, error = ExportSubmissionService.export_submission_to_pdf(
+                    submission_id=submission_id,
+                    upload_path=upload_path,
+                    include_signatures=True,
+                    header_image=header_image,
+                    header_opacity=header_opacity,
+                    header_size=header_size,
+                    header_width=header_width,
+                    header_height=header_height,
+                    header_alignment=header_alignment,
+                    signatures_size=signatures_size,
+                    signatures_alignment=signatures_alignment
+                )
             
             if error:
                 logger.error(f"Error exporting submission {submission_id} to PDF: {error}")
@@ -249,4 +233,4 @@ class ExportSubmissionController:
             
         except Exception as e:
             logger.error(f"Error in export_submission_to_pdf controller: {str(e)}")
-            return None, None, f"Internal server error: {str(e)}"
+            return None, None, str(e)

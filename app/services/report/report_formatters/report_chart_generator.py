@@ -59,6 +59,157 @@ class ReportChartGenerator:
             return None
         finally:
             plt.close('all')
+            
+    @staticmethod
+    def _add_cross_entity_charts(self, worksheet, cross_entity_charts, current_row):
+        """
+        Add cross-entity comparison charts to the worksheet
+        
+        Args:
+            worksheet: The XLSX worksheet
+            cross_entity_charts: Dictionary of chart names to BytesIO objects
+            current_row: The current row in the worksheet
+            
+        Returns:
+            The updated current row
+        """
+        if not cross_entity_charts:
+            return current_row
+            
+        chart_start_row = current_row + 2
+        chart_col = 1
+        
+        # Add section title
+        worksheet.merge_range(
+            chart_start_row - 1, 0,
+            chart_start_row - 1, 8,
+            "Cross-Entity Comparison Charts",
+            self.workbook.add_format({'bold': True, 'font_size': 14, 'align': 'center'})
+        )
+        
+        for chart_name, chart_bytes in cross_entity_charts.items():
+            if isinstance(chart_bytes, BytesIO):
+                try:
+                    chart_bytes.seek(0)
+                    
+                    display_name = chart_name.replace('cross_', '').replace('_vs_', ' vs ').replace('_', ' ').title()
+                    
+                    worksheet.write(
+                        chart_start_row, chart_col - 1, 
+                        display_name,
+                        self.workbook.add_format({'bold': True})
+                    )
+                    
+                    worksheet.insert_image(
+                        chart_start_row + 1, chart_col,
+                        f"chart_{chart_name}.png",
+                        {'image_data': chart_bytes, 'x_scale': 0.6, 'y_scale': 0.6}
+                    )
+                    chart_start_row += 20
+                except Exception as chart_err:
+                    logger.error(f"Failed cross-entity chart insert {chart_name}: {chart_err}")
+                    worksheet.write(chart_start_row, chart_col - 1, f"Error chart: {chart_name}")
+                    chart_start_row += 1
+                    
+        return chart_start_row
+            
+    @staticmethod
+    def generate_cross_entity_chart(
+        data_dict: Dict[str, pd.DataFrame], 
+        x_entity: str, 
+        x_column: str, 
+        y_entity: str, 
+        y_column: str,
+        chart_title: str = None,
+        chart_type: str = "scatter"
+    ) -> Optional[BytesIO]:
+        """
+        Generate a chart comparing columns from different entities.
+        
+        Args:
+            data_dict: Dictionary mapping entity names to their dataframes
+            x_entity: Entity name for x-axis data
+            x_column: Column name from x_entity to use for x-axis
+            y_entity: Entity name for y-axis data
+            y_column: Column name from y_entity to use for y-axis
+            chart_title: Optional title for the chart
+            chart_type: Type of chart to generate ("scatter", "bar", "line")
+            
+        Returns:
+            BytesIO buffer with the chart image, or None on error
+        """
+        if x_entity not in data_dict or y_entity not in data_dict:
+            logger.error(f"Missing entity data for cross-entity chart: {x_entity} or {y_entity} not found")
+            return None
+            
+        x_df = data_dict[x_entity]
+        y_df = data_dict[y_entity]
+        
+        if x_column not in x_df.columns or y_column not in y_df.columns:
+            logger.error(f"Missing column data for cross-entity chart: {x_column} or {y_column} not found")
+            return None
+            
+        # Extract data values
+        x_values = x_df[x_column].dropna()
+        y_values = y_df[y_column].dropna()
+        
+        # Validate data types and alignability
+        if len(x_values) == 0 or len(y_values) == 0:
+            logger.warning(f"Empty data for cross-entity chart: {x_entity}.{x_column} or {y_entity}.{y_column}")
+            return None
+            
+        # For time series or numeric data, we might need to align the data differently
+        # For this example, we'll just use the values directly (works for categorical data)
+        # A more complete implementation would handle different alignment strategies
+        
+        # Create the figure
+        try:
+            fig, ax = ReportChartGenerator._setup_chart(figsize=(8, 5))
+            
+            # Set default title if not provided
+            if not chart_title:
+                chart_title = f"Comparison of {x_entity}.{x_column} and {y_entity}.{y_column}"
+                
+            # Generate the chart based on the chart type
+            if chart_type == "scatter":
+                if len(x_values) != len(y_values):
+                    # If lengths don't match, take the minimum length
+                    min_len = min(len(x_values), len(y_values))
+                    x_values = x_values[:min_len]
+                    y_values = y_values[:min_len]
+                    
+                plt.scatter(x_values, y_values, alpha=0.5, color=sns.color_palette("viridis", 1)[0])
+                plt.grid(True, linestyle='--', alpha=0.7)
+                
+            elif chart_type == "bar":
+                # For bar charts, we need to align the data differently
+                # Typically by converting one of the columns to categories
+                combined_data = pd.DataFrame({
+                    'x': x_values[:min(len(x_values), 10)],  # Limit to top 10 for readability
+                    'y': y_values[:min(len(y_values), 10)]
+                })
+                combined_data.plot(kind='bar', ax=ax)
+                
+            elif chart_type == "line":
+                # For line charts, we need to align the data by index
+                # This is a simplified version
+                plt.plot(x_values, label=f"{x_entity}.{x_column}")
+                plt.plot(y_values, label=f"{y_entity}.{y_column}")
+                plt.legend()
+                
+            # Set labels and title
+            ax.set_title(chart_title, fontsize=14, fontweight='bold')
+            ax.set_xlabel(f"{x_entity} - {x_column}")
+            ax.set_ylabel(f"{y_entity} - {y_column}")
+            
+            # Return the chart as a BytesIO buffer
+            return ReportChartGenerator._save_plot_to_bytes(fig)
+            
+        except Exception as e:
+            logger.error(f"Error generating cross-entity chart: {e}", exc_info=True)
+            return None
+        finally:
+            plt.close('all')
 
     @staticmethod
     def _setup_chart(figsize=(10, 5), style='seaborn-v0_8-whitegrid') -> Tuple[plt.Figure, plt.Axes]:

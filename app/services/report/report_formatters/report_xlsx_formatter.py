@@ -27,6 +27,8 @@ class ReportXlsxFormatter(ReportFormatter):
             'strings_to_numbers': False,
             'strings_to_formulas': False
         }) as workbook:
+            self.workbook = workbook  # Store workbook reference for other methods
+            
             # Define common formats
             header_format = workbook.add_format({
                 'bold': True,
@@ -41,9 +43,27 @@ class ReportXlsxFormatter(ReportFormatter):
                 'valign': 'top',
                 'align': 'left'
             })
+            title_format = workbook.add_format({
+                'bold': True, 
+                'font_size': 14, 
+                'align': 'center'
+            })
+            subtitle_format = workbook.add_format({
+                'italic': True, 
+                'align': 'center'
+            })
+            section_format = workbook.add_format({
+                'bold': True, 
+                'font_size': 12, 
+                'align': 'left'
+            })
 
             # Process each report type
             for report_type, result in self.processed_data.items():
+                # Skip internal data
+                if report_type.startswith('_'):
+                    continue
+                    
                 # Handle errors
                 if result.get('error'):
                     try:
@@ -71,12 +91,12 @@ class ReportXlsxFormatter(ReportFormatter):
                         data.sort(key=lambda row: int(row['id']) if isinstance(row.get('id'), (int, float)) or (isinstance(row.get('id'), str) and row.get('id', '').isdigit()) else float('inf'))
                         logger.debug(f"Sorted data for sheet '{sheet_name}' by ID ascending.")
                     except (ValueError, TypeError) as sort_err:
-                         logger.warning(f"Could not sort sheet '{sheet_name}' numerically by ID, attempting string sort: {sort_err}")
-                         try:
-                             # Fallback to string sort
-                             data.sort(key=lambda row: str(row.get('id', '')))
-                         except Exception as sort_err_str:
-                             logger.error(f"String sort by ID also failed for sheet '{sheet_name}': {sort_err_str}")
+                        logger.warning(f"Could not sort sheet '{sheet_name}' numerically by ID, attempting string sort: {sort_err}")
+                        try:
+                            # Fallback to string sort
+                            data.sort(key=lambda row: str(row.get('id', '')))
+                        except Exception as sort_err_str:
+                            logger.error(f"String sort by ID also failed for sheet '{sheet_name}': {sort_err_str}")
                     except Exception as sort_err:
                         logger.error(f"Error sorting data for sheet '{sheet_name}' by ID: {sort_err}", exc_info=True)
 
@@ -95,7 +115,7 @@ class ReportXlsxFormatter(ReportFormatter):
                         current_row, 0,
                         current_row, max(3, len(columns)-1),
                         f"Report: {sheet_name}",
-                        workbook.add_format({'bold': True, 'font_size': 14, 'align': 'center'})
+                        title_format
                     )
                     current_row += 1
                     
@@ -104,7 +124,7 @@ class ReportXlsxFormatter(ReportFormatter):
                         current_row, 0,
                         current_row, max(3, len(columns)-1),
                         f"Generated: {self.generation_timestamp}",
-                        workbook.add_format({'italic': True, 'align': 'center'})
+                        subtitle_format
                     )
                     current_row += 2
 
@@ -175,26 +195,109 @@ class ReportXlsxFormatter(ReportFormatter):
                         width = min(max(max_len, 10) + 2, 60)
                         worksheet.set_column(col_idx, col_idx, width, wrap_format)
 
-                    # Add charts
-                    chart_start_row = current_row + 2
-                    chart_col = 1
-                    
-                    for chart_name, chart_bytes in analysis.get('charts', {}).items():
-                        if isinstance(chart_bytes, BytesIO):
-                            try:
-                                chart_bytes.seek(0)
-                                worksheet.write(chart_start_row, chart_col - 1, f"{chart_name.replace('_',' ').title()}:")
-                                worksheet.insert_image(
-                                    chart_start_row + 1, chart_col,
-                                    f"chart_{chart_name}.png",
-                                    {'image_data': chart_bytes, 'x_scale': 0.6, 'y_scale': 0.6}
-                                )
-                                chart_start_row += 20
-                            except Exception as chart_err:
-                                logger.error(f"Failed chart insert {chart_name}: {chart_err}")
-                                worksheet.write(chart_start_row, chart_col - 1, f"Error chart: {chart_name}")
-                                chart_start_row += 1
+                    # Add regular charts
+                    if analysis.get('charts'):
+                        # Add section title
+                        current_row += 1
+                        worksheet.merge_range(
+                            current_row, 0,
+                            current_row, min(3, len(columns)-1),
+                            "Charts & Visualizations",
+                            section_format
+                        )
+                        current_row += 1
+
+                        chart_col = 1
+                        chart_start_row = current_row
+                        
+                        for chart_name, chart_bytes in analysis.get('charts', {}).items():
+                            # Skip cross-entity charts for now (they're processed separately below)
+                            if chart_name.startswith('cross_'):
+                                continue
                                 
+                            if isinstance(chart_bytes, BytesIO):
+                                try:
+                                    chart_bytes.seek(0)
+                                    chart_display_name = chart_name.replace('_', ' ').title()
+                                    worksheet.write(chart_start_row, chart_col - 1, f"{chart_display_name}:")
+                                    worksheet.insert_image(
+                                        chart_start_row + 1, chart_col,
+                                        f"chart_{chart_name}.png",
+                                        {'image_data': chart_bytes, 'x_scale': 0.6, 'y_scale': 0.6}
+                                    )
+                                    chart_start_row += 20
+                                except Exception as chart_err:
+                                    logger.error(f"Failed chart insert {chart_name}: {chart_err}")
+                                    worksheet.write(chart_start_row, chart_col - 1, f"Error chart: {chart_name}")
+                                    chart_start_row += 1
+                        
+                        current_row = chart_start_row + 1
+
+                    # Add cross-entity charts if present
+                    cross_entity_charts = {k: v for k, v in analysis.get('charts', {}).items() if k.startswith('cross_')}
+                    if cross_entity_charts:
+                        # Add section title
+                        current_row += 1
+                        worksheet.merge_range(
+                            current_row, 0,
+                            current_row, min(3, len(columns)-1),
+                            "Cross-Entity Comparison Charts",
+                            section_format
+                        )
+                        current_row += 1
+
+                        chart_col = 1
+                        chart_start_row = current_row
+                        
+                        for chart_name, chart_bytes in cross_entity_charts.items():
+                            if isinstance(chart_bytes, BytesIO):
+                                try:
+                                    chart_bytes.seek(0)
+                                    
+                                    # Format chart name for display
+                                    display_name = chart_name.replace('cross_', '')
+                                    parts = display_name.split('_')
+                                    if len(parts) >= 5 and parts[1] != "vs":  # chart_type, entity1, column1, vs, entity2, column2
+                                        chart_type = parts[0]
+                                        x_info = "_".join(parts[1:parts.index("vs")])
+                                        y_info = "_".join(parts[parts.index("vs")+1:])
+                                        display_name = f"{chart_type.title()}: {x_info.replace('_', '.')} vs {y_info.replace('_', '.')}"
+                                    else:
+                                        display_name = display_name.replace('_', ' ').title()
+                                    
+                                    worksheet.write(chart_start_row, chart_col - 1, f"{display_name}:")
+                                    worksheet.insert_image(
+                                        chart_start_row + 1, chart_col,
+                                        f"chart_{chart_name}.png",
+                                        {'image_data': chart_bytes, 'x_scale': 0.6, 'y_scale': 0.6}
+                                    )
+                                    chart_start_row += 20
+                                except Exception as chart_err:
+                                    logger.error(f"Failed cross-entity chart insert {chart_name}: {chart_err}")
+                                    worksheet.write(chart_start_row, chart_col - 1, f"Error chart: {chart_name}")
+                                    chart_start_row += 1
+                        
+                        current_row = chart_start_row + 1
+                    
+                    # Add insights if present
+                    if analysis.get('insights'):
+                        # Add section title
+                        current_row += 1
+                        worksheet.merge_range(
+                            current_row, 0,
+                            current_row, min(3, len(columns)-1),
+                            "Key Insights",
+                            section_format
+                        )
+                        current_row += 1
+                        
+                        for key, insight_text in analysis.get('insights', {}).items():
+                            if key != 'status':
+                                worksheet.write(current_row, 0, f"• {insight_text}")
+                                current_row += 1
+                        
+                        current_row += 1
+                    
                 except Exception as sheet_err:
                     logger.error(f"Failed sheet '{sheet_name}': {sheet_err}", exc_info=True)
                     
@@ -213,6 +316,70 @@ class ReportXlsxFormatter(ReportFormatter):
                             logger.warning(f"Attempted to create error sheet '{error_sheet_name}', but it already exists.")
                     except Exception as inner_err:
                         logger.error(f"Could not write error sheet '{error_sheet_name}' after initial failure on '{sheet_name}': {inner_err}", exc_info=True)
+            
+            # Add cross-entity visualization sheet for multi-entity reports
+            if len(self.processed_data) > 1:
+                try:
+                    # Collect all cross-entity charts across all entities
+                    all_cross_charts = {}
+                    for result in self.processed_data.values():
+                        if isinstance(result, dict) and not result.get('error'):
+                            analysis = result.get('analysis', {})
+                            charts = analysis.get('charts', {})
+                            cross_charts = {k: v for k, v in charts.items() if k.startswith('cross_')}
+                            all_cross_charts.update(cross_charts)
+                    
+                    if all_cross_charts:
+                        # Create a dedicated sheet for cross-entity visualizations
+                        cross_sheet = workbook.add_worksheet("Cross-Entity Analysis")
                         
+                        # Add title
+                        cross_sheet.merge_range(
+                            0, 0, 0, 5,
+                            "Cross-Entity Analysis",
+                            title_format
+                        )
+                        
+                        # Add timestamp
+                        cross_sheet.merge_range(
+                            1, 0, 1, 5,
+                            f"Generated: {self.generation_timestamp}",
+                            subtitle_format
+                        )
+                        
+                        # Add charts
+                        row = 3
+                        col = 1
+                        
+                        for chart_name, chart_bytes in all_cross_charts.items():
+                            if isinstance(chart_bytes, BytesIO):
+                                try:
+                                    chart_bytes.seek(0)
+                                    
+                                    # Format chart name for display
+                                    display_name = chart_name.replace('cross_', '')
+                                    parts = display_name.split('_')
+                                    if len(parts) >= 5 and parts[1] != "vs":  # chart_type, entity1, column1, vs, entity2, column2
+                                        chart_type = parts[0]
+                                        x_info = "_".join(parts[1:parts.index("vs")])
+                                        y_info = "_".join(parts[parts.index("vs")+1:])
+                                        display_name = f"{chart_type.title()}: {x_info.replace('_', '.')} vs {y_info.replace('_', '.')}"
+                                    else:
+                                        display_name = display_name.replace('_', ' ').title()
+                                    
+                                    cross_sheet.write(row, col - 1, f"{display_name}:")
+                                    cross_sheet.insert_image(
+                                        row + 1, col,
+                                        f"chart_{chart_name}.png",
+                                        {'image_data': chart_bytes, 'x_scale': 0.7, 'y_scale': 0.7}
+                                    )
+                                    row += 20
+                                except Exception as chart_err:
+                                    logger.error(f"Failed cross-entity chart insert in cross-entity sheet {chart_name}: {chart_err}")
+                                    cross_sheet.write(row, col - 1, f"Error chart: {chart_name}")
+                                    row += 1
+                except Exception as cross_sheet_err:
+                    logger.error(f"Failed to create cross-entity sheet: {cross_sheet_err}", exc_info=True)
+                    
         output.seek(0)
         return output

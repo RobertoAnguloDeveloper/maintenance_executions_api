@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Report Generation API allows users to generate custom reports in various formats (XLSX, CSV, PDF, DOCX, PPTX) for different entities in the system. This documentation provides all possible request bodies organized by individual entities and entity combinations.
+The Report Generation API allows users to generate custom reports in various formats (XLSX, CSV, PDF, DOCX, PPTX) for different entities in the system. This documentation provides all possible request bodies organized by individual entities, entity combinations, and advanced cross-entity visualization capabilities.
 
 ## Base Endpoint
 
@@ -32,6 +32,7 @@ Authorization: Bearer <your_token>
 | template_id | integer | No | ID of a saved report template to use |
 | include_data_table_in_ppt | boolean | No | Include data table in PPTX (default: false) |
 | charts | array | No | Custom chart configurations |
+| cross_entity_charts | array | No | Cross-entity chart configurations |
 
 ## 1. USERS
 
@@ -1564,297 +1565,609 @@ id, jti, created_at
 }
 ```
 
-## 5. Roles and Permissions Analysis
+# CROSS-ENTITY CHART REPORTS
 
-### Excel Format
+The system now supports powerful cross-entity chart generation for deeper data analysis and visualization. These allow you to compare data across different entities within the same report.
 
-```json
-{
- "report_type": ["roles", "permissions", "role_permissions"],
- "output_format": "xlsx",
- "report_title": "Roles and Permissions Analysis"
-}
-```
+## Cross-Entity Chart Configuration
 
-### PDF Format
+The `cross_entity_charts` parameter accepts an array of chart configurations with the following structure:
 
-```json
-{
- "report_type": ["roles", "permissions", "role_permissions"],
- "output_format": "pdf",
- "report_title": "Roles and Permissions Analysis"
-}
-```
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| x_entity | string | Yes | Entity name for x-axis data |
+| x_column | string | Yes | Column name from x_entity to use for x-axis |
+| y_entity | string | Yes | Entity name for y-axis data |
+| y_column | string | Yes | Column name from y_entity to use for y-axis |
+| chart_type | string | No | Type of chart: "scatter", "bar", "line", "pie", "heatmap" (default: "scatter") |
+| title | string | No | Chart title |
+| alignment | string | No | How to align data: "time", "category", "index" (default: "index") |
 
-### CSV Format
+## Examples
+
+### 1. Users and Submissions Comparison
 
 ```json
 {
- "report_type": ["roles", "permissions", "role_permissions"],
- "output_format": "csv",
- "report_title": "Roles and Permissions Analysis"
+  "report_type": ["users", "form_submissions"],
+  "output_format": "xlsx",
+  "report_title": "User Activity Analysis",
+  "cross_entity_charts": [
+    {
+      "x_entity": "users",
+      "x_column": "username",
+      "y_entity": "form_submissions",
+      "y_column": "submitted_by",
+      "chart_type": "bar",
+      "title": "User vs Submission Count"
+    },
+    {
+      "x_entity": "users",
+      "x_column": "role.name",
+      "y_entity": "form_submissions",
+      "y_column": "submitted_by",
+      "chart_type": "heatmap",
+      "title": "Role vs Submissions Heatmap"
+    }
+  ]
 }
 ```
 
-### DOCX Format
+### 2. Time-Series Analysis Across Entities
 
 ```json
 {
- "report_type": ["roles", "permissions", "role_permissions"],
- "output_format": "docx",
- "report_title": "Roles and Permissions Analysis"
+  "report_type": ["forms", "form_submissions", "attachments"],
+  "output_format": "pdf",
+  "report_title": "Form Lifecycle Analysis",
+  "cross_entity_charts": [
+    {
+      "x_entity": "forms",
+      "x_column": "created_at",
+      "y_entity": "form_submissions",
+      "y_column": "submitted_at",
+      "chart_type": "line",
+      "title": "Form Creation vs Submission Timeline",
+      "alignment": "time"
+    },
+    {
+      "x_entity": "form_submissions",
+      "x_column": "submitted_at",
+      "y_entity": "attachments",
+      "y_column": "created_at",
+      "chart_type": "scatter",
+      "title": "Submission vs Attachment Timeline",
+      "alignment": "time"
+    }
+  ]
 }
 ```
 
-### With Charts
+### 3. Categorical Comparison Between Roles and Permissions
 
 ```json
 {
- "report_type": ["roles", "permissions", "role_permissions"],
- "output_format": "pdf",
- "report_title": "Roles and Permissions Analysis",
- "charts": [
-   {
-     "type": "pie",
-     "column": "roles.is_super_user",
-     "title": "Regular vs. Superuser Roles"
-   },
-   {
-     "type": "bar",
-     "column": "permissions.action",
-     "title": "Permissions by Action Type"
-   },
-   {
-     "type": "bar",
-     "column": "role_permissions.role.name",
-     "title": "Permission Count by Role"
-   }
- ]
+  "report_type": ["roles", "permissions", "role_permissions"],
+  "output_format": "pptx",
+  "report_title": "Roles & Permissions Security Analysis",
+  "cross_entity_charts": [
+    {
+      "x_entity": "roles",
+      "x_column": "name",
+      "y_entity": "permissions",
+      "y_column": "action",
+      "chart_type": "heatmap",
+      "title": "Role vs Permission Actions",
+      "alignment": "category"
+    },
+    {
+      "x_entity": "roles",
+      "x_column": "is_super_user",
+      "y_entity": "role_permissions",
+      "y_column": "permission.entity",
+      "chart_type": "bar",
+      "title": "Super User Status vs Permission Entities"
+    }
+  ],
+  "include_data_table_in_ppt": true
 }
 ```
 
-## 6. User Activity Report
-
-### Excel Format
+### 4. Combined Single and Cross-Entity Visualization
 
 ```json
 {
- "report_type": ["users", "form_submissions", "attachments"],
- "output_format": "xlsx",
- "report_title": "User Activity Report"
+  "report_type": ["users", "form_submissions", "attachments"],
+  "output_format": "xlsx",
+  "report_title": "Comprehensive User Activity Report",
+  "charts": [
+    {
+      "type": "pie",
+      "column": "role.name",
+      "title": "Users by Role"
+    },
+    {
+      "type": "line",
+      "column": "created_at",
+      "title": "User Creation Timeline"
+    }
+  ],
+  "cross_entity_charts": [
+    {
+      "x_entity": "users",
+      "x_column": "environment.name",
+      "y_entity": "form_submissions",
+      "y_column": "form.title",
+      "chart_type": "heatmap",
+      "title": "Environment vs Form Submissions"
+    },
+    {
+      "x_entity": "form_submissions",
+      "x_column": "submitted_by",
+      "y_entity": "attachments",
+      "y_column": "file_type",
+      "chart_type": "heatmap",
+      "title": "Submitter vs Attachment Types"
+    }
+  ]
 }
 ```
 
-### PDF Format
+### 5. Advanced Analysis with Multiple Entity Correlations
 
 ```json
 {
- "report_type": ["users", "form_submissions", "attachments"],
- "output_format": "pdf",
- "report_title": "User Activity Report"
+  "report_type": ["users", "roles", "form_submissions", "forms"],
+  "output_format": "pdf",
+  "report_title": "Multi-Entity Correlation Analysis",
+  "cross_entity_charts": [
+    {
+      "x_entity": "users",
+      "x_column": "environment.name",
+      "y_entity": "forms",
+      "y_column": "is_public",
+      "chart_type": "bar",
+      "title": "Environment vs Public Form Distribution"
+    },
+    {
+      "x_entity": "roles",
+      "x_column": "is_super_user",
+      "y_entity": "form_submissions",
+      "y_column": "form.title",
+      "chart_type": "pie",
+      "title": "Super User Role vs Form Submission Types"
+    },
+    {
+      "x_entity": "forms",
+      "x_column": "created_at",
+      "y_entity": "form_submissions",
+      "y_column": "submitted_at",
+      "chart_type": "scatter",
+      "title": "Form Creation vs Submission Dates",
+      "alignment": "time"
+    }
+  ]
 }
 ```
 
-### PPTX Format
+### 6. Comprehensive KPI Dashboard
 
 ```json
 {
- "report_type": ["users", "form_submissions", "attachments"],
- "output_format": "pptx",
- "report_title": "User Activity Report",
- "include_data_table_in_ppt": true
+  "report_type": ["users", "forms", "form_submissions", "attachments"],
+  "output_format": "pptx",
+  "report_title": "Enterprise KPI Dashboard",
+  "cross_entity_charts": [
+    {
+      "x_entity": "users",
+      "x_column": "role.name",
+      "y_entity": "form_submissions",
+      "y_column": "submitted_by",
+      "chart_type": "bar",
+      "title": "User Roles vs Submission Activity"
+    },
+    {
+      "x_entity": "forms",
+      "x_column": "is_public",
+      "y_entity": "form_submissions",
+      "y_column": "form.title",
+      "chart_type": "heatmap",
+      "title": "Form Type vs Submission Distribution"
+    },
+    {
+      "x_entity": "form_submissions",
+      "x_column": "submitted_at",
+      "y_entity": "attachments",
+      "y_column": "file_type",
+      "chart_type": "line",
+      "title": "Submission vs Attachment Type Trends",
+      "alignment": "time"
+    }
+  ],
+  "include_data_table_in_ppt": true
 }
 ```
 
-### With Filters and Charts
+## Additional Features and Best Practices
+
+1. **Data Alignment Options**:
+   - Use `alignment: "time"` for comparing datetime columns
+   - Use `alignment: "category"` for comparing categorical data
+   - Use `alignment: "index"` (default) for general comparisons
+
+2. **Chart Type Selection**:
+   - `scatter`: Best for showing relationships between continuous variables
+   - `bar`: Best for comparing categorical data
+   - `line`: Best for time series or trend data
+   - `pie`: For showing proportion distributions (creates side-by-side pies)
+   - `heatmap`: Excellent for visualizing correlations between categorical variables
+
+3. **Combining Approaches**:
+   - Use both `charts` and `cross_entity_charts` in the same request
+   - Multi-entity reports automatically include a dedicated "Cross-Entity Analysis" sheet/section
+   - Filter entities first to focus cross-entity analysis on relevant subsets
+
+4. **Output Format Considerations**:
+   - `xlsx`: Provides the most interactive experience with separate sheets
+   - `pdf`: Best for formal reports with professional formatting
+   - `pptx`: Ideal for presentations with one chart per slide
+   - `docx`: Good for detailed reports with embedded visualizations
+   - `csv`: Limited to data only, not suitable for cross-entity visualization
+
+
+# Possible Request Bodies for ZIP Packaging of Reports
+
+Below are examples of request bodies for using the new ZIP packaging functionality for different entity types and combinations. These examples show how to use the `separate_files` parameter to request packaged reports.
+
+## 1. Users Entity
+
+### Basic ZIP Package with Users Data
 
 ```json
 {
- "report_type": ["users", "form_submissions", "attachments"],
- "output_format": "pptx",
- "report_title": "User Activity Report 2023",
- "filters": [
-   {"field": "form_submissions.submitted_at", "operator": "between", "value": ["2023-01-01", "2023-12-31"]}
- ],
- "charts": [
-   {
-     "type": "bar",
-     "column": "users.role.name",
-     "title": "Users by Role"
-   },
-   {
-     "type": "line",
-     "column": "form_submissions.submitted_at",
-     "title": "Submission Timeline"
-   },
-   {
-     "type": "pie",
-     "column": "attachments.file_type",
-     "title": "Attachment Types"
-   }
- ],
- "include_data_table_in_ppt": true
+  "report_type": "users",
+  "output_format": "xlsx",
+  "separate_files": true,
+  "report_title": "User Analysis"
 }
 ```
 
-## 7. CSV Export of Form Submissions with Answers
-
-### CSV Format
+### Users Report with Filters and Custom Filename
 
 ```json
 {
- "report_type": ["form_submissions", "answers_submitted"],
- "output_format": "csv",
- "report_title": "Form Submissions with Answers"
+  "report_type": "users",
+  "output_format": "pdf",
+  "separate_files": true,
+  "filename": "users_export",
+  "filters": [
+    {"field": "environment.name", "operator": "eq", "value": "Production"},
+    {"field": "is_deleted", "operator": "eq", "value": false}
+  ],
+  "sort_by": [
+    {"field": "username", "direction": "asc"}
+  ]
 }
 ```
 
-### With Filters
+### Users Report with Charts in PPTX Format
 
 ```json
 {
- "report_type": ["form_submissions", "answers_submitted"],
- "output_format": "csv",
- "filters": [
-   {"field": "form_submissions.form.title", "operator": "eq", "value": "Customer Feedback"}
- ],
- "report_title": "Customer Feedback Responses"
+  "report_type": "users",
+  "output_format": "pptx",
+  "separate_files": true,
+  "report_title": "User Distribution Analysis",
+  "charts": [
+    {
+      "type": "bar",
+      "column": "role.name",
+      "title": "Users by Role"
+    },
+    {
+      "type": "pie",
+      "column": "environment.name",
+      "title": "Users by Environment"
+    }
+  ],
+  "include_data_table_in_ppt": true
 }
 ```
 
-## 8. Environment and User Analysis
+## 2. Roles and Permissions
 
-### Excel Format
+### Basic ZIP Package with Roles Data
 
 ```json
 {
- "report_type": ["environments", "users"],
- "output_format": "xlsx",
- "report_title": "Environment User Distribution"
+  "report_type": "roles",
+  "output_format": "xlsx",
+  "separate_files": true,
+  "report_title": "Role Analysis"
 }
 ```
 
-### PDF Format
+### Roles and Permissions Combined Package
 
 ```json
 {
- "report_type": ["environments", "users"],
- "output_format": "pdf",
- "report_title": "Environment User Distribution"
+  "report_type": ["roles", "permissions", "role_permissions"],
+  "output_format": "pdf",
+  "separate_files": true,
+  "filename": "security_analysis",
+  "report_title": "Security Configuration Report"
 }
 ```
 
-### With Charts
+### Roles Report with Custom Columns
 
 ```json
 {
- "report_type": ["environments", "users"],
- "output_format": "pdf",
- "report_title": "Environment User Distribution",
- "charts": [
-   {
-     "type": "bar",
-     "column": "environments.name",
-     "title": "Environments Overview"
-   },
-   {
-     "type": "pie",
-     "column": "users.environment.name",
-     "title": "User Distribution by Environment"
-   }
- ]
+  "report_type": "roles",
+  "output_format": "csv",
+  "separate_files": true,
+  "columns": ["id", "name", "description", "is_super_user"],
+  "sort_by": [
+    {"field": "name", "direction": "asc"}
+  ]
 }
 ```
 
-## 9. Question Type Usage Analysis
+## 3. Forms and Questions
 
-### Excel Format
+### Forms ZIP Package
 
 ```json
 {
- "report_type": ["question_types", "questions", "form_questions"],
- "output_format": "xlsx",
- "report_title": "Question Type Usage Analysis"
+  "report_type": "forms",
+  "output_format": "xlsx",
+  "separate_files": true,
+  "report_title": "Forms Analysis"
 }
 ```
 
-### PDF Format
+### Forms with Filtering
 
 ```json
 {
- "report_type": ["question_types", "questions", "form_questions"],
- "output_format": "pdf",
- "report_title": "Question Type Usage Analysis"
+  "report_type": "forms",
+  "output_format": "pdf",
+  "separate_files": true,
+  "filters": [
+    {"field": "is_public", "operator": "eq", "value": true}
+  ],
+  "sort_by": [
+    {"field": "created_at", "direction": "desc"}
+  ]
 }
 ```
 
-### With Charts
+### Form Questions Package
 
 ```json
 {
- "report_type": ["question_types", "questions", "form_questions"],
- "output_format": "pdf",
- "report_title": "Question Type Usage Analysis",
- "charts": [
-   {
-     "type": "pie",
-     "column": "question_types.type",
-     "title": "Available Question Types"
-   },
-   {
-     "type": "bar",
-     "column": "questions.question_type.type",
-     "title": "Questions by Type"
-   },
-   {
-     "type": "bar",
-     "column": "form_questions.form.title",
-     "title": "Questions per Form"
-   }
- ]
+  "report_type": "form_questions",
+  "output_format": "xlsx",
+  "separate_files": true,
+  "report_title": "Question Analysis",
+  "filters": [
+    {"field": "question.question_type.type", "operator": "in", "value": ["text", "number", "date"]}
+  ]
 }
 ```
 
-## 10. Forms with Answers Analysis
-
-### Excel Format
+### Complete Forms Analysis Package
 
 ```json
 {
- "report_type": ["forms", "form_answers"],
- "output_format": "xlsx",
- "report_title": "Forms with Answers Analysis"
+  "report_type": ["forms", "form_questions", "questions", "question_types"],
+  "output_format": "xlsx",
+  "separate_files": true,
+  "filename": "forms_complete_analysis",
+  "report_title": "Complete Forms Structure Analysis"
 }
 ```
 
-### PDF Format
+## 4. Form Submissions
+
+### Basic Submissions Package
 
 ```json
 {
- "report_type": ["forms", "form_answers"],
- "output_format": "pdf",
- "report_title": "Forms with Answers Analysis"
+  "report_type": "form_submissions",
+  "output_format": "xlsx",
+  "separate_files": true,
+  "report_title": "Form Submissions"
 }
 ```
 
-### With Charts
+### Submissions with Dynamic Columns
 
 ```json
 {
- "report_type": ["forms", "form_answers"],
- "output_format": "pdf",
- "report_title": "Forms with Answers Analysis",
- "charts": [
-   {
-     "type": "pie",
-     "column": "forms.is_public",
-     "title": "Public vs Private Forms"
-   },
-   {
-     "type": "bar",
-     "column": "form_answers.form_question.form.title",
-     "title": "Answers per Form"
-   }
- ]
+  "report_type": "form_submissions",
+  "output_format": "csv",
+  "separate_files": true,
+  "columns": [
+    "id", "form.title", "submitted_by", "submitted_at",
+    "answers.What is your name?",
+    "answers.What department do you work in?",
+    "answers.Inspection date"
+  ],
+  "filters": [
+    {"field": "form.title", "operator": "eq", "value": "Quality Inspection"},
+    {"field": "submitted_at", "operator": "between", "value": ["2023-01-01", "2023-12-31"]}
+  ]
 }
 ```
+
+### Submissions Package with Charts
+
+```json
+{
+  "report_type": "form_submissions",
+  "output_format": "pdf",
+  "separate_files": true,
+  "charts": [
+    {
+      "type": "bar",
+      "column": "submitted_by",
+      "title": "Submissions by User"
+    },
+    {
+      "type": "pie",
+      "column": "form.title",
+      "title": "Submissions by Form"
+    },
+    {
+      "type": "line",
+      "column": "submitted_at",
+      "title": "Submission Timeline"
+    }
+  ]
+}
+```
+
+## 5. Comprehensive Report Packages
+
+### User Activity Package
+
+```json
+{
+  "report_type": ["users", "form_submissions", "attachments"],
+  "output_format": "xlsx",
+  "separate_files": true,
+  "report_title": "User Activity Report",
+  "filters": [
+    {"field": "form_submissions.submitted_at", "operator": "between", "value": ["2023-01-01", "2023-12-31"]}
+  ]
+}
+```
+
+### System Configuration Package
+
+```json
+{
+  "report_type": ["users", "roles", "permissions", "environments"],
+  "output_format": "pdf",
+  "separate_files": true,
+  "filename": "system_configuration",
+  "report_title": "System Configuration Report"
+}
+```
+
+### Forms and Submissions Package
+
+```json
+{
+  "report_type": ["forms", "form_questions", "form_submissions", "answers_submitted"],
+  "output_format": "xlsx",
+  "separate_files": true,
+  "filename": "forms_and_submissions",
+  "report_title": "Forms and Submissions Analysis"
+}
+```
+
+### Cross-Entity Analysis Package with Charts
+
+```json
+{
+  "report_type": ["users", "forms", "form_submissions"],
+  "output_format": "pdf",
+  "separate_files": true,
+  "report_title": "Cross-Entity Analysis",
+  "cross_entity_charts": [
+    {
+      "x_entity": "users",
+      "x_column": "role.name",
+      "y_entity": "form_submissions",
+      "y_column": "submitted_by",
+      "chart_type": "bar",
+      "title": "Role vs Submission Activity"
+    },
+    {
+      "x_entity": "forms",
+      "x_column": "title",
+      "y_entity": "form_submissions",
+      "y_column": "form.title",
+      "chart_type": "heatmap",
+      "title": "Form Usage Distribution"
+    }
+  ]
+}
+```
+
+### Complete System Data Export
+
+```json
+{
+  "report_type": "all",
+  "output_format": "xlsx",
+  "separate_files": true,
+  "filename": "complete_system_export",
+  "report_title": "Complete System Data Export"
+}
+```
+
+## 6. Template-Based Reports
+
+### Using a Saved Template with ZIP Packaging
+
+```json
+{
+  "template_id": 123,
+  "separate_files": true,
+  "filename": "template_based_export",
+  "report_title": "Template-Based Report Package"
+}
+```
+
+### Override Template Parameters
+
+```json
+{
+  "template_id": 123,
+  "separate_files": true,
+  "output_format": "pdf",
+  "filters": [
+    {"field": "created_at", "operator": "between", "value": ["2023-01-01", "2023-12-31"]}
+  ]
+}
+```
+
+## 7. Advanced Filtering and Sorting
+
+### Multiple Entity Package with Complex Filtering
+
+```json
+{
+  "report_type": ["users", "form_submissions"],
+  "output_format": "xlsx",
+  "separate_files": true,
+  "filters": [
+    {"field": "users.environment.name", "operator": "eq", "value": "Production"},
+    {"field": "form_submissions.submitted_at", "operator": "between", "value": ["2023-01-01", "2023-12-31"]}
+  ],
+  "sort_by": [
+    {"field": "users.username", "direction": "asc"},
+    {"field": "form_submissions.submitted_at", "direction": "desc"}
+  ]
+}
+```
+
+### Date Range Analysis with Multiple Entities
+
+```json
+{
+  "report_type": ["users", "forms", "form_submissions"],
+  "output_format": "xlsx",
+  "separate_files": true,
+  "filename": "monthly_activity",
+  "report_title": "Monthly Activity Report",
+  "filters": [
+    {"field": "created_at", "operator": "between", "value": ["2023-05-01", "2023-05-31"]}
+  ]
+}
+```
+
+These request bodies demonstrate the various ways you can use the `separate_files` parameter to generate ZIP packages containing individual entity reports. The functionality is flexible and can be combined with all existing report features including filtering, sorting, charting, and cross-entity analysis.

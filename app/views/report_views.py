@@ -90,7 +90,132 @@ def generate_report_endpoint():
         # Catch any unexpected exceptions during view processing
         logger.exception(f"Unhandled exception in generate_report_endpoint for user {get_jwt_identity()}: {e}")
         return jsonify({"error": "An internal server error occurred."}), 500
+    
+@report_bp.route('/parameters', methods=['GET'])
+@jwt_required()
+@PermissionManager.require_role(*REPORT_ALLOWED_ROLES)
+def get_report_parameters_endpoint():
+    """
+    API endpoint to retrieve all available report parameters and their options.
+    This is useful for building dynamic report generation interfaces.
+    
+    Returns:
+        JSON response with all available parameters and options
+    """
+    try:
+        # Authentication & User Retrieval
+        current_user_identity = get_jwt_identity()
+        user = AuthService.get_current_user(current_user_identity)
+        if not user:
+            logger.warning("Attempted parameters retrieval with invalid user identity.")
+            return jsonify({"error": "User not found or invalid token"}), 404
+            
+        logger.info(f"Report parameters retrieval requested by user {user.username}")
+        
+        # Call the controller to get parameters
+        parameters = ReportController.get_report_parameters(user)
+        
+        return jsonify(parameters), 200
+        
+    except Exception as e:
+        logger.exception(f"Unhandled exception in get_report_parameters_endpoint: {e}")
+        return jsonify({"error": "An internal server error occurred while retrieving report parameters."}), 500
+    
+@report_bp.route('/columns/<entity_type>', methods=['GET'])
+@jwt_required()
+@PermissionManager.require_role(*REPORT_ALLOWED_ROLES)
+def get_entity_columns_endpoint(entity_type):
+    """
+    API endpoint to get available columns for a given entity type.
+    
+    Args:
+        entity_type: The entity type to get columns for (e.g., 'users', 'forms')
+        
+    Returns:
+        JSON response with available columns
+    """
+    try:
+        # Authentication & User Retrieval
+        current_user_identity = get_jwt_identity()
+        user = AuthService.get_current_user(current_user_identity)
+        if not user:
+            logger.warning("Attempted column retrieval with invalid user identity.")
+            return jsonify({"error": "User not found or invalid token"}), 404
+            
+        logger.info(f"Column retrieval request for entity '{entity_type}' from user {user.username}")
+        
+        # Validate entity type
+        from app.services.report.report_config import ENTITY_CONFIG
+        if entity_type not in ENTITY_CONFIG:
+            logger.warning(f"Invalid entity type '{entity_type}' requested by user {user.username}")
+            return jsonify({"error": f"Invalid entity type: {entity_type}"}), 400
+            
+        # Check permissions for the entity
+        config = ENTITY_CONFIG.get(entity_type, {})
+        permission_entity = config.get('view_permission_entity')
+        if not permission_entity or not PermissionManager.has_permission(user, "view", permission_entity):
+            logger.warning(f"User '{user.username}' permission denied for viewing entity '{entity_type}'")
+            return jsonify({"error": f"Permission denied for entity: {entity_type}"}), 403
+            
+        # Get available columns from the ReportController
+        columns = ReportController.get_available_columns(entity_type, user)
+        
+        # Return the result
+        return jsonify({
+            "entity_type": entity_type,
+            "columns": columns
+        }), 200
+        
+    except Exception as e:
+        logger.exception(f"Unhandled exception in get_entity_columns_endpoint for user {get_jwt_identity()}: {e}")
+        return jsonify({"error": "An internal server error occurred."}), 500
 
+@report_bp.route('/formats', methods=['GET'])
+@jwt_required()
+def get_supported_formats():
+    """
+    API endpoint to get supported report formats.
+    
+    Returns:
+        JSON response with supported formats
+    """
+    from app.services.report.report_config import SUPPORTED_FORMATS
+    
+    return jsonify({
+        "formats": SUPPORTED_FORMATS
+    }), 200
+
+@report_bp.route('/entities', methods=['GET'])
+@jwt_required()
+def get_supported_entities():
+    """
+    API endpoint to get supported entity types for reporting.
+    
+    Returns:
+        JSON response with supported entity types
+    """
+    from app.services.report.report_config import ENTITY_CONFIG
+    
+    # Filter based on user permissions
+    current_user_identity = get_jwt_identity()
+    user = AuthService.get_current_user(current_user_identity)
+    if not user:
+        return jsonify({"error": "User not found or invalid token"}), 404
+        
+    # Get entities user has permission to view
+    allowed_entities = {}
+    for entity_name, config in ENTITY_CONFIG.items():
+        permission_entity = config.get('view_permission_entity')
+        if permission_entity and PermissionManager.has_permission(user, "view", permission_entity):
+            allowed_entities[entity_name] = {
+                "name": entity_name,
+                "display_name": entity_name.replace('_', ' ').title(),
+                "description": config.get('description', f"{entity_name.replace('_', ' ').title()} data")
+            }
+    
+    return jsonify({
+        "entities": allowed_entities
+    }), 200
 
 @report_bp.route('/schema', methods=['GET'])
 @jwt_required()

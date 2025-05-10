@@ -190,10 +190,13 @@ class ReportService:
         """Fetches, flattens, and analyzes data for requested report types based on merged params."""
         report_type_req = report_params.get("report_type")
         processed_data: Dict[str, Dict[str, Any]] = {}
+        
+        # Initialize a dictionary to track all entity dataframes for cross-entity charts
+        all_entity_dataframes = {}
 
         if not report_type_req:
-             processed_data['_error'] = {'error': "Missing 'report_type' in final parameters."}
-             return processed_data
+            processed_data['_error'] = {'error': "Missing 'report_type' in final parameters."}
+            return processed_data
 
         if report_type_req == "all":
             report_types_to_process = list(ENTITY_CONFIG.keys())
@@ -263,12 +266,12 @@ class ReportService:
                     columns = list(inspect(model_cls).columns.keys())
                     logger.debug(f"Using default all direct columns for {report_type}: {len(columns)} columns")
                 except Exception as inspect_err:
-                     logger.error(f"Could not inspect columns for {model_cls.__name__}: {inspect_err}")
-                     columns = config.get('default_columns', [])  # Fallback to config default
-                     if not columns:
-                         processed_data[report_type] = {'error': f"Could not determine default columns for {report_type}."}
-                         continue
-                         
+                    logger.error(f"Could not inspect columns for {model_cls.__name__}: {inspect_err}")
+                    columns = config.get('default_columns', [])  # Fallback to config default
+                    if not columns:
+                        processed_data[report_type] = {'error': f"Could not determine default columns for {report_type}."}
+                        continue
+                        
                 # Add default related columns if defined in config
                 default_related_cols = config.get('default_columns', [])
                 if default_related_cols:
@@ -321,10 +324,21 @@ class ReportService:
                 # Flatten to dictionaries
                 data = ReportDataFetcher.flatten_data(fetched_objects, columns, report_type)
                 
+                # Store the data as a DataFrame for cross-entity charts
+                try:
+                    import pandas as pd
+                    df = pd.DataFrame(data)
+                    # Store the DataFrame in our tracking dictionary
+                    all_entity_dataframes[report_type] = df
+                except ImportError:
+                    logger.warning("Pandas not available; cross-entity charts will be limited")
+                except Exception as df_err:
+                    logger.error(f"Error creating DataFrame for {report_type}: {df_err}", exc_info=True)
+                
                 # Analyze data
                 analysis_results = ReportAnalyzer.analyze_data(data, current_entity_params, report_type)
                 
-                # Store results
+                # Store results in processed_data
                 processed_data[report_type] = {
                     'error': None,
                     'data': data,
@@ -344,7 +358,60 @@ class ReportService:
                     'data': [],
                     'objects': []
                 }
+        
+        # After ALL entities are processed, handle cross-entity charts
+        if 'cross_entity_charts' in report_params and isinstance(report_params['cross_entity_charts'], list):
+            try:
+                # Import the CrossEntityChartGenerator
+                from .report.report_formatters.cross_entity_chart_generator import CrossEntityChartGenerator
                 
+                # Process each cross-entity chart configuration
+                for chart_config in report_params['cross_entity_charts']:
+                    try:
+                        # Get required parameters
+                        x_entity = chart_config.get('x_entity')
+                        x_column = chart_config.get('x_column')
+                        y_entity = chart_config.get('y_entity', x_entity)
+                        y_column = chart_config.get('y_column')
+                        chart_type = chart_config.get('chart_type', 'scatter')
+                        
+                        # Skip invalid configurations
+                        if not all([x_entity, x_column, y_entity, y_column]):
+                            logger.warning(f"Incomplete cross-entity chart configuration: {chart_config}")
+                            continue
+                        
+                        # Generate the chart
+                        chart_bytes = CrossEntityChartGenerator.generate_comparison_chart(
+                            all_entity_dataframes, chart_config
+                        )
+                        
+                        if chart_bytes:
+                            # Create a unique key for this chart
+                            chart_key = f"cross_{chart_type}_{x_entity}_{x_column}_vs_{y_entity}_{y_column}"
+                            
+                            # Add this chart to both entities involved
+                            for entity_name in [x_entity, y_entity]:
+                                if entity_name in processed_data:
+                                    entity_result = processed_data[entity_name]
+                                    
+                                    # Ensure analysis and charts dictionaries exist
+                                    if 'analysis' not in entity_result:
+                                        entity_result['analysis'] = {}
+                                    if 'charts' not in entity_result['analysis']:
+                                        entity_result['analysis']['charts'] = {}
+                                    
+                                    # Add the chart
+                                    entity_result['analysis']['charts'][chart_key] = chart_bytes
+                    except Exception as chart_err:
+                        logger.error(f"Error generating cross-entity chart: {chart_err}", exc_info=True)
+            except ImportError:
+                logger.warning("CrossEntityChartGenerator not available, skipping cross-entity charts")
+            except Exception as e:
+                logger.error(f"Error processing cross-entity charts: {e}", exc_info=True)
+                
+        # Store all entity dataframes for potential use by formatters
+        processed_data['_all_entity_dataframes'] = all_entity_dataframes
+            
         return processed_data
 
     @staticmethod

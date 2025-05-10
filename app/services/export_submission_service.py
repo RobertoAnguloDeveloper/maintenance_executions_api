@@ -309,6 +309,714 @@ class ExportSubmissionService:
         return non_table_answers, dict(table_data)
     
     @staticmethod
+    def export_structured_submission_to_pdf(
+        submission_id: int,
+        upload_path: str,
+        include_signatures: bool = True,
+        header_image: Optional[FileStorage] = None,
+        header_opacity: float = DEFAULT_IMAGE_SETTINGS['default_opacity'],
+        header_size: Optional[float] = None,
+        header_width: Optional[float] = None,
+        header_height: Optional[float] = None,
+        header_alignment: str = "center",
+        signatures_size: float = 100,
+        signatures_alignment: str = "vertical"
+    ) -> Tuple[Optional[BytesIO], Optional[str]]:
+        """
+        Export a form submission to PDF with structured organization of tables and dropdowns
+        
+        This method organizes and consolidates table data and dropdown selections for better presentation.
+        
+        Args:
+            submission_id: ID of the form submission
+            upload_path: Path to uploads folder for retrieving signatures
+            include_signatures: Whether to include signature images or not
+            header_image: Optional image to use as header
+            header_opacity: Opacity for the header image (0.0 to 1.0)
+            header_size: Optional size percentage (keeping aspect ratio)
+            header_width: Optional specific width in pixels (ignores aspect ratio if height also provided)
+            header_height: Optional specific height in pixels (ignores aspect ratio if width also provided)
+            header_alignment: Alignment of the header image (left, center, right)
+            signatures_size: Size percentage for signature images (100 = original size)
+            signatures_alignment: Layout for signatures (vertical, horizontal)
+            
+        Returns:
+            Tuple containing BytesIO PDF buffer or None, and error message or None
+        """
+        try:
+            # Get the submission with all needed relationships
+            submission = FormSubmission.query.filter_by(
+                id=submission_id,
+                is_deleted=False
+            ).first()
+            
+            if not submission:
+                return None, "Submission not found"
+                
+            # Get form details
+            form = Form.query.filter_by(
+                id=submission.form_id,
+                is_deleted=False
+            ).first()
+            
+            if not form:
+                return None, "Form not found"
+                
+            # Create a buffer for the PDF
+            buffer = BytesIO()
+            
+            # Create document using global settings
+            doc = SimpleDocTemplate(
+                buffer,
+                pagesize=letter,
+                rightMargin=PAGE_MARGINS['right'],
+                leftMargin=PAGE_MARGINS['left'],
+                topMargin=PAGE_MARGINS['top'],
+                bottomMargin=PAGE_MARGINS['bottom'],
+                title=f"Form Submission - {form.title}"
+            )
+            
+            # Prepare styles using global settings
+            styles = getSampleStyleSheet()
+            styles.add(ParagraphStyle(
+                name='FormTitle',
+                parent=styles['Heading1'],
+                fontSize=16,
+                spaceAfter=TITLE_SPACING['after'],
+                alignment=1  # Center alignment for title
+            ))
+            styles.add(ParagraphStyle(
+                name='Question',
+                parent=styles['Heading2'],
+                fontSize=QUESTION_FORMATTING['font_size'],
+                spaceBefore=QUESTION_FORMATTING['space_before'],
+                spaceAfter=QUESTION_FORMATTING['space_after'],
+                leftIndent=QUESTION_FORMATTING['left_indent']
+            ))
+            styles.add(ParagraphStyle(
+                name='Answer',
+                parent=styles['Normal'],
+                fontSize=ANSWER_FORMATTING['font_size'],
+                spaceBefore=ANSWER_FORMATTING['space_before'],
+                spaceAfter=ANSWER_FORMATTING['space_after'],
+                leftIndent=ANSWER_FORMATTING['left_indent']
+            ))
+            styles.add(ParagraphStyle(
+                name='SignatureLabel',
+                parent=styles['Heading3'],
+                fontSize=11,
+                spaceAfter=1,
+                alignment=0,  # Left alignment for signature labels
+                leftIndent=0  # No indent for signature labels
+            ))
+            
+            # Add specialized styles for table and dropdown formatters
+            styles.add(ParagraphStyle(
+                name='TableHeader',
+                parent=styles['Normal'],
+                fontSize=10,
+                fontName='Helvetica-Bold',
+                alignment=1,  # Center
+                spaceAfter=6
+            ))
+            
+            styles.add(ParagraphStyle(
+                name='TableCell',
+                parent=styles['Normal'],
+                fontSize=9,
+                spaceAfter=0
+            ))
+            
+            styles.add(ParagraphStyle(
+                name='BulletItem',
+                parent=styles['Normal'],
+                fontSize=ANSWER_FORMATTING['font_size'],
+                spaceBefore=1,
+                spaceAfter=1,
+                leftIndent=ANSWER_FORMATTING['left_indent'] + 10,
+                bulletIndent=ANSWER_FORMATTING['left_indent']
+            ))
+            
+            # Create the content
+            story = []
+            
+            # Process and add header image if provided
+            if header_image:
+                processed_image = ExportSubmissionService._process_header_image(
+                    header_image, 
+                    opacity=header_opacity,
+                    size=header_size,
+                    width=header_width,
+                    height=header_height
+                )
+                
+                if processed_image and hasattr(processed_image, 'img_width') and hasattr(processed_image, 'img_height'):
+                    # Get image dimensions
+                    img_width = processed_image.img_width
+                    img_height = processed_image.img_height
+                    
+                    # Calculate aspect ratio and scale to fit page width if not explicitly sized
+                    if header_width is None and header_height is None and header_size is None:
+                        max_width = DEFAULT_IMAGE_SETTINGS['max_width']
+                        if img_width > max_width:
+                            scale_factor = max_width / img_width
+                            img_width = max_width
+                            img_height = img_height * scale_factor
+                    
+                    # Calculate alignment for image
+                    page_width = letter[0] - PAGE_MARGINS['left'] - PAGE_MARGINS['right']
+                    
+                    # Set horizontal alignment
+                    if header_alignment.lower() == "left":
+                        # Left alignment - no horizontal adjustment needed
+                        alignment = "LEFT"
+                    elif header_alignment.lower() == "right":
+                        # Right alignment
+                        alignment = "RIGHT"
+                    else:
+                        # Center alignment (default)
+                        alignment = "CENTER"
+                    
+                    # Create a table for the image with alignment
+                    img_table = Table(
+                        [[Image(processed_image, width=img_width, height=img_height)]],
+                        colWidths=[page_width]
+                    )
+                    img_table.setStyle(TableStyle([
+                        ('ALIGN', (0, 0), (0, 0), alignment),
+                        ('VALIGN', (0, 0), (0, 0), 'MIDDLE'),
+                    ]))
+                    story.append(img_table)
+                    story.append(Spacer(1, 1))
+            
+            # Add title and description
+            story.append(Paragraph(form.title, styles['FormTitle']))
+            if form.description:
+                story.append(Paragraph(form.description, styles['Normal']))
+            story.append(Spacer(1, 12))
+            
+            # Add submission info in a more organized way
+            info_data = [
+                ['Submitted by:', submission.submitted_by],
+                ['Date:', submission.submitted_at.strftime('%Y-%m-%d %H:%M:%S')]
+            ]
+            
+            # Create a table for submission info with proper styling
+            info_table = Table(info_data, colWidths=[1.5*inch, 5.28*inch])
+            info_table.setStyle(TableStyle([
+                ('ALIGN', (0, 0), (0, -1), 'LEFT'),
+                ('ALIGN', (1, 0), (1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+                ('FONTNAME', (1, 0), (1, -1), 'Helvetica'),
+                ('FONTSIZE', (0, 0), (-1, -1), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 1),
+                ('LEFTPADDING', (0, 0), (0, -1), 0),  # No left padding for first column
+            ]))
+            
+            story.append(info_table)
+            story.append(Spacer(1, 8))
+            
+            # Get all form questions to understand the structure
+            form_questions = FormQuestion.query.filter_by(
+                form_id=form.id,
+                is_deleted=False
+            ).all()
+            
+            # Create a mapping of question IDs to their types
+            question_types = {}
+            for fq in form_questions:
+                if hasattr(fq, 'question_id') and hasattr(fq, 'question') and hasattr(fq.question, 'question_type'):
+                    question_types[fq.question_id] = fq.question.question_type.type if fq.question.question_type else "text"
+            
+            # Get all answers excluding signature type questions
+            answers = AnswerSubmitted.query.filter_by(
+                form_submission_id=submission_id,
+                is_deleted=False
+            ).all()
+            
+            # Filter out signature questions
+            non_signature_answers = [a for a in answers if a.question_type.lower() != 'signature']
+            
+            # Process table questions - identify and group by table name pattern
+            import re
+            from collections import defaultdict
+            
+            table_pattern = re.compile(r'^(Table\s+\d+)(?:\s+(.*))?$')
+            tables_data = defaultdict(lambda: {'headers': [], 'rows': defaultdict(dict), 'row_order': []})
+            dropdown_groups = defaultdict(list)
+            regular_answers = []
+            
+            # First pass: categorize answers and extract structure
+            for answer in non_signature_answers:
+                question_text = answer.question
+                answer_type = answer.question_type.lower() if answer.question_type else ""
+                
+                # Check if it's a table question
+                if question_text:
+                    match = table_pattern.match(question_text)
+                    if match:
+                        table_name = match.group(1)
+                        qualifier = match.group(2) or ""
+                        
+                        # Process table components
+                        if qualifier.lower().startswith('column '):
+                            # It's a column header
+                            try:
+                                col_num = int(qualifier.lower().replace('column ', '').strip()) - 1
+                                tables_data[table_name]['headers'].append((col_num, answer.answer or ""))
+                            except ValueError:
+                                # If column number can't be parsed, use the length as index
+                                tables_data[table_name]['headers'].append(
+                                    (len(tables_data[table_name]['headers']), answer.answer or "")
+                                )
+                        elif qualifier.lower().startswith('row '):
+                            # It's a row data cell
+                            try:
+                                row_parts = qualifier.lower().replace('row ', '').strip().split('.')
+                                if len(row_parts) == 2:
+                                    row_num = int(row_parts[0]) - 1
+                                    col_num = int(row_parts[1]) - 1
+                                    
+                                    # Add to row order if not already there
+                                    if row_num not in tables_data[table_name]['row_order']:
+                                        tables_data[table_name]['row_order'].append(row_num)
+                                    
+                                    # Add cell data
+                                    tables_data[table_name]['rows'][row_num][col_num] = answer.answer or ""
+                            except (ValueError, IndexError):
+                                # Skip if row/column number can't be parsed
+                                continue
+                        else:
+                            # No qualifier, check if answer contains structured data
+                            if answer.answer:
+                                import json
+                                
+                                try:
+                                    # Try parsing as JSON
+                                    json_data = json.loads(answer.answer)
+                                    
+                                    if isinstance(json_data, list):
+                                        # Process JSON array
+                                        if json_data and isinstance(json_data[0], dict):
+                                            # List of dictionaries format (objects)
+                                            headers = list(json_data[0].keys())
+                                            tables_data[table_name]['headers'] = [
+                                                (i, h) for i, h in enumerate(headers)
+                                            ]
+                                            
+                                            # Extract rows
+                                            for i, row_data in enumerate(json_data):
+                                                for j, key in enumerate(headers):
+                                                    tables_data[table_name]['rows'][i][j] = str(row_data.get(key, ""))
+                                                
+                                                # Add to row order
+                                                if i not in tables_data[table_name]['row_order']:
+                                                    tables_data[table_name]['row_order'].append(i)
+                                        
+                                        elif json_data and isinstance(json_data[0], list):
+                                            # List of lists format (array of arrays)
+                                            # First row might be headers
+                                            if len(json_data) > 0:
+                                                # Add headers
+                                                tables_data[table_name]['headers'] = [
+                                                    (i, str(h)) for i, h in enumerate(json_data[0])
+                                                ]
+                                                
+                                                # Add data rows
+                                                for i, row in enumerate(json_data[1:], 0):
+                                                    for j, cell in enumerate(row):
+                                                        tables_data[table_name]['rows'][i][j] = str(cell)
+                                                    
+                                                    # Add to row order
+                                                    if i not in tables_data[table_name]['row_order']:
+                                                        tables_data[table_name]['row_order'].append(i)
+                                except (json.JSONDecodeError, TypeError, ValueError):
+                                    # Try CSV-like format
+                                    if '\n' in answer.answer and (',' in answer.answer or '~' in answer.answer):
+                                        separator = '~' if '~' in answer.answer else ','
+                                        lines = answer.answer.strip().split('\n')
+                                        
+                                        if lines:
+                                            # Process header row
+                                            header_cells = [cell.strip() for cell in lines[0].split(separator)]
+                                            tables_data[table_name]['headers'] = [
+                                                (i, h) for i, h in enumerate(header_cells)
+                                            ]
+                                            
+                                            # Process data rows
+                                            for i, line in enumerate(lines[1:], 0):
+                                                cells = [cell.strip() for cell in line.split(separator)]
+                                                for j, cell in enumerate(cells):
+                                                    tables_data[table_name]['rows'][i][j] = cell
+                                                
+                                                # Add to row order
+                                                if i not in tables_data[table_name]['row_order']:
+                                                    tables_data[table_name]['row_order'].append(i)
+                                    else:
+                                        # Not structured data, add as regular answer
+                                        regular_answers.append(answer)
+                        continue
+                    
+                    # Check if it's a dropdown
+                    elif answer_type in ['dropdown', 'select', 'multiselect']:
+                        # Group by question text
+                        dropdown_groups[question_text].append(answer)
+                        continue
+                
+                # If not a special type, add to regular answers
+                regular_answers.append(answer)
+            
+            # Process dropdown answers - combine multiple selections
+            dropdown_data = {}
+            for question, answers_list in dropdown_groups.items():
+                combined_values = []
+                
+                for answer in answers_list:
+                    if answer.answer:
+                        import json
+                        
+                        try:
+                            # Try parsing as JSON
+                            json_data = json.loads(answer.answer)
+                            if isinstance(json_data, list):
+                                # Add each item
+                                combined_values.extend([str(item) for item in json_data])
+                            else:
+                                # Single value
+                                combined_values.append(str(json_data))
+                        except json.JSONDecodeError:
+                            # Not JSON, check if comma-separated
+                            if ',' in answer.answer:
+                                values = [v.strip() for v in answer.answer.split(',')]
+                                combined_values.extend(values)
+                            else:
+                                # Single value
+                                combined_values.append(answer.answer)
+                
+                # Remove duplicates
+                dropdown_data[question] = list(dict.fromkeys(combined_values))
+            
+            # Sort regular answers by question text
+            sorted_regular_answers = sorted(regular_answers, key=lambda a: a.question or "")
+            
+            # Add regular questions and answers
+            for answer in sorted_regular_answers:
+                if answer.question:
+                    story.append(Paragraph(answer.question, styles['Question']))
+                    
+                    # Format answer based on type
+                    if answer.answer:
+                        story.append(Paragraph(answer.answer, styles['Answer']))
+                    else:
+                        story.append(Paragraph("No answer provided", styles['Answer']))
+            
+            # Add dropdown selections
+            for question, values in dropdown_data.items():
+                story.append(Paragraph(question, styles['Question']))
+                
+                if values:
+                    # Format as bulleted list if multiple values
+                    if len(values) > 1:
+                        from reportlab.platypus import ListFlowable, ListItem
+                        
+                        bullet_items = []
+                        for value in values:
+                            bullet_items.append(
+                                ListItem(Paragraph(value, styles['Answer']), leftIndent=ANSWER_FORMATTING['left_indent'])
+                            )
+                        
+                        bullet_list = ListFlowable(
+                            bullet_items,
+                            bulletType='bullet',
+                            start=None,
+                            bulletFontName='Helvetica',
+                            bulletFontSize=9,
+                            leftIndent=ANSWER_FORMATTING['left_indent'] + 10,
+                            bulletIndent=ANSWER_FORMATTING['left_indent']
+                        )
+                        story.append(bullet_list)
+                    else:
+                        # Single value
+                        story.append(Paragraph(values[0], styles['Answer']))
+                else:
+                    # No values
+                    story.append(Paragraph("No selection", styles['Answer']))
+            
+            # Add tables
+            for table_name, table_info in tables_data.items():
+                # Sort headers by column index
+                sorted_headers = sorted(table_info['headers'], key=lambda x: x[0])
+                header_row = [h for _, h in sorted_headers]
+                
+                # Maximum column index plus one
+                max_columns = 0
+                for row_dict in table_info['rows'].values():
+                    if row_dict:
+                        max_columns = max(max_columns, max(row_dict.keys()) + 1)
+                
+                # Ensure we have at least as many columns as headers
+                max_columns = max(max_columns, len(header_row))
+                
+                # Prepare table data starting with headers
+                if not header_row:
+                    # Generate default headers if none provided
+                    header_row = [f"Column {i+1}" for i in range(max_columns)]
+                
+                # Add table title
+                story.append(Paragraph(table_name, styles['Question']))
+                
+                # Build table data - convert sparse representation to grid
+                table_data = [header_row]
+                
+                # Sort rows by row index
+                sorted_row_indices = sorted(table_info['row_order'])
+                for row_idx in sorted_row_indices:
+                    row_data = table_info['rows'].get(row_idx, {})
+                    table_row = []
+                    
+                    # Add cells, maintaining proper column order
+                    for col_idx in range(max_columns):
+                        table_row.append(row_data.get(col_idx, ""))
+                    
+                    table_data.append(table_row)
+                
+                # If we have data (at least headers), create the table
+                if table_data:
+                    # Calculate column widths
+                    available_width = 6.5 * inch
+                    col_width = available_width / len(header_row)
+                    
+                    # Create the table
+                    pdf_table = Table(table_data, colWidths=[col_width] * len(header_row))
+                    
+                    # Style the table
+                    table_style = TableStyle([
+                        ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+                        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                        ('FONTSIZE', (0, 0), (-1, -1), 9),
+                        ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
+                        ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
+                    ])
+                    
+                    pdf_table.setStyle(table_style)
+                    story.append(pdf_table)
+                    story.append(Spacer(1, 10))
+                else:
+                    # No data for this table
+                    story.append(Paragraph("No data available for this table", styles['Answer']))
+            
+            # Add signatures if requested (code from original method)
+            if include_signatures:
+                # Get all signature attachments
+                attachments = Attachment.query.filter_by(
+                    form_submission_id=submission_id,
+                    is_signature=True,
+                    is_deleted=False
+                ).all()
+                
+                if attachments:
+                    story.append(Spacer(1, SIGNATURE_FORMATTING['section_space_before']))
+                    story.append(Paragraph("Signatures:", styles['Heading2']))
+                    story.append(Spacer(1, 1))
+                    
+                    # Apply signature size scaling
+                    scale_factor = signatures_size / 100.0
+                    sig_width = SIGNATURE_FORMATTING['image_width'] * scale_factor
+                    sig_height = SIGNATURE_FORMATTING['image_height'] * scale_factor
+                    
+                    # Handle horizontal alignment (multiple signatures in a row)
+                    if signatures_alignment.lower() == "horizontal" and len(attachments) > 1:
+                        # Calculate available width
+                        available_width = letter[0] - PAGE_MARGINS['left'] - PAGE_MARGINS['right']
+                        
+                        # Calculate how many signatures can fit on one row
+                        # Use a smaller width to allow for spacing between columns
+                        sig_col_width = sig_width * 1.2  # Add 20% for spacing
+                        sigs_per_row = min(len(attachments), max(1, int(available_width / sig_col_width)))
+                        
+                        # Prepare data for the table - group signatures into rows
+                        table_data = []
+                        current_row = []
+                        
+                        for idx, attachment in enumerate(attachments):
+                            file_path = os.path.join(upload_path, attachment.file_path)
+                            exists = os.path.exists(file_path)
+                            
+                            # Extract signature metadata
+                            signature_position = attachment.signature_position
+                            signature_author = attachment.signature_author
+                            
+                            # Try to extract from filename if not in attachment record
+                            if not signature_position or not signature_author:
+                                try:
+                                    filename = os.path.basename(attachment.file_path)
+                                    parts = filename.split('+')
+                                    
+                                    if len(parts) >= 4:
+                                        if not signature_position:
+                                            signature_position = parts[1].replace('_', ' ')
+                                        if not signature_author:
+                                            signature_author = parts[2].replace('_', ' ')
+                                except Exception as e:
+                                    logger.warning(f"Could not parse signature metadata from filename: {str(e)}")
+                            
+                            # Create a signature block
+                            sig_elements = []
+                            
+                            # Add the signature image if it exists - NO SPACER AFTER IMAGE
+                            if exists:
+                                try:
+                                    img = Image(file_path, width=sig_width, height=sig_height)
+                                    sig_elements.append(img)
+                                except Exception as img_error:
+                                    logger.warning(f"Error adding signature image: {str(img_error)}")
+                                    sig_elements.append(Paragraph("Image could not be loaded", styles['Normal']))
+                            
+                            # Add signature line and information
+                            sig_elements.append(Paragraph("<b>________________________________</b>", styles['Normal']))
+                            if signature_author:
+                                sig_elements.append(Paragraph(f"<b>Signed by:</b> {signature_author}", styles['Normal']))
+                            if signature_position:
+                                sig_elements.append(Paragraph(f"<b>Position:</b> {signature_position}", styles['Normal']))
+                            
+                            # Add to current row
+                            current_row.append(sig_elements)
+                            
+                            # If we've filled a row or this is the last attachment, add the row to the table data
+                            if len(current_row) == sigs_per_row or idx == len(attachments) - 1:
+                                # Pad row with empty cells if needed
+                                while len(current_row) < sigs_per_row:
+                                    current_row.append([])
+                                    
+                                table_data.append(current_row)
+                                current_row = []
+                        
+                        # Create column widths
+                        col_width = available_width / sigs_per_row
+                        col_widths = [col_width] * sigs_per_row
+                        
+                        # Create signature table
+                        for row in table_data:
+                            # Create a sub-table for each cell
+                            row_data = []
+                            for cell_elements in row:
+                                if cell_elements:  # Skip empty cells
+                                    # Create a nested table for each signature
+                                    sig_table = Table(
+                                        [[element] for element in cell_elements],
+                                        colWidths=[col_width * 0.95]  # Slightly smaller for margin
+                                    )
+                                    sig_table.setStyle(TableStyle([
+                                        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                                        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                                        # Tighten spacing within the signature block
+                                        ('TOPPADDING', (0, 0), (-1, -1), 0),
+                                        ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+                                    ]))
+                                    row_data.append(sig_table)
+                                else:
+                                    row_data.append("")  # Empty cell
+                            
+                            # Add row to story
+                            sig_row_table = Table(
+                                [row_data],
+                                colWidths=col_widths
+                            )
+                            sig_row_table.setStyle(TableStyle([
+                                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                                ('TOPPADDING', (0, 0), (-1, -1), 0),
+                                ('BOTTOMPADDING', (0, 0), (-1, -1), 1),
+                            ]))
+                            story.append(sig_row_table)
+                    
+                    else:
+                        # Vertical layout (default) - one signature per row
+                        for attachment in attachments:
+                            file_path = os.path.join(upload_path, attachment.file_path)
+                            exists = os.path.exists(file_path)
+                            
+                            # Extract signature metadata
+                            signature_position = attachment.signature_position
+                            signature_author = attachment.signature_author
+                            
+                            # Try to extract from filename if not in attachment record
+                            if not signature_position or not signature_author:
+                                try:
+                                    filename = os.path.basename(attachment.file_path)
+                                    parts = filename.split('+')
+                                    
+                                    if len(parts) >= 4:
+                                        # Format: {form_submission_id}+{signature_position}+{signature_author}+{timestamp}
+                                        if not signature_position:
+                                            signature_position = parts[1].replace('_', ' ')
+                                        if not signature_author:
+                                            signature_author = parts[2].replace('_', ' ')
+                                except Exception as e:
+                                    logger.warning(f"Could not parse signature metadata from filename: {str(e)}")
+                            
+                            if exists:
+                                try:
+                                    # 1. First, add the signature image with the new size
+                                    img = Image(file_path, 
+                                            width=sig_width, 
+                                            height=sig_height)
+                                    
+                                    # Create a table with zero left padding to push image to the left
+                                    sig_table = Table(
+                                        [[img]],
+                                        colWidths=[7*inch]
+                                    )
+                                    sig_table.setStyle(TableStyle([
+                                        ('ALIGN', (0, 0), (0, 0), 'LEFT'),
+                                        ('VALIGN', (0, 0), (0, 0), 'TOP'),
+                                        ('LEFTPADDING', (0, 0), (0, 0), 0),
+                                        ('RIGHTPADDING', (0, 0), (0, 0), 0),
+                                        ('TOPPADDING', (0, 0), (0, 0), 0),
+                                        ('BOTTOMPADDING', (0, 0), (0, 0), 0),
+                                    ]))
+                                    
+                                    story.append(sig_table)
+                                    
+                                    # 2. Next, add signature author below the image
+                                    if signature_author:
+                                        story.append(Paragraph(f"<b>________________________________</b>", styles['Normal']))
+                                        story.append(Paragraph(f"<b>Signed by:</b> {signature_author}", styles['Normal']))
+                                    
+                                    # 3. Finally, add signature position below the author
+                                    if signature_position:
+                                        story.append(Paragraph(f"<b>Position:</b> {signature_position}", styles['Normal']))
+                                    
+                                    # Add spacing after each signature
+                                    story.append(Spacer(1, SIGNATURE_FORMATTING['space_between']))
+                                    
+                                except Exception as img_error:
+                                    logger.warning(f"Error adding signature image: {str(img_error)}")
+                                    story.append(Paragraph("Image could not be loaded", styles['Normal']))
+                            else:
+                                # Add signature information even if image can't be found
+                                if signature_author:
+                                    story.append(Paragraph(f"<b>________________________________</b>", styles['Normal']))
+                                    story.append(Paragraph(f"<b>Signed by:</b> {signature_author}", styles['Normal']))
+                                if signature_position:
+                                    story.append(Paragraph(f"<b>Position:</b> {signature_position}", styles['Normal']))
+                                story.append(Spacer(1, SIGNATURE_FORMATTING['space_between']))
+                    
+                    # Add spacing after signature section
+                    story.append(Spacer(1, SIGNATURE_FORMATTING['section_space_after']))
+            
+            # Build the PDF
+            doc.build(story)
+            buffer.seek(0)
+            return buffer, None
+            
+        except Exception as e:
+            logger.error(f"Error exporting structured submission to PDF: {str(e)}")
+            return None, str(e)
+    
+    @staticmethod
     def export_submission_to_pdf(
         submission_id: int,
         upload_path: str,

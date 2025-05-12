@@ -304,6 +304,54 @@ def export_custom_submission_to_pdf(submission_id):
         logger.error(f"Error exporting custom PDF for submission {submission_id}: {str(e)}", exc_info=True)
         return jsonify({"error": "Internal server error during PDF export"}), 500
 
+@export_submission_bp.route('/<int:submission_id>/pdf/logo', methods=['POST'])
+@jwt_required()
+@PermissionManager.require_permission(action="view", entity_type=EntityType.SUBMISSIONS)
+def export_custom_submission_to_pdf_logo(submission_id):
+    """Export a form submission as PDF with custom styling and options."""
+    try:
+        current_user_identity = get_jwt_identity()
+        # user = AuthService.get_current_user(current_user_identity)
+        # user_role = user.role.name if user and user.role else None
+        user_claims = current_user_identity 
+        user_role = user_claims.get('role') if isinstance(user_claims, dict) else None
+
+        common_params = _parse_common_export_params(request) # request.form and request.files are part of request
+        
+        pdf_style_options = _extract_style_options(request.form)
+        logger.debug(f"Custom PDF export: submission_id={submission_id}, style_options_count={len(pdf_style_options)}")
+
+        pdf_data, metadata, error = ExportSubmissionController.generate_pdf_export(
+            submission_id=submission_id,
+            current_user=str(user_claims),
+            user_role=user_role,
+            header_image=common_params.get('header_image'),
+            header_opacity=common_params.get('header_opacity', 1.0),
+            header_size=common_params.get('header_size'),
+            header_width=common_params.get('header_width'),
+            header_height=common_params.get('header_height'),
+            header_alignment=common_params.get('header_alignment', "center"),
+            signatures_size=common_params.get('signatures_size', 100),
+            signatures_alignment=common_params.get('signatures_alignment', "vertical"),
+            include_signatures=common_params.get('include_signatures', True),
+            pdf_style_options=pdf_style_options
+        )
+
+        if error:
+            return jsonify({"error": error}), 400 if "not found" in error.lower() else 500
+        
+        return send_file(
+            BytesIO(pdf_data),
+            mimetype="application/pdf",
+            as_attachment=True,
+            download_name=metadata["filename"]
+        )
+    except ValueError as ve: # Catch specific errors from _parse_common_export_params
+        logger.warning(f"Validation error during custom PDF export for submission {submission_id}: {str(ve)}")
+        return jsonify({"error": str(ve)}), 400
+    except Exception as e:
+        logger.error(f"Error exporting custom PDF for submission {submission_id}: {str(e)}", exc_info=True)
+        return jsonify({"error": "Internal server error during PDF export"}), 500
 
 # --- DOCX Endpoints ---
 

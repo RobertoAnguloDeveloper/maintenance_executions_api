@@ -1,10 +1,10 @@
 # app/controllers/export_submission_controller.py
 
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, Any
 from flask import current_app
 from app.services.export_submission_service import ExportSubmissionService
 from app.services.form_submission_service import FormSubmissionService
-from app.utils.permission_manager import RoleType
+# from app.utils.permission_manager import RoleType # Not used in this controller directly
 from werkzeug.datastructures import FileStorage
 import logging
 
@@ -15,46 +15,35 @@ class ExportSubmissionController:
     def export_submission_to_pdf(
         submission_id: int,
         current_user: str = None,
-        user_role: str = None
+        user_role: str = None,
+        pdf_style_options: Optional[Dict[str, Any]] = None
     ) -> Tuple[Optional[bytes], Optional[Dict], Optional[str]]:
         """
-        Export a form submission to PDF with authorization checks
-        
-        Args:
-            submission_id: ID of the form submission
-            current_user: Username of current user
-            user_role: Role of current user
-            
-        Returns:
-            Tuple containing: 
-            - PDF bytes or None
-            - Metadata dict (for filename, etc.) or None
-            - Error message or None
+        Export a form submission to PDF with authorization checks and style options.
         """
         try:
-            # First check if submission exists
             submission = FormSubmissionService.get_submission(submission_id)
             if not submission:
                 return None, None, "Submission not found"
-                            
+
             upload_path = current_app.config['UPLOAD_FOLDER']
-            
-            # Call the service
+
             pdf_buffer, error = ExportSubmissionService.export_submission_to_pdf(
                 submission_id=submission_id,
                 upload_path=upload_path,
-                include_signatures=True
+                include_signatures=True, # Default behavior
+                pdf_style_options=pdf_style_options, # Pass through
+                # Pass header/signature specific params if this endpoint needs them explicitly
             )
-            
+
             if error:
                 logger.error(f"Error exporting submission {submission_id} to PDF: {error}")
                 return None, None, error
-                
-            # Create metadata for the file
+
             submission_date = submission.submitted_at.strftime("%Y%m%d")
             form_name = submission.form.title.replace(" ", "_")
             filename = f"{form_name}_submission_{submission_id}_{submission_date}.pdf"
-            
+
             metadata = {
                 "filename": filename,
                 "mimetype": "application/pdf",
@@ -63,58 +52,38 @@ class ExportSubmissionController:
                 "submitted_by": submission.submitted_by,
                 "submitted_at": submission.submitted_at.isoformat()
             }
-            
+
             return pdf_buffer.getvalue(), metadata, None
-            
+
         except Exception as e:
             logger.error(f"Error in export_submission_to_pdf controller: {str(e)}")
             return None, None, str(e)
-        
+
     @staticmethod
     def export_structured_submission_to_pdf(
         submission_id: int,
         current_user: str = None,
         user_role: str = None,
-        header_image: FileStorage = None,
+        header_image: Optional[FileStorage] = None,
         header_opacity: float = 1.0,
-        header_size: float = None,
-        header_width: float = None,
-        header_height: float = None,
+        header_size: Optional[float] = None,
+        header_width: Optional[float] = None,
+        header_height: Optional[float] = None,
         header_alignment: str = "center",
         signatures_size: float = 100,
-        signatures_alignment: str = "vertical"
+        signatures_alignment: str = "vertical",
+        pdf_style_options: Optional[Dict[str, Any]] = None
     ) -> Tuple[Optional[bytes], Optional[Dict], Optional[str]]:
         """
-        Export a form submission to PDF with structured organization of tables and dropdowns
-        
-        Args:
-            submission_id: ID of the form submission
-            current_user: Username of current user
-            user_role: Role of the current user
-            header_image: Optional image file for PDF header
-            header_opacity: Opacity for header image (0.0 to 1.0)
-            header_size: Optional size percentage (keeping aspect ratio)
-            header_width: Optional specific width in pixels (ignores aspect ratio if height also provided)
-            header_height: Optional specific height in pixels (ignores aspect ratio if width also provided)
-            header_alignment: Alignment of the header image (left, center, right)
-            signatures_size: Size percentage for signature images (100 = original size)
-            signatures_alignment: Layout for signatures (vertical, horizontal)
-            
-        Returns:
-            Tuple containing: 
-            - PDF bytes or None
-            - Metadata dict (for filename, etc.) or None
-            - Error message or None
+        Export a form submission to PDF with structured organization, header options, and full style customization.
         """
         try:
-            # First check if submission exists
             submission = FormSubmissionService.get_submission(submission_id)
             if not submission:
                 return None, None, "Submission not found"
-            
+
             upload_path = current_app.config['UPLOAD_FOLDER']
-            
-            # Call the structured PDF export service
+
             pdf_buffer, error = ExportSubmissionService.export_structured_submission_to_pdf(
                 submission_id=submission_id,
                 upload_path=upload_path,
@@ -126,18 +95,18 @@ class ExportSubmissionController:
                 header_height=header_height,
                 header_alignment=header_alignment,
                 signatures_size=signatures_size,
-                signatures_alignment=signatures_alignment
+                signatures_alignment=signatures_alignment,
+                pdf_style_options=pdf_style_options
             )
-            
+
             if error:
                 logger.error(f"Error exporting structured submission {submission_id} to PDF: {error}")
                 return None, None, error
-                    
-            # Create metadata for the file
+
             submission_date = submission.submitted_at.strftime("%Y%m%d")
             form_name = submission.form.title.replace(" ", "_")
             filename = f"{form_name}_submission_{submission_id}_{submission_date}_structured.pdf"
-            
+
             metadata = {
                 "filename": filename,
                 "mimetype": "application/pdf",
@@ -146,61 +115,41 @@ class ExportSubmissionController:
                 "submitted_by": submission.submitted_by,
                 "submitted_at": submission.submitted_at.isoformat()
             }
-            
+
             return pdf_buffer.getvalue(), metadata, None
-            
+
         except Exception as e:
             logger.error(f"Error in export_structured_submission_to_pdf controller: {str(e)}")
             return None, None, str(e)
-        
+
     @staticmethod
     def export_submission_to_pdf_with_logo(
         submission_id: int,
         current_user: str = None,
         user_role: str = None,
-        header_image: FileStorage = None,
+        header_image: Optional[FileStorage] = None,
         header_opacity: float = 1.0,
-        header_size: float = None,
-        header_width: float = None,
-        header_height: float = None,
+        header_size: Optional[float] = None,
+        header_width: Optional[float] = None,
+        header_height: Optional[float] = None,
         header_alignment: str = "center",
         signatures_size: float = 100,
         signatures_alignment: str = "vertical",
-        structured: bool = True  # New parameter with default True
+        structured: bool = True, # This flag might be deprecated for PDF if always structured
+        pdf_style_options: Optional[Dict[str, Any]] = None
     ) -> Tuple[Optional[bytes], Optional[Dict], Optional[str]]:
         """
-        Export a form submission to PDF with authorization checks and header image
-        
-        Args:
-            submission_id: ID of the form submission
-            current_user: Username of current user
-            user_role: Role of the current user
-            header_image: Optional image file for PDF header
-            header_opacity: Opacity for header image (0.0 to 1.0)
-            header_size: Optional size percentage (keeping aspect ratio)
-            header_width: Optional specific width in pixels (ignores aspect ratio if height also provided)
-            header_height: Optional specific height in pixels (ignores aspect ratio if width also provided)
-            header_alignment: Alignment of the header image (left, center, right)
-            signatures_size: Size percentage for signature images (100 = original size)
-            signatures_alignment: Layout for signatures (vertical, horizontal)
-            structured: Whether to structure tables and dropdowns in the PDF
-            
-        Returns:
-            Tuple containing: 
-            - PDF bytes or None
-            - Metadata dict (for filename, etc.) or None
-            - Error message or None
+        Export a form submission to PDF with header image, signature options, and full style customization.
         """
         try:
-            # First check if submission exists
             submission = FormSubmissionService.get_submission(submission_id)
             if not submission:
                 return None, None, "Submission not found"
-            
+
             upload_path = current_app.config['UPLOAD_FOLDER']
-            
-            # Call the service
-            pdf_buffer, error = ExportSubmissionService.export_submission_to_pdf(
+
+            # All PDF exports now go through the structured method for consistency
+            pdf_buffer, error = ExportSubmissionService.export_structured_submission_to_pdf(
                 submission_id=submission_id,
                 upload_path=upload_path,
                 include_signatures=True,
@@ -211,24 +160,23 @@ class ExportSubmissionController:
                 header_height=header_height,
                 header_alignment=header_alignment,
                 signatures_size=signatures_size,
-                signatures_alignment=signatures_alignment
-                # Note: No need to pass structured parameter since we've updated the
-                # export_submission_to_pdf method to always handle table structuring
+                signatures_alignment=signatures_alignment,
+                pdf_style_options=pdf_style_options
             )
-            
+
             if error:
-                logger.error(f"Error exporting submission {submission_id} to PDF: {error}")
+                logger.error(f"Error exporting submission {submission_id} to PDF with logo/styles: {error}")
                 return None, None, error
-                    
-            # Create metadata for the file
+
             submission_date = submission.submitted_at.strftime("%Y%m%d")
             form_name = submission.form.title.replace(" ", "_")
-            filename = f"{form_name}_submission_{submission_id}_{submission_date}.pdf"
-            
-            # Add structured indicator to filename if requested
-            if structured:
-                filename = filename.replace('.pdf', '_structured.pdf')
-            
+            base_filename = f"{form_name}_submission_{submission_id}_{submission_date}"
+
+            filename_suffix = "_logo"
+            if structured: # If structured flag is true, reflect in filename
+                filename_suffix = "_structured_logo"
+            filename = f"{base_filename}{filename_suffix}.pdf"
+
             metadata = {
                 "filename": filename,
                 "mimetype": "application/pdf",
@@ -236,11 +184,77 @@ class ExportSubmissionController:
                 "form_title": submission.form.title,
                 "submitted_by": submission.submitted_by,
                 "submitted_at": submission.submitted_at.isoformat(),
-                "structured": structured
+                "options_applied": {
+                    "header_image": bool(header_image),
+                    "structured_output_flag": structured,
+                    "custom_styles_provided": bool(pdf_style_options)
+                }
             }
-            
+
             return pdf_buffer.getvalue(), metadata, None
-            
+
         except Exception as e:
-            logger.error(f"Error in export_submission_to_pdf controller: {str(e)}")
+            logger.error(f"Error in export_submission_to_pdf_with_logo controller: {str(e)}")
+            return None, None, str(e)
+
+    # --- NEW DOCX CONTROLLER METHOD ---
+    @staticmethod
+    def export_submission_to_docx(
+        submission_id: int,
+        current_user: str = None,
+        user_role: str = None,
+        header_image: Optional[FileStorage] = None,
+        header_size: Optional[float] = None, # Percentage
+        header_width: Optional[float] = None, # Pixels
+        header_height: Optional[float] = None, # Pixels
+        header_alignment: str = "center",
+        signatures_size: float = 100, # Percentage
+        signatures_alignment: str = "vertical",
+        style_options: Optional[Dict[str, Any]] = None # Generic style options for DOCX
+    ) -> Tuple[Optional[bytes], Optional[Dict], Optional[str]]:
+        """
+        Export a form submission to DOCX with authorization checks and options.
+        """
+        try:
+            submission = FormSubmissionService.get_submission(submission_id)
+            if not submission:
+                return None, None, "Submission not found"
+
+            upload_path = current_app.config['UPLOAD_FOLDER']
+
+            docx_buffer, error = ExportSubmissionService.export_submission_to_docx(
+                submission_id=submission_id,
+                upload_path=upload_path,
+                style_options=style_options,
+                header_image_file=header_image,
+                header_size_percent=header_size,
+                header_width_px=header_width,
+                header_height_px=header_height,
+                header_alignment_str=header_alignment,
+                include_signatures=True, # Default to include signatures
+                signatures_size_percent=signatures_size,
+                signatures_alignment_str=signatures_alignment
+            )
+
+            if error:
+                logger.error(f"Error exporting submission {submission_id} to DOCX: {error}")
+                return None, None, error
+
+            submission_date = submission.submitted_at.strftime("%Y%m%d")
+            form_name = submission.form.title.replace(" ", "_")
+            filename = f"{form_name}_submission_{submission_id}_{submission_date}.docx"
+
+            metadata = {
+                "filename": filename,
+                "mimetype": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "submission_id": submission_id,
+                "form_title": submission.form.title,
+                "submitted_by": submission.submitted_by,
+                "submitted_at": submission.submitted_at.isoformat()
+            }
+
+            return docx_buffer.getvalue(), metadata, None
+
+        except Exception as e:
+            logger.error(f"Error in export_submission_to_docx controller: {str(e)}")
             return None, None, str(e)

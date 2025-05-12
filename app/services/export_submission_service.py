@@ -119,7 +119,12 @@ def _get_color_rl(color_input: Any, default_color: colors.Color) -> colors.Color
         try:
             if color_input.startswith("#"):
                 return colors.HexColor(color_input)
-            return getattr(colors, color_input.lower(), default_color)
+            # Attempt to match common color names for ReportLab
+            # ReportLab's colors module typically has lowercase names.
+            color_name_lower = color_input.lower()
+            if hasattr(colors, color_name_lower):
+                return getattr(colors, color_name_lower)
+            return default_color # Fallback if name not found
         except (ValueError, AttributeError):
             logger.warning(f"Invalid ReportLab color string '{color_input}'. Using default.")
             return default_color
@@ -172,7 +177,7 @@ def _get_docx_alignment(align_input: Optional[Union[str, int]]) -> Optional[WD_A
         "RIGHT": WD_ALIGN_PARAGRAPH.RIGHT,
         "JUSTIFY": WD_ALIGN_PARAGRAPH.JUSTIFY,
     }
-    align_map_int = {
+    align_map_int = { # Mapping ReportLab int codes to DOCX
         0: WD_ALIGN_PARAGRAPH.LEFT,
         1: WD_ALIGN_PARAGRAPH.CENTER,
         2: WD_ALIGN_PARAGRAPH.RIGHT,
@@ -185,33 +190,68 @@ def _get_docx_alignment(align_input: Optional[Union[str, int]]) -> Optional[WD_A
     return None
 
 def _get_docx_color(color_str: Optional[str]) -> Optional[RGBColor]:
-    if color_str and color_str.startswith("#") and len(color_str) == 7:
-        try:
-            return RGBColor(int(color_str[1:3], 16), int(color_str[3:5], 16), int(color_str[5:7], 16))
-        except ValueError:
-            logger.warning(f"Invalid hex color string for DOCX: '{color_str}'.")
-            return None
-    # TODO: Add mapping for common color names if needed
-    logger.debug(f"Color string '{color_str}' not a direct hex, returning None for DOCX.")
-    return None
+    if not color_str:
+        return None
+    
+    # Predefined color name mapping for common cases
+    color_name_map = {
+        "black": "000000", "white": "FFFFFF", "red": "FF0000", "green": "00FF00", "blue": "0000FF",
+        "yellow": "FFFF00", "cyan": "00FFFF", "magenta": "FF00FF", "silver": "C0C0C0", "gray": "808080",
+        "maroon": "800000", "olive": "808000", "purple": "800080", "teal": "008080", "navy": "000080",
+        "darkslategray": "2F4F4F", "lightgrey": "D3D3D3", "grey": "808080", # Added from PDF defaults
+    }
+
+    if color_str.startswith("#") and len(color_str) == 7:
+        hex_val = color_str[1:]
+    elif color_str.lower() in color_name_map:
+        hex_val = color_name_map[color_str.lower()]
+    else:
+        logger.warning(f"Color string '{color_str}' is not a direct hex or known name. Cannot convert for DOCX.")
+        return None
+    
+    try:
+        return RGBColor(int(hex_val[0:2], 16), int(hex_val[2:4], 16), int(hex_val[4:6], 16))
+    except ValueError:
+        logger.warning(f"Invalid hex color string for DOCX: '{hex_val}' derived from '{color_str}'.")
+        return None
+
 
 def _set_cell_background_color(cell, hex_color_string: str):
     """Sets background color of a table cell in DOCX."""
-    if not hex_color_string or not hex_color_string.startswith("#"):
-        logger.warning(f"Invalid hex color for cell background: {hex_color_string}")
+    if not hex_color_string:
+        logger.warning(f"No color provided for cell background.")
         return
-    clean_hex = hex_color_string.lstrip('#')
+
+    # Try to convert to hex if it's a name
+    color_name_map = {
+        "black": "000000", "white": "FFFFFF", "red": "FF0000", "green": "00FF00", "blue": "0000FF",
+        "yellow": "FFFF00", "cyan": "00FFFF", "magenta": "FF00FF", "silver": "C0C0C0", "gray": "808080",
+        "maroon": "800000", "olive": "808000", "purple": "800080", "teal": "008080", "navy": "000080",
+        "darkslategray": "2F4F4F", "lightgrey": "D3D3D3",
+    }
+    
+    clean_hex = ""
+    if hex_color_string.startswith("#"):
+        clean_hex = hex_color_string.lstrip('#')
+    elif hex_color_string.lower() in color_name_map:
+        clean_hex = color_name_map[hex_color_string.lower()]
+    else:
+        logger.warning(f"Invalid hex color string or name for cell background: {hex_color_string}")
+        return
+
+    if not (len(clean_hex) == 6 and all(c in "0123456789abcdefABCDEF" for c in clean_hex)):
+        logger.warning(f"Processed hex color '{clean_hex}' is invalid for cell background from input '{hex_color_string}'.")
+        return
+        
     try:
-        # Ensure cell has tcPr if not present
         tcPr = cell._tc.get_or_add_tcPr()
-        # Create shd element for shading
         shd = OxmlElement('w:shd')
         shd.set(qn('w:val'), 'clear')
         shd.set(qn('w:color'), 'auto')
         shd.set(qn('w:fill'), clean_hex)
         tcPr.append(shd)
     except Exception as e:
-        logger.error(f"Error setting cell background color '{hex_color_string}': {e}")
+        logger.error(f"Error setting cell background color '{clean_hex}': {e}")
 
 
 class ExportSubmissionService:
@@ -630,9 +670,44 @@ class ExportSubmissionService:
                 return None, "Form not found"
 
             doc = Document()
-            # Set default font for the document (optional, can be based on style_options)
-            # doc.styles['Normal'].font.name = style_options.get('default_font_family', 'Calibri')
-            # doc.styles['Normal'].font.size = Pt(int(style_options.get('default_font_size', 11)))
+
+            # --- Apply Document-level Page Margins (Section in python-docx) ---
+            # Note: python-docx applies margins per section. Default doc has one section.
+            section = doc.sections[0]
+            page_margin_top = style_options.get('page_margin_top')
+            if page_margin_top is not None:
+                section.top_margin = Inches(_parse_numeric_value(page_margin_top, 0.75))
+            
+            page_margin_bottom = style_options.get('page_margin_bottom')
+            if page_margin_bottom is not None:
+                section.bottom_margin = Inches(_parse_numeric_value(page_margin_bottom, 0.75))
+
+            page_margin_left = style_options.get('page_margin_left')
+            if page_margin_left is not None:
+                section.left_margin = Inches(_parse_numeric_value(page_margin_left, 0.75))
+
+            page_margin_right = style_options.get('page_margin_right')
+            if page_margin_right is not None:
+                section.right_margin = Inches(_parse_numeric_value(page_margin_right, 0.75))
+
+            # --- Default Font for the document ---
+            default_font_family_val = style_options.get('default_font_family')
+            if default_font_family_val:
+                doc.styles['Normal'].font.name = str(default_font_family_val)
+            
+            default_font_size_val = style_options.get('default_font_size') # Assuming this key exists in style_options
+            if default_font_size_val: # PDF uses 'default_font_size', let's assume it for DOCX too for now
+                try:
+                    doc.styles['Normal'].font.size = Pt(_parse_numeric_value(default_font_size_val, 11))
+                except ValueError:
+                    logger.warning(f"Invalid default_font_size '{default_font_size_val}'. Using DOCX default.")
+            
+            default_font_color_val = style_options.get('default_font_color')
+            if default_font_color_val:
+                docx_color = _get_docx_color(str(default_font_color_val))
+                if docx_color:
+                    doc.styles['Normal'].font.color.rgb = docx_color
+
 
             # --- Header Image ---
             if header_image_file:
@@ -643,48 +718,117 @@ class ExportSubmissionService:
                     height_px=header_height_px
                 )
                 if processed_image_io and hasattr(processed_image_io, 'img_width_px') and hasattr(processed_image_io, 'img_height_px'):
-                    img_width_px = getattr(processed_image_io, 'img_width_px')
-                    # Convert pixels to inches for DOCX (assuming 96 DPI for pixel conversion)
-                    img_width_inches = img_width_px / 96.0
+                    img_width_px_val = getattr(processed_image_io, 'img_width_px')
+                    img_width_inches = img_width_px_val / 96.0 # Assuming 96 DPI
                     processed_image_io.seek(0)
-                    # Add picture with alignment
+                    
                     p_header_img = doc.add_paragraph()
                     run_header_img = p_header_img.add_run()
                     run_header_img.add_picture(processed_image_io, width=Inches(img_width_inches))
+                    
                     docx_header_align = _get_docx_alignment(header_alignment_str)
                     if docx_header_align:
                         p_header_img.alignment = docx_header_align
-                    doc.add_paragraph() # Spacer
+                    doc.add_paragraph() 
+
 
             # --- Title and Description ---
-            title_p = doc.add_heading(form.title, level=1)
-            title_align = _get_docx_alignment(style_options.get("title_alignment", "CENTER")) # Example: get from style_options
+            title_text = form.title
+            title_p = doc.add_heading(level=1) # Add heading paragraph first
+            title_run = title_p.add_run(title_text) # Add text to a run
+
+            title_font_family = style_options.get("title_font_family")
+            if title_font_family: title_run.font.name = str(title_font_family)
+            
+            title_font_size = style_options.get("title_font_size")
+            if title_font_size: title_run.font.size = Pt(_parse_numeric_value(title_font_size, 18))
+            
+            title_font_color = style_options.get("title_font_color")
+            if title_font_color:
+                color = _get_docx_color(str(title_font_color))
+                if color: title_run.font.color.rgb = color
+            
+            title_align = _get_docx_alignment(style_options.get("title_alignment", "CENTER"))
             if title_align: title_p.alignment = title_align
-            # You can further style title_p.runs[0].font here based on style_options
+
+            title_space_after = style_options.get("title_space_after") # In inches for PDF, convert to Pt for DOCX
+            if title_space_after:
+                title_p.paragraph_format.space_after = Inches(_parse_numeric_value(title_space_after, 0.25))
+
 
             if form.description:
-                desc_p = doc.add_paragraph(form.description)
-                # Style desc_p as needed
+                desc_p = doc.add_paragraph()
+                desc_run = desc_p.add_run(form.description)
+                # Assuming description uses default font styles for now, or add specific style_options keys
+                # Example:
+                # desc_font_family = style_options.get("description_font_family", style_options.get("default_font_family"))
+                # if desc_font_family: desc_run.font.name = str(desc_font_family)
+                # desc_font_size = style_options.get("description_font_size", style_options.get("default_font_size")) # Points
+                # if desc_font_size: desc_run.font.size = Pt(_parse_numeric_value(desc_font_size, 11))
+                # desc_font_color = style_options.get("description_font_color", style_options.get("default_font_color"))
+                # if desc_font_color:
+                #     color = _get_docx_color(str(desc_font_color))
+                #     if color: desc_run.font.color.rgb = color
+                desc_p.paragraph_format.space_after = Pt(12) # Default spacing after description
 
-            doc.add_paragraph() # Spacer
+            # Spacer paragraph after description (or title if no description)
+            # doc.add_paragraph() # Or use space_after on the paragraph itself
 
             # --- Submission Info ---
-            info_table = doc.add_table(rows=2, cols=2)
-            info_table.cell(0, 0).text = "Submitted by:"
-            info_table.cell(0, 1).text = str(submission.submitted_by or 'N/A')
-            info_table.cell(1, 0).text = "Date:"
-            info_table.cell(1, 1).text = submission.submitted_at.strftime('%Y-%m-%d %H:%M:%S') if submission.submitted_at else 'N/A'
-            # Style info_table cells (bold labels, etc.)
-            for i in range(2): # Bold labels
-                 info_table.cell(i,0).paragraphs[0].runs[0].bold = True
-            info_table.autofit = True # Optional: try to fit content
-            doc.add_paragraph() # Spacer
+            info_table_needed = True # Assume we need it unless it's empty
+            if info_table_needed:
+                info_table = doc.add_table(rows=2, cols=2)
+                info_table.autofit = False # Allow manual column width
+                info_table.columns[0].width = Inches(1.5)
+                info_table.columns[1].width = Inches(4.5) # Adjust as needed based on page width
+
+                # Submitted by
+                cell_label_submit = info_table.cell(0, 0).paragraphs[0]
+                run_label_submit = cell_label_submit.add_run("Submitted by:")
+                cell_val_submit = info_table.cell(0, 1).paragraphs[0]
+                run_val_submit = cell_val_submit.add_run(str(submission.submitted_by or 'N/A'))
+
+                # Date
+                cell_label_date = info_table.cell(1, 0).paragraphs[0]
+                run_label_date = cell_label_date.add_run("Date:")
+                cell_val_date = info_table.cell(1, 1).paragraphs[0]
+                run_val_date = cell_val_date.add_run(submission.submitted_at.strftime('%Y-%m-%d %H:%M:%S') if submission.submitted_at else 'N/A')
+
+                info_label_font_fam = style_options.get("info_label_font_family")
+                info_font_fam = style_options.get("info_font_family")
+                info_font_sz = style_options.get("info_font_size") # Points
+                info_font_clr = style_options.get("info_font_color")
+
+                for r in [run_label_submit, run_label_date]:
+                    if info_label_font_fam: r.font.name = str(info_label_font_fam)
+                    r.bold = True # Labels are typically bold
+                    if info_font_sz: r.font.size = Pt(_parse_numeric_value(info_font_sz, 10))
+                    if info_font_clr:
+                        color = _get_docx_color(str(info_font_clr))
+                        if color: r.font.color.rgb = color
+                
+                for r in [run_val_submit, run_val_date]:
+                    if info_font_fam: r.font.name = str(info_font_fam)
+                    if info_font_sz: r.font.size = Pt(_parse_numeric_value(info_font_sz, 10))
+                    if info_font_clr:
+                        color = _get_docx_color(str(info_font_clr))
+                        if color: r.font.color.rgb = color
+                
+                info_space_after = style_options.get("info_space_after") # Inches from PDF, convert to Pt
+                if info_space_after:
+                    # Add a paragraph after the table and set its space_before or space_after
+                    # Or, set space_after on the last paragraph of the last cell, though less reliable
+                    # Best: add an empty paragraph after the table and style its spacing.
+                    p_after_info_table = doc.add_paragraph()
+                    p_after_info_table.paragraph_format.space_before = Inches(_parse_numeric_value(info_space_after, 0.2))
+                else:
+                    doc.add_paragraph() # Default spacer
+
 
             # --- Answers ---
             all_answers = AnswerSubmitted.query.filter_by(form_submission_id=submission_id, is_deleted=False).all()
             non_signature_answers = [a for a in all_answers if a.question_type and a.question_type.lower() != 'signature']
 
-            # Prepare data structures (similar to PDF)
             table_pattern_re = re.compile(r'^(Table\s+\d+)(?:\s+(.*))?$')
             pattern_based_tables_data = defaultdict(lambda: {'name': '', 'headers': [], 'rows': defaultdict(dict), 'row_order': [], 'raw_json_csv_data': None})
             cell_based_tables_data = defaultdict(lambda: {'name': '', 'headers': {}, 'cells': {}, 'row_indices': set(), 'col_indices': set(), 'header_row_present': False})
@@ -700,11 +844,11 @@ class ExportSubmissionService:
                     cell_based_tables_data[table_id]['name'] = table_id
                     current_data = ans.cell_content if ans.cell_content is not None else ans.answer
                     current_data_str = str(current_data) if current_data is not None else ""
-                    if ans.row == 0: # Header row
+                    if ans.row == 0: 
                         cell_based_tables_data[table_id]['headers'][ans.column] = current_data_str
                         cell_based_tables_data[table_id]['col_indices'].add(ans.column)
                         cell_based_tables_data[table_id]['header_row_present'] = True
-                    elif ans.row > 0: # Data row
+                    elif ans.row > 0: 
                         cell_based_tables_data[table_id]['cells'][(ans.row, ans.column)] = current_data_str
                         cell_based_tables_data[table_id]['row_indices'].add(ans.row)
                         cell_based_tables_data[table_id]['col_indices'].add(ans.column)
@@ -713,7 +857,7 @@ class ExportSubmissionService:
                 match_obj = table_pattern_re.match(q_text)
                 if match_obj:
                     table_name_str = match_obj.group(1)
-                    pattern_based_tables_data[table_name_str]['name'] = table_name_str # Store the name
+                    pattern_based_tables_data[table_name_str]['name'] = table_name_str 
                     qualifier = match_obj.group(2) or ""
                     if qualifier.lower().startswith('column '):
                         try: col_num = int(qualifier.lower().replace('column ', '').strip()) - 1
@@ -741,26 +885,84 @@ class ExportSubmissionService:
                 regular_answers.append(ans)
 
             # --- Render Regular Answers ---
-            for ans_item in sorted(regular_answers, key=lambda a: a.question or ""):
-                q_p = doc.add_paragraph()
-                q_run = q_p.add_run(str(ans_item.question or "Untitled Question"))
-                q_run.bold = True
-                # Apply font styles from style_options if available
-                # q_run.font.name = style_options.get('question_font_family', 'Calibri')
-                # q_run.font.size = Pt(int(style_options.get('question_font_size', 11)))
+            q_font_fam = style_options.get("question_font_family")
+            q_font_sz = style_options.get("question_font_size") # Points
+            q_font_clr = style_options.get("question_font_color")
+            q_left_indent = style_options.get("question_left_indent") # Points from PDF, convert to Inches for DOCX
+            q_space_before = style_options.get("question_space_before") # Inches from PDF, convert to Pt
+            q_space_after = style_options.get("question_space_after") # Points
+            q_leading = style_options.get("question_leading") # Points
 
-                ans_val_p = str(ans_item.answer) if ans_item.answer is not None else "No answer provided"
-                a_p = doc.add_paragraph(ans_val_p)
-                a_p.paragraph_format.left_indent = Inches(0.25) # Indent answer
-                # Apply font styles for answer
-                doc.add_paragraph() # Spacer
+            a_font_fam = style_options.get("answer_font_family")
+            a_font_sz = style_options.get("answer_font_size") # Points
+            a_font_clr = style_options.get("answer_font_color")
+            a_left_indent = style_options.get("answer_left_indent") # Points from PDF, convert to Inches
+            a_space_before = style_options.get("answer_space_before") # Points
+            a_space_after = style_options.get("answer_space_after") # Inches from PDF, convert to Pt
+            a_leading = style_options.get("answer_leading") # Points
+
+            qa_layout_pref = style_options.get("qa_layout", "answer_below")
+            answer_same_line_max_len = _parse_numeric_value(style_options.get("answer_same_line_max_length"), 70)
+
+            for ans_item in sorted(regular_answers, key=lambda a: a.question or ""):
+                q_text_val = str(ans_item.question or "Untitled Question")
+                ans_text_val = str(ans_item.answer) if ans_item.answer is not None else "No answer provided"
+
+                if qa_layout_pref == "answer_same_line" and isinstance(ans_item.answer, str) and \
+                   len(ans_text_val) <= answer_same_line_max_len and '\n' not in ans_text_val:
+                    
+                    p_qa = doc.add_paragraph()
+                    if q_space_before: p_qa.paragraph_format.space_before = Inches(_parse_numeric_value(q_space_before, 0.15))
+                    if q_left_indent: p_qa.paragraph_format.left_indent = Pt(_parse_numeric_value(q_left_indent, 0))
+                    if a_space_after: p_qa.paragraph_format.space_after = Inches(_parse_numeric_value(a_space_after, 0.15)) # Use answer's space after for combined
+                    if q_leading: p_qa.paragraph_format.line_spacing = Pt(_parse_numeric_value(q_leading, 14))
+
+                    # Question part
+                    q_run = p_qa.add_run(f"{q_text_val}: ")
+                    q_run.bold = True
+                    if q_font_fam: q_run.font.name = str(q_font_fam)
+                    if q_font_sz: q_run.font.size = Pt(_parse_numeric_value(q_font_sz, 11))
+                    if q_font_clr:
+                        color = _get_docx_color(str(q_font_clr))
+                        if color: q_run.font.color.rgb = color
+                    
+                    # Answer part
+                    a_run = p_qa.add_run(ans_text_val)
+                    if a_font_fam: a_run.font.name = str(a_font_fam) # Should be answer font
+                    if a_font_sz: a_run.font.size = Pt(_parse_numeric_value(a_font_sz, 10)) # Answer font size
+                    if a_font_clr:
+                        color = _get_docx_color(str(a_font_clr)) # Answer font color
+                        if color: a_run.font.color.rgb = color
+                else:
+                    q_p = doc.add_paragraph()
+                    q_run = q_p.add_run(q_text_val)
+                    q_run.bold = True
+                    if q_font_fam: q_run.font.name = str(q_font_fam)
+                    if q_font_sz: q_run.font.size = Pt(_parse_numeric_value(q_font_sz, 11))
+                    if q_font_clr:
+                        color = _get_docx_color(str(q_font_clr))
+                        if color: q_run.font.color.rgb = color
+                    if q_left_indent: q_p.paragraph_format.left_indent = Pt(_parse_numeric_value(q_left_indent, 0))
+                    if q_space_before: q_p.paragraph_format.space_before = Inches(_parse_numeric_value(q_space_before, 0.15))
+                    if q_space_after: q_p.paragraph_format.space_after = Pt(_parse_numeric_value(q_space_after, 4))
+                    if q_leading: q_p.paragraph_format.line_spacing = Pt(_parse_numeric_value(q_leading, 14))
+
+                    a_p = doc.add_paragraph()
+                    a_run = a_p.add_run(ans_text_val)
+                    if a_font_fam: a_run.font.name = str(a_font_fam)
+                    if a_font_sz: a_run.font.size = Pt(_parse_numeric_value(a_font_sz, 10))
+                    if a_font_clr:
+                        color = _get_docx_color(str(a_font_clr))
+                        if color: a_run.font.color.rgb = color
+                    if a_left_indent: a_p.paragraph_format.left_indent = Pt(_parse_numeric_value(a_left_indent, 15)) # Points for DOCX often look better with smaller numbers than ReportLab
+                    if a_space_before: a_p.paragraph_format.space_before = Pt(_parse_numeric_value(a_space_before, 2))
+                    if a_space_after: a_p.paragraph_format.space_after = Inches(_parse_numeric_value(a_space_after, 0.15))
+                    if a_leading: a_p.paragraph_format.line_spacing = Pt(_parse_numeric_value(a_leading, 12))
+                    # doc.add_paragraph() # Spacer - handled by space_after
+
 
             # --- Render Choice Answers ---
             for q_text_choice, ans_list_choice in choice_answer_groups.items():
-                q_p = doc.add_paragraph()
-                q_run = q_p.add_run(str(q_text_choice))
-                q_run.bold = True
-
                 combined_options = []
                 for choice_ans in ans_list_choice:
                     if choice_ans.answer is not None and str(choice_ans.answer).strip() != "":
@@ -775,55 +977,152 @@ class ExportSubmissionService:
                                 combined_options.append(str(choice_ans.answer))
                 unique_options = list(dict.fromkeys(filter(None, combined_options)))
                 ans_val_c_p = ", ".join(unique_options) if unique_options else "No selection"
-                a_p = doc.add_paragraph(ans_val_c_p)
-                a_p.paragraph_format.left_indent = Inches(0.25)
-                doc.add_paragraph() # Spacer
+
+                if qa_layout_pref == "answer_same_line" and \
+                   len(ans_val_c_p) <= answer_same_line_max_len and '\n' not in ans_val_c_p:
+                    p_qa_choice = doc.add_paragraph()
+                    if q_space_before: p_qa_choice.paragraph_format.space_before = Inches(_parse_numeric_value(q_space_before, 0.15))
+                    if q_left_indent: p_qa_choice.paragraph_format.left_indent = Pt(_parse_numeric_value(q_left_indent, 0))
+                    if a_space_after: p_qa_choice.paragraph_format.space_after = Inches(_parse_numeric_value(a_space_after, 0.15))
+                    if q_leading: p_qa_choice.paragraph_format.line_spacing = Pt(_parse_numeric_value(q_leading, 14))
+                    
+                    q_run_choice = p_qa_choice.add_run(f"{str(q_text_choice)}: ")
+                    q_run_choice.bold = True
+                    if q_font_fam: q_run_choice.font.name = str(q_font_fam)
+                    if q_font_sz: q_run_choice.font.size = Pt(_parse_numeric_value(q_font_sz, 11))
+                    if q_font_clr:
+                        color = _get_docx_color(str(q_font_clr))
+                        if color: q_run_choice.font.color.rgb = color
+
+                    a_run_choice = p_qa_choice.add_run(ans_val_c_p)
+                    if a_font_fam: a_run_choice.font.name = str(a_font_fam)
+                    if a_font_sz: a_run_choice.font.size = Pt(_parse_numeric_value(a_font_sz, 10))
+                    if a_font_clr:
+                        color = _get_docx_color(str(a_font_clr))
+                        if color: a_run_choice.font.color.rgb = color
+                else:
+                    q_p_choice = doc.add_paragraph()
+                    q_run_choice = q_p_choice.add_run(str(q_text_choice))
+                    q_run_choice.bold = True
+                    if q_font_fam: q_run_choice.font.name = str(q_font_fam)
+                    if q_font_sz: q_run_choice.font.size = Pt(_parse_numeric_value(q_font_sz, 11))
+                    if q_font_clr:
+                        color = _get_docx_color(str(q_font_clr))
+                        if color: q_run_choice.font.color.rgb = color
+                    if q_left_indent: q_p_choice.paragraph_format.left_indent = Pt(_parse_numeric_value(q_left_indent, 0))
+                    if q_space_before: q_p_choice.paragraph_format.space_before = Inches(_parse_numeric_value(q_space_before, 0.15))
+                    if q_space_after: q_p_choice.paragraph_format.space_after = Pt(_parse_numeric_value(q_space_after, 4))
+                    if q_leading: q_p_choice.paragraph_format.line_spacing = Pt(_parse_numeric_value(q_leading, 14))
+
+                    a_p_choice = doc.add_paragraph()
+                    a_run_choice = a_p_choice.add_run(ans_val_c_p)
+                    if a_font_fam: a_run_choice.font.name = str(a_font_fam)
+                    if a_font_sz: a_run_choice.font.size = Pt(_parse_numeric_value(a_font_sz, 10))
+                    if a_font_clr:
+                        color = _get_docx_color(str(a_font_clr))
+                        if color: a_run_choice.font.color.rgb = color
+                    if a_left_indent: a_p_choice.paragraph_format.left_indent = Pt(_parse_numeric_value(a_left_indent, 15))
+                    if a_space_before: a_p_choice.paragraph_format.space_before = Pt(_parse_numeric_value(a_space_before, 2))
+                    if a_space_after: a_p_choice.paragraph_format.space_after = Inches(_parse_numeric_value(a_space_after, 0.15))
+                    if a_leading: a_p_choice.paragraph_format.line_spacing = Pt(_parse_numeric_value(a_leading, 12))
+                # doc.add_paragraph() # Spacer - handled by space_after
+
+
+            # --- Table Styles ---
+            th_font_fam = style_options.get("table_header_font_family")
+            th_font_sz = style_options.get("table_header_font_size") # Points
+            th_font_clr = style_options.get("table_header_font_color")
+            th_bg_clr = style_options.get("table_header_bg_color") # Hex string
+            th_align = style_options.get("table_header_alignment")
+            # th_padding is complex for docx, often managed by cell margins or table style
+
+            tc_font_fam = style_options.get("table_cell_font_family")
+            tc_font_sz = style_options.get("table_cell_font_size") # Points
+            tc_font_clr = style_options.get("table_cell_font_color")
+            tc_align = style_options.get("table_cell_alignment")
+            # tc_padding, tc_grid_color, tc_grid_thickness are complex in python-docx direct styling
+            # 'TableGrid' style provides basic grid. More advanced grid styling is involved.
 
             # --- Render Cell-Based Tables ---
             for table_id_cb, content_cb in cell_based_tables_data.items():
-                doc.add_paragraph(str(content_cb['name']), style='Heading2') # Or add_run with bold
+                # Table Title (using question styling)
+                tbl_title_p = doc.add_paragraph()
+                tbl_title_run = tbl_title_p.add_run(str(content_cb['name']))
+                tbl_title_run.bold = True # Typically table titles are bold
+                if q_font_fam: tbl_title_run.font.name = str(q_font_fam)
+                if q_font_sz: tbl_title_run.font.size = Pt(_parse_numeric_value(q_font_sz, 11)) # Use question font size
+                if q_font_clr:
+                    color = _get_docx_color(str(q_font_clr))
+                    if color: tbl_title_run.font.color.rgb = color
+                if q_left_indent: tbl_title_p.paragraph_format.left_indent = Pt(_parse_numeric_value(q_left_indent, 0))
+                if q_space_before: tbl_title_p.paragraph_format.space_before = Inches(_parse_numeric_value(q_space_before, 0.15))
+                tbl_title_p.paragraph_format.space_after = Pt(_parse_numeric_value(q_space_after, 4)) # Space after title before table
+
+
                 sorted_cols = sorted(list(content_cb['col_indices']))
                 data_row_indices = sorted([r for r in content_cb['row_indices'] if r > 0])
                 num_cols = len(sorted_cols)
                 num_data_rows = len(data_row_indices)
-                has_header = content_cb['header_row_present'] or (num_cols > 0 and num_data_rows > 0) # Infer header if data exists
+                has_header = content_cb['header_row_present'] or (num_cols > 0 and num_data_rows > 0)
 
                 if num_cols == 0 and not data_row_indices:
                     doc.add_paragraph("No data for this table.")
                     continue
 
-                # Create table
                 docx_table = doc.add_table(rows= (1 if has_header else 0) + num_data_rows, cols=num_cols if num_cols > 0 else 1)
-                docx_table.style = 'TableGrid' # Apply a basic grid style
-                docx_table.alignment = WD_TABLE_ALIGNMENT.CENTER # Center table on page
+                docx_table.style = 'TableGrid' 
+                docx_table.alignment = WD_TABLE_ALIGNMENT.CENTER 
 
-                # Populate header
                 if has_header:
                     for c_idx, actual_col_idx in enumerate(sorted_cols):
                         cell = docx_table.cell(0, c_idx)
-                        cell.text = str(content_cb['headers'].get(actual_col_idx, f"Column {actual_col_idx + 1}"))
-                        cell.paragraphs[0].runs[0].bold = True
-                        cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        run = cell.paragraphs[0].add_run(str(content_cb['headers'].get(actual_col_idx, f"Column {actual_col_idx + 1}")))
+                        run.bold = True
+                        if th_font_fam: run.font.name = str(th_font_fam)
+                        if th_font_sz: run.font.size = Pt(_parse_numeric_value(th_font_sz, 9))
+                        if th_font_clr:
+                            color = _get_docx_color(str(th_font_clr))
+                            if color: run.font.color.rgb = color
+                        
+                        alignment = _get_docx_alignment(th_align) if th_align else WD_ALIGN_PARAGRAPH.CENTER
+                        cell.paragraphs[0].alignment = alignment
                         cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
-                        # Optional: cell background color from style_options
-                        # bg_color_hex = style_options.get("table_header_bg_color_hex") # e.g. "#D9D9D9"
-                        # if bg_color_hex: _set_cell_background_color(cell, bg_color_hex)
-
-
-                # Populate data rows
+                        if th_bg_clr: _set_cell_background_color(cell, str(th_bg_clr))
+                
                 for r_idx, actual_row_idx in enumerate(data_row_indices):
                     table_row_idx = (1 if has_header else 0) + r_idx
                     for c_idx, actual_col_idx in enumerate(sorted_cols):
                         cell_content_str = str(content_cb['cells'].get((actual_row_idx, actual_col_idx), ""))
                         cell = docx_table.cell(table_row_idx, c_idx)
-                        cell.text = cell_content_str
+                        run = cell.paragraphs[0].add_run(cell_content_str)
+
+                        if tc_font_fam: run.font.name = str(tc_font_fam)
+                        if tc_font_sz: run.font.size = Pt(_parse_numeric_value(tc_font_sz, 8))
+                        if tc_font_clr:
+                            color = _get_docx_color(str(tc_font_clr))
+                            if color: run.font.color.rgb = color
+                        
+                        alignment = _get_docx_alignment(tc_align) if tc_align else WD_ALIGN_PARAGRAPH.LEFT
+                        cell.paragraphs[0].alignment = alignment
                         cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
                 doc.add_paragraph()
 
             # --- Render Pattern-Based Tables (and raw JSON/CSV) ---
             for table_name_pb, info_pb in pattern_based_tables_data.items():
-                doc.add_paragraph(str(info_pb.get('name', table_name_pb)), style='Heading2')
-                table_data_list: List[List[str]] = [] # List of lists of strings
+                # Table Title (using question styling)
+                tbl_title_p_pb = doc.add_paragraph()
+                tbl_title_run_pb = tbl_title_p_pb.add_run(str(info_pb.get('name', table_name_pb)))
+                tbl_title_run_pb.bold = True
+                if q_font_fam: tbl_title_run_pb.font.name = str(q_font_fam)
+                if q_font_sz: tbl_title_run_pb.font.size = Pt(_parse_numeric_value(q_font_sz, 11))
+                if q_font_clr:
+                    color = _get_docx_color(str(q_font_clr))
+                    if color: tbl_title_run_pb.font.color.rgb = color
+                if q_left_indent: tbl_title_p_pb.paragraph_format.left_indent = Pt(_parse_numeric_value(q_left_indent, 0))
+                if q_space_before: tbl_title_p_pb.paragraph_format.space_before = Inches(_parse_numeric_value(q_space_before, 0.15))
+                tbl_title_p_pb.paragraph_format.space_after = Pt(_parse_numeric_value(q_space_after, 4))
+
+                table_data_list: List[List[str]] = [] 
 
                 if info_pb['raw_json_csv_data']:
                     raw_str = info_pb['raw_json_csv_data']
@@ -864,14 +1163,29 @@ class ExportSubmissionService:
                         docx_table_pb = doc.add_table(rows=num_rows, cols=num_cols)
                         docx_table_pb.style = 'TableGrid'
                         docx_table_pb.alignment = WD_TABLE_ALIGNMENT.CENTER
-                        for r, row_data in enumerate(table_data_list):
-                            for c, cell_data in enumerate(row_data):
-                                cell = docx_table_pb.cell(r, c)
-                                cell.text = cell_data
+                        for r_idx, row_data in enumerate(table_data_list):
+                            for c_idx, cell_data in enumerate(row_data):
+                                cell = docx_table_pb.cell(r_idx, c_idx)
+                                run = cell.paragraphs[0].add_run(cell_data)
                                 cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
-                                if r == 0: # Header row
-                                    cell.paragraphs[0].runs[0].bold = True
-                                    cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+                                if r_idx == 0: # Header row
+                                    run.bold = True
+                                    if th_font_fam: run.font.name = str(th_font_fam)
+                                    if th_font_sz: run.font.size = Pt(_parse_numeric_value(th_font_sz, 9))
+                                    if th_font_clr:
+                                        color = _get_docx_color(str(th_font_clr))
+                                        if color: run.font.color.rgb = color
+                                    alignment = _get_docx_alignment(th_align) if th_align else WD_ALIGN_PARAGRAPH.CENTER
+                                    cell.paragraphs[0].alignment = alignment
+                                    if th_bg_clr: _set_cell_background_color(cell, str(th_bg_clr))
+                                else: # Data cell
+                                    if tc_font_fam: run.font.name = str(tc_font_fam)
+                                    if tc_font_sz: run.font.size = Pt(_parse_numeric_value(tc_font_sz, 8))
+                                    if tc_font_clr:
+                                        color = _get_docx_color(str(tc_font_clr))
+                                        if color: run.font.color.rgb = color
+                                    alignment = _get_docx_alignment(tc_align) if tc_align else WD_ALIGN_PARAGRAPH.LEFT
+                                    cell.paragraphs[0].alignment = alignment
                         doc.add_paragraph()
                 else:
                     doc.add_paragraph("No data available for this table.")
@@ -881,46 +1195,87 @@ class ExportSubmissionService:
             if include_signatures:
                 sig_attachments = ExportSubmissionService._get_signature_images(submission_id, upload_path)
                 if sig_attachments:
-                    doc.add_paragraph("Signatures:", style='Heading2')
-                    sig_img_width_default_inches = _parse_numeric_value(style_options.get("signature_image_width"), 2.0) # Default 2 inches
-                    sig_img_height_default_inches = _parse_numeric_value(style_options.get("signature_image_height"), 0.8) # Default 0.8 inches
+                    sig_label_p = doc.add_paragraph()
+                    sig_label_run = sig_label_p.add_run("Signatures:")
+                    
+                    sig_label_font_fam = style_options.get("signature_label_font_family")
+                    sig_label_font_sz = style_options.get("signature_label_font_size") #Points
+                    sig_label_font_clr = style_options.get("signature_label_font_color")
+                    sig_section_space_before = style_options.get("signature_section_space_before") # Inches
+
+                    if sig_label_font_fam: sig_label_run.font.name = str(sig_label_font_fam)
+                    if sig_label_font_sz: sig_label_run.font.size = Pt(_parse_numeric_value(sig_label_font_sz, 12))
+                    if sig_label_font_clr:
+                        color = _get_docx_color(str(sig_label_font_clr))
+                        if color: sig_label_run.font.color.rgb = color
+                    sig_label_run.bold = True # Usually signature labels are bold
+
+                    if sig_section_space_before:
+                        sig_label_p.paragraph_format.space_before = Inches(_parse_numeric_value(sig_section_space_before, 0.3))
+                    sig_label_p.paragraph_format.space_after = Pt(6) # Default space after "Signatures:" label
+
+                    sig_img_width_default_inches = _parse_numeric_value(style_options.get("signature_image_width"), 2.0) 
+                    # Height is often best determined by aspect ratio when width is set for DOCX
+                    # sig_img_height_default_inches = _parse_numeric_value(style_options.get("signature_image_height"), 0.8) 
 
                     sig_scale = signatures_size_percent / 100.0
                     sig_img_width_final_inches = sig_img_width_default_inches * sig_scale
-                    # Height can be omitted in add_picture to maintain aspect ratio based on width
+
+                    sig_text_font_fam = style_options.get("signature_text_font_family")
+                    sig_text_font_sz = style_options.get("signature_text_font_size") # Points
+                    sig_text_font_clr = style_options.get("signature_text_font_color")
+                    sig_space_between_vertical = style_options.get("signature_space_between_vertical") # Inches
 
                     if signatures_alignment_str.lower() == "horizontal" and len(sig_attachments) > 1:
-                        # For DOCX, horizontal layout is trickier. Using a table for horizontal alignment.
-                        # Estimate how many can fit. A 6-inch wide page content area.
-                        max_sigs_per_row = max(1, int(6.0 / (sig_img_width_final_inches + 0.5))) # +0.5 for spacing
-                        max_sigs_per_row = min(max_sigs_per_row, len(sig_attachments), 3) # Cap at 3-4 for readability
+                        max_sigs_per_row = max(1, int(doc.sections[0].page_width / Inches(sig_img_width_final_inches + 0.5))) if sig_img_width_final_inches > 0 else 1
+                        max_sigs_per_row = min(max_sigs_per_row, len(sig_attachments), 3) 
 
-                        sig_table = doc.add_table(rows=0, cols=max_sigs_per_row) # Add rows dynamically
+                        sig_table = doc.add_table(rows=0, cols=max_sigs_per_row) 
                         sig_table.alignment = WD_TABLE_ALIGNMENT.CENTER
-                        current_row_cells = []
+                        current_row_cells_list = []
 
-                        for att in sig_attachments:
-                            if not current_row_cells: # Start a new row in the table
-                                current_row_cells = sig_table.add_row().cells
-
-                            cell_idx = len(sig_table.rows[-1].cells) - len(current_row_cells)
-                            cell = current_row_cells[cell_idx]
+                        for att_idx, att in enumerate(sig_attachments):
+                            if att_idx % max_sigs_per_row == 0: # Start a new row
+                                current_row_cells_list = sig_table.add_row().cells
+                            
+                            cell = current_row_cells_list[att_idx % max_sigs_per_row]
+                            cell_p = cell.paragraphs[0] # Get first paragraph of cell
+                            cell_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
                             if att["exists"]:
                                 try:
-                                    cell.add_paragraph().add_run().add_picture(att["path"], width=Inches(sig_img_width_final_inches))
+                                    cell_p.add_run().add_picture(att["path"], width=Inches(sig_img_width_final_inches))
                                 except Exception as e_img:
-                                    logger.error(f"Error adding signature image {att['path']} to DOCX: {e_img}")
-                                    cell.add_paragraph("<i>[Image Error]</i>")
+                                    logger.error(f"Error adding signature image {att['path']} to DOCX table cell: {e_img}")
+                                    cell_p.add_run("<i>[Image Error]</i>")
                             else:
-                                cell.add_paragraph("<i>[Image Missing]</i>")
-                            cell.add_paragraph("___________________________")
-                            cell.add_paragraph(f"Signed by: {att['author']}").runs[0].font.size = Pt(9)
-                            cell.add_paragraph(f"Position: {att['position']}").runs[0].font.size = Pt(9)
-                            cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER # Center image if possible by centering paragraph
+                                cell_p.add_run("<i>[Image Missing]</i>")
                             
-                            # Remove the used cell from current_row_cells
-                            current_row_cells = current_row_cells[1:] if len(current_row_cells) > 1 else []
+                            # Add text info in new paragraphs within the same cell
+                            line_p = cell.add_paragraph("___________________________")
+                            line_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+                            author_p = cell.add_paragraph()
+                            author_run = author_p.add_run(f"Signed by: {att['author']}")
+                            author_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                            if sig_text_font_fam: author_run.font.name = str(sig_text_font_fam)
+                            if sig_text_font_sz: author_run.font.size = Pt(_parse_numeric_value(sig_text_font_sz, 9))
+                            if sig_text_font_clr:
+                                color = _get_docx_color(str(sig_text_font_clr))
+                                if color: author_run.font.color.rgb = color
+                            
+                            position_p = cell.add_paragraph()
+                            pos_run = position_p.add_run(f"Position: {att['position']}")
+                            position_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                            if sig_text_font_fam: pos_run.font.name = str(sig_text_font_fam)
+                            if sig_text_font_sz: pos_run.font.size = Pt(_parse_numeric_value(sig_text_font_sz, 9))
+                            if sig_text_font_clr:
+                                color = _get_docx_color(str(sig_text_font_clr))
+                                if color: pos_run.font.color.rgb = color
+                            
+                            if sig_space_between_vertical: # Apply as bottom margin to the position paragraph
+                                position_p.paragraph_format.space_after = Inches(_parse_numeric_value(sig_space_between_vertical, 0.15))
+
                         doc.add_paragraph()
 
                     else: # Vertical alignment
@@ -931,14 +1286,33 @@ class ExportSubmissionService:
                                     p_sig_img.add_run().add_picture(att["path"], width=Inches(sig_img_width_final_inches))
                                 except Exception as e_img:
                                     logger.error(f"Error adding signature image {att['path']} to DOCX: {e_img}")
-                                    doc.add_paragraph("<i>[Image Error]</i>")
+                                    p_sig_img.add_run("<i>[Image Error]</i>") # Add error to same para
                             else:
-                                doc.add_paragraph("<i>[Image Missing]</i>")
-                            p_sig_img.alignment = WD_ALIGN_PARAGRAPH.CENTER # Center image
+                                p_sig_img.add_run("<i>[Image Missing]</i>") # Add missing to same para
+                            p_sig_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                            
                             doc.add_paragraph("___________________________", alignment=WD_ALIGN_PARAGRAPH.CENTER)
-                            doc.add_paragraph(f"Signed by: {att['author']}", alignment=WD_ALIGN_PARAGRAPH.CENTER).runs[0].font.size = Pt(9)
-                            doc.add_paragraph(f"Position: {att['position']}", alignment=WD_ALIGN_PARAGRAPH.CENTER).runs[0].font.size = Pt(9)
-                            doc.add_paragraph() # Spacer
+                            
+                            author_p_vert = doc.add_paragraph(alignment=WD_ALIGN_PARAGRAPH.CENTER)
+                            author_run_vert = author_p_vert.add_run(f"Signed by: {att['author']}")
+                            if sig_text_font_fam: author_run_vert.font.name = str(sig_text_font_fam)
+                            if sig_text_font_sz: author_run_vert.font.size = Pt(_parse_numeric_value(sig_text_font_sz, 9))
+                            if sig_text_font_clr:
+                                color = _get_docx_color(str(sig_text_font_clr))
+                                if color: author_run_vert.font.color.rgb = color
+
+                            pos_p_vert = doc.add_paragraph(alignment=WD_ALIGN_PARAGRAPH.CENTER)
+                            pos_run_vert = pos_p_vert.add_run(f"Position: {att['position']}")
+                            if sig_text_font_fam: pos_run_vert.font.name = str(sig_text_font_fam)
+                            if sig_text_font_sz: pos_run_vert.font.size = Pt(_parse_numeric_value(sig_text_font_sz, 9))
+                            if sig_text_font_clr:
+                                color = _get_docx_color(str(sig_text_font_clr))
+                                if color: pos_run_vert.font.color.rgb = color
+                            
+                            if sig_space_between_vertical:
+                                pos_p_vert.paragraph_format.space_after = Inches(_parse_numeric_value(sig_space_between_vertical, 0.15))
+                            else:
+                                pos_p_vert.paragraph_format.space_after = Pt(12) # Default if not specified
 
             # --- Save DOCX to buffer ---
             buffer = io.BytesIO()
@@ -949,4 +1323,3 @@ class ExportSubmissionService:
         except Exception as e:
             logger.error(f"Error exporting submission {submission_id} to DOCX: {str(e)}", exc_info=True)
             return None, f"An error occurred during DOCX generation: {str(e)}"
-

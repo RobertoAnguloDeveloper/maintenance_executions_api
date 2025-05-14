@@ -17,7 +17,7 @@ def _extract_style_options(source_data): # source_data is request.form
     style_options = {}
     # Using PDF config as a proxy for potential style keys for both PDF and DOCX styling.
     # The service layer is responsible for interpreting these for the specific format.
-    for key in DEFAULT_STYLE_CONFIG.keys(): 
+    for key in DEFAULT_STYLE_CONFIG.keys():
         if key in source_data and source_data[key] is not None and source_data[key] != '':
             style_options[key] = source_data[key]
     # Add any other specific keys you might want to always check for
@@ -29,7 +29,7 @@ def _parse_common_export_params(current_request): # Changed parameter name for c
     params = {}
     # Access files from current_request.files
     params['header_image'] = current_request.files.get('header_image')
-    
+
     if params['header_image']:
         # Basic validation, specific format needs for DOCX might differ or require conversion
         if not params['header_image'].filename or not params['header_image'].filename.lower().endswith(('.png', '.jpg', '.jpeg', '.svg')): # SVG for PDF, not ideal for DOCX directly
@@ -52,7 +52,7 @@ def _parse_common_export_params(current_request): # Changed parameter name for c
                 raise ValueError("Header size must be greater than 0 percent.")
         except ValueError:
             raise ValueError("Header size must be a number.")
-    
+
     if 'header_width' in form_data and form_data['header_width']:
         try:
             params['header_width'] = float(form_data['header_width'])
@@ -83,91 +83,92 @@ def _parse_common_export_params(current_request): # Changed parameter name for c
                 raise ValueError("Signatures size must be greater than 0 percent.")
         except ValueError:
             raise ValueError("Signatures size must be a number.")
-            
+
     if 'signatures_alignment' in form_data and form_data['signatures_alignment']:
         sig_alignment = form_data['signatures_alignment'].lower()
         valid_sig_alignments = ['vertical', 'horizontal']
         if sig_alignment not in valid_sig_alignments:
             raise ValueError(f"Invalid signatures alignment. Must be one of: {', '.join(valid_sig_alignments)}.")
         params['signatures_alignment'] = sig_alignment
-        
+
     if 'include_signatures' in form_data: # Allow explicit control over including signatures
         params['include_signatures'] = form_data['include_signatures'].lower() in ['true', '1', 'yes', 'on']
 
     return params
 
-# --- NEW Endpoint for Customization Options ---
+# --- Updated Endpoint for Customization Options ---
 @export_submission_bp.route('/customization_options', methods=['GET'])
 def get_export_customization_options():
     """
     Provides a list of all accepted parameters for custom PDF and DOCX export requests,
-    including their descriptions, types, and example values.
+    including their descriptions, types, example values, and applicability.
     """
     options = {
         "common_options": [
             {
-                "key": "header_image", 
-                "type": "file", 
+                "key": "header_image",
+                "type": "file",
                 "description": "Image file to be placed at the top of the document.",
-                "notes": "Supported formats: PNG, JPG, JPEG, SVG (SVG primarily for PDF, may require conversion for DOCX by the service)."
+                "notes": "Supported formats: PNG, JPG, JPEG, SVG. SVG is primarily for PDF and may be converted to PNG for DOCX by the service."
             },
             {
-                "key": "header_opacity", 
-                "type": "float", 
-                "description": "Opacity of the header image (0-100). Only applicable for PDF.",
+                "key": "header_opacity",
+                "type": "float",
+                "description": "Opacity of the header image (0-100).",
                 "example_pdf": "80",
-                "notes": "Service converts to a 0.0-1.0 scale for PDF."
+                "example_docx": "N/A (Opacity is typically a PDF-specific feature and may not apply to DOCX headers directly).",
+                "notes": "Service converts to a 0.0-1.0 scale for PDF. For DOCX, this option is unlikely to have an effect."
             },
             {
-                "key": "header_size", 
-                "type": "float", 
-                "description": "Relative size of the header image as a percentage of its original dimensions (e.g., 50 for 50%).",
-                "example_pdf": "50", 
+                "key": "header_size",
+                "type": "float",
+                "description": "Relative size of the header image as a percentage of its original dimensions (e.g., 50 for 50%). If header_width or header_height are set, they take precedence.",
+                "example_pdf": "50",
                 "example_docx": "50"
             },
             {
-                "key": "header_width", 
-                "type": "float", 
-                "description": "Specific width for the header image in pixels. Overrides header_size if both width and height are set.",
-                "example_pdf": "200", 
+                "key": "header_width",
+                "type": "float",
+                "description": "Specific width for the header image in pixels. Overrides header_size if set. Aspect ratio is maintained if only width or height is set.",
+                "example_pdf": "200",
                 "example_docx": "200"
             },
             {
-                "key": "header_height", 
-                "type": "float", 
-                "description": "Specific height for the header image in pixels. Overrides header_size if both width and height are set.",
-                "example_pdf": "100", 
+                "key": "header_height",
+                "type": "float",
+                "description": "Specific height for the header image in pixels. Overrides header_size if set. Aspect ratio is maintained if only width or height is set.",
+                "example_pdf": "100",
                 "example_docx": "100"
             },
             {
-                "key": "header_alignment", 
-                "type": "string", 
+                "key": "header_alignment",
+                "type": "string",
                 "description": "Alignment of the header image.",
                 "accepted_values": ["left", "center", "right"],
-                "example_pdf": "center", 
+                "example_pdf": "center",
                 "example_docx": "center"
             },
             {
-                "key": "signatures_size", 
-                "type": "float", 
-                "description": "Relative size of signature images as a percentage (e.g., 80 for 80% of configured default).",
-                "example_pdf": "80", 
+                "key": "signatures_size",
+                "type": "float",
+                "description": "Relative size of signature images as a percentage of their configured default dimensions (e.g., 80 for 80%).",
+                "example_pdf": "80",
                 "example_docx": "80"
             },
             {
-                "key": "signatures_alignment", 
-                "type": "string", 
+                "key": "signatures_alignment",
+                "type": "string",
                 "description": "Layout alignment for multiple signatures.",
                 "accepted_values": ["vertical", "horizontal"],
-                "example_pdf": "vertical", 
+                "example_pdf": "vertical",
                 "example_docx": "vertical"
             },
             {
-                "key": "include_signatures", 
-                "type": "boolean", 
+                "key": "include_signatures",
+                "type": "boolean",
                 "description": "Whether to include signatures in the export.",
                 "accepted_values": ["true", "1", "yes", "on", "false", "0", "no", "off"],
-                "example_pdf": "true", 
+                "example_pdf": "true",
                 "example_docx": "true"
             }
         ],
@@ -175,48 +176,88 @@ def get_export_customization_options():
     }
 
     # Populate style_options from DEFAULT_STYLE_CONFIG
-    # These keys are primarily based on PDF (ReportLab) needs but are adapted by the DOCX service.
     for key, default_value in DEFAULT_STYLE_CONFIG.items():
-        param_info = {"key": key, "description": f"Styling for {key.replace('_', ' ')}."}
-        
+        param_info = {"key": key}
+        doc_variant_key = key + "_docx"
+        is_docx_specific_key = key.endswith("_docx")
+        has_docx_variant = doc_variant_key in DEFAULT_STYLE_CONFIG
+
+        base_key_name = key[:-5] if is_docx_specific_key else key # e.g. title_font_size from title_font_size_docx
+
+        # Description
+        if is_docx_specific_key:
+            param_info["description"] = f"DOCX specific: Styling for {base_key_name.replace('_', ' ')}."
+        else:
+            param_info["description"] = f"Styling for {key.replace('_', ' ')}. Primarily for PDF unless overridden by a DOCX-specific variant (e.g., '{key}_docx')."
+
+        # Type, Examples, Notes
         if key.endswith("_color"):
             param_info["type"] = "string (color)"
-            param_info["example_pdf"] = "#RRGGBB or color name (e.g., 'red', 'black')"
-            param_info["example_docx"] = "#RRGGBB or color name (e.g., 'red', 'black')"
-            param_info["notes"] = "Service attempts to map common names and hex codes."
+            if is_docx_specific_key:
+                param_info["example_pdf"] = "N/A"
+                param_info["example_docx"] = str(default_value) + " (e.g., '#RRGGBB' or '000000')"
+                param_info["notes"] = "DOCX: Expects hex color code (e.g., 'FF0000', '000000'). Service may map common color names."
+            else:
+                param_info["example_pdf"] = str(default_value) + " (e.g., '#RRGGBB' or color name like 'red')"
+                param_info["example_docx"] = str(DEFAULT_STYLE_CONFIG.get(doc_variant_key, default_value)) + " (Uses DOCX variant if available)"
+                param_info["notes"] = "PDF: ReportLab color (hex, name). DOCX: Uses its own color system/variant. Service attempts to map."
         elif key.endswith("_font_family"):
             param_info["type"] = "string (font name)"
-            param_info["example_pdf"] = "Helvetica-Bold"
-            param_info["example_docx"] = "Arial" # DOCX uses standard font names
-            param_info["notes"] = "Ensure font is available. PDF uses PostScript names, DOCX uses system font names."
-        elif key.endswith("_font_size") or "_leading" in key or key.endswith("_padding") or "_indent" in key or key.endswith("_thickness") or key.endswith("_same_line_max_length"):
-            param_info["type"] = "float or integer"
-            param_info["example_pdf"] = "12" # Typically points
-            param_info["example_docx"] = "12" # Typically points
-            param_info["notes"] = "Units are generally points. Service converts for DOCX where necessary (e.g., to Pt() or Inches())."
+            if is_docx_specific_key:
+                param_info["example_pdf"] = "N/A"
+                param_info["example_docx"] = str(default_value)
+                param_info["notes"] = "DOCX: System font name (e.g., 'Calibri', 'Times New Roman')."
+            else:
+                param_info["example_pdf"] = str(default_value)
+                param_info["example_docx"] = str(DEFAULT_STYLE_CONFIG.get(doc_variant_key, "System default (e.g., Calibri)"))
+                param_info["notes"] = "PDF: PostScript font name (e.g., 'Helvetica-Bold'). DOCX: Uses system font names (see DOCX variant or relies on adaptation)."
+        elif key.endswith("_font_size") or "_leading" in key or key.endswith("_padding") or "_indent" in key or key.endswith("_thickness") or key.endswith("_same_line_max_length") or key.endswith("_space_after_docx") or key.endswith("_space_before_docx") or key.endswith("_docx_pt"): # Points
+            param_info["type"] = "float or integer (points)"
+            param_info["notes"] = "Units are typically points."
+            if is_docx_specific_key:
+                param_info["example_pdf"] = "N/A"
+                param_info["example_docx"] = str(default_value)
+            else:
+                param_info["example_pdf"] = str(default_value)
+                param_info["example_docx"] = str(DEFAULT_STYLE_CONFIG.get(doc_variant_key, default_value)) + " (Uses DOCX variant if available, typically points)"
+        elif key.startswith("page_margin_") or "_space_" in key or key.startswith("signature_image_") or key.endswith("_indent_docx"): # Inches (or adapted)
+            param_info["type"] = "float (inches)"
+            param_info["notes"] = "Units are typically inches. Service converts/adapts for the specific format (e.g., to Pt for some DOCX properties)."
+            if is_docx_specific_key: # e.g. answer_left_indent_docx
+                param_info["example_pdf"] = "N/A"
+                param_info["example_docx"] = str(default_value)
+            else:
+                param_info["example_pdf"] = str(default_value)
+                param_info["example_docx"] = str(DEFAULT_STYLE_CONFIG.get(doc_variant_key, default_value)) + " (Uses DOCX variant if available, service converts units as needed)"
         elif key.endswith("_alignment"):
             param_info["type"] = "string or integer"
-            param_info["accepted_values_pdf"] = ["LEFT/0", "CENTER/1", "RIGHT/2", "JUSTIFY/4"]
-            param_info["accepted_values_docx"] = ["LEFT", "CENTER", "RIGHT", "JUSTIFY"]
-            param_info["example_pdf"] = "CENTER"
-            param_info["example_docx"] = "CENTER"
-        elif key.startswith("page_margin_") or "_space_" in key or key.startswith("signature_image_"):
-            param_info["type"] = "float"
-            param_info["example_pdf"] = "0.5" # Typically inches for ReportLab
-            param_info["example_docx"] = "0.5" # Service converts to Inches() for DOCX
-            param_info["notes"] = "Units are typically inches for PDF spacing/margins. Service converts for DOCX."
+            param_info["notes"] = "Alignment values differ between PDF (ReportLab) and DOCX."
+            if is_docx_specific_key:
+                param_info["example_pdf"] = "N/A"
+                param_info["example_docx"] = str(default_value) + " (e.g., 'left', 'center', 'right', 'justify')"
+                param_info["accepted_values_docx"] = ["left", "center", "right", "justify"]
+            else:
+                param_info["example_pdf"] = str(default_value) + " (e.g., 'LEFT', 'CENTER', 0, 1, 2, 4)"
+                param_info["example_docx"] = str(DEFAULT_STYLE_CONFIG.get(doc_variant_key, "center")) + " (Uses DOCX variant or adapted value)"
+                param_info["accepted_values_pdf"] = ["LEFT", "CENTER", "RIGHT", "JUSTIFY", "0", "1", "2", "4"] # Strings to be safe
+                param_info["accepted_values_docx"] = ["left", "center", "right", "justify"]
         elif key == "qa_layout":
             param_info["type"] = "string"
             param_info["accepted_values"] = ["answer_below", "answer_same_line"]
-            param_info["example_pdf"] = "answer_below"
-            param_info["example_docx"] = "answer_below"
-        else:
-            param_info["type"] = "string or float" # Generic fallback
+            param_info["example_pdf"] = str(default_value)
+            param_info["example_docx"] = str(default_value)
+            param_info["notes"] = "Determines if answers appear below questions or on the same line (if space permits)."
+        else: # Generic fallback
+            param_info["type"] = "string, float, or integer"
             param_info["example_pdf"] = str(default_value) if not callable(default_value) else "varies"
-            param_info["example_docx"] = str(default_value) if not callable(default_value) else "varies"
+            param_info["example_docx"] = str(DEFAULT_STYLE_CONFIG.get(doc_variant_key, default_value if not callable(default_value) else "varies"))
+            param_info["notes"] = "Value type and interpretation may vary. Check service layer for specifics if unclear."
+            if is_docx_specific_key:
+                 param_info["example_pdf"] = "N/A"
+
 
         options["style_options"].append(param_info)
-        
+
     return jsonify(options), 200
 
 
@@ -229,17 +270,14 @@ def export_default_submission_to_pdf(submission_id):
     """Export a form submission as PDF with default styling."""
     try:
         current_user_identity = get_jwt_identity()
-        # user = AuthService.get_current_user(current_user_identity) # Assuming you need user object for role
-        # user_role = user.role.name if user and user.role else None
-        user_claims = current_user_identity # If JWT sub is just the username or ID and role is in claims
+        user_claims = current_user_identity 
         user_role = user_claims.get('role') if isinstance(user_claims, dict) else None
 
 
         pdf_data, metadata, error = ExportSubmissionController.generate_pdf_export(
             submission_id=submission_id,
-            current_user=str(user_claims), # Pass identifier
+            current_user=str(user_claims), 
             user_role=user_role
-            # All other options will use their defaults in the controller/service
         )
 
         if error:
@@ -262,12 +300,10 @@ def export_custom_submission_to_pdf(submission_id):
     """Export a form submission as PDF with custom styling and options."""
     try:
         current_user_identity = get_jwt_identity()
-        # user = AuthService.get_current_user(current_user_identity)
-        # user_role = user.role.name if user and user.role else None
-        user_claims = current_user_identity 
+        user_claims = current_user_identity
         user_role = user_claims.get('role') if isinstance(user_claims, dict) else None
 
-        common_params = _parse_common_export_params(request) # request.form and request.files are part of request
+        common_params = _parse_common_export_params(request)
         
         pdf_style_options = _extract_style_options(request.form)
         logger.debug(f"Custom PDF export: submission_id={submission_id}, style_options_count={len(pdf_style_options)}")
@@ -290,14 +326,14 @@ def export_custom_submission_to_pdf(submission_id):
 
         if error:
             return jsonify({"error": error}), 400 if "not found" in error.lower() else 500
-        
+
         return send_file(
             BytesIO(pdf_data),
             mimetype="application/pdf",
             as_attachment=True,
             download_name=metadata["filename"]
         )
-    except ValueError as ve: # Catch specific errors from _parse_common_export_params
+    except ValueError as ve: 
         logger.warning(f"Validation error during custom PDF export for submission {submission_id}: {str(ve)}")
         return jsonify({"error": str(ve)}), 400
     except Exception as e:
@@ -308,24 +344,24 @@ def export_custom_submission_to_pdf(submission_id):
 @jwt_required()
 @PermissionManager.require_permission(action="view", entity_type=EntityType.SUBMISSIONS)
 def export_custom_submission_to_pdf_logo(submission_id):
-    """Export a form submission as PDF with custom styling and options."""
+    """(DEPRECATED - Use /pdf/custom) Export a form submission as PDF with custom styling and options."""
+    # This endpoint appears redundant with /pdf/custom. Consider removing or clearly differentiating.
+    # For now, it behaves identically to /pdf/custom.
     try:
         current_user_identity = get_jwt_identity()
-        # user = AuthService.get_current_user(current_user_identity)
-        # user_role = user.role.name if user and user.role else None
-        user_claims = current_user_identity 
+        user_claims = current_user_identity
         user_role = user_claims.get('role') if isinstance(user_claims, dict) else None
 
-        common_params = _parse_common_export_params(request) # request.form and request.files are part of request
+        common_params = _parse_common_export_params(request)
         
         pdf_style_options = _extract_style_options(request.form)
-        logger.debug(f"Custom PDF export: submission_id={submission_id}, style_options_count={len(pdf_style_options)}")
+        logger.debug(f"Custom PDF export (logo route): submission_id={submission_id}, style_options_count={len(pdf_style_options)}")
 
         pdf_data, metadata, error = ExportSubmissionController.generate_pdf_export(
             submission_id=submission_id,
             current_user=str(user_claims),
             user_role=user_role,
-            header_image=common_params.get('header_image'),
+            header_image=common_params.get('header_image'), # This is where a logo would be passed
             header_opacity=common_params.get('header_opacity', 1.0),
             header_size=common_params.get('header_size'),
             header_width=common_params.get('header_width'),
@@ -339,18 +375,18 @@ def export_custom_submission_to_pdf_logo(submission_id):
 
         if error:
             return jsonify({"error": error}), 400 if "not found" in error.lower() else 500
-        
+
         return send_file(
             BytesIO(pdf_data),
             mimetype="application/pdf",
             as_attachment=True,
             download_name=metadata["filename"]
         )
-    except ValueError as ve: # Catch specific errors from _parse_common_export_params
-        logger.warning(f"Validation error during custom PDF export for submission {submission_id}: {str(ve)}")
+    except ValueError as ve:
+        logger.warning(f"Validation error during custom PDF export (logo route) for submission {submission_id}: {str(ve)}")
         return jsonify({"error": str(ve)}), 400
     except Exception as e:
-        logger.error(f"Error exporting custom PDF for submission {submission_id}: {str(e)}", exc_info=True)
+        logger.error(f"Error exporting custom PDF (logo route) for submission {submission_id}: {str(e)}", exc_info=True)
         return jsonify({"error": "Internal server error during PDF export"}), 500
 
 # --- DOCX Endpoints ---
@@ -362,8 +398,6 @@ def export_default_submission_to_docx(submission_id):
     """Export a form submission as DOCX with default styling."""
     try:
         current_user_identity = get_jwt_identity()
-        # user = AuthService.get_current_user(current_user_identity)
-        # user_role = user.role.name if user and user.role else None
         user_claims = current_user_identity
         user_role = user_claims.get('role') if isinstance(user_claims, dict) else None
 
@@ -371,7 +405,6 @@ def export_default_submission_to_docx(submission_id):
             submission_id=submission_id,
             current_user=str(user_claims),
             user_role=user_role
-            # All other options will use their defaults
         )
 
         if error:
@@ -394,15 +427,12 @@ def export_custom_submission_to_docx(submission_id):
     """Export a form submission as DOCX with custom styling and options."""
     try:
         current_user_identity = get_jwt_identity()
-        # user = AuthService.get_current_user(current_user_identity)
-        # user_role = user.role.name if user and user.role else None
         user_claims = current_user_identity
         user_role = user_claims.get('role') if isinstance(user_claims, dict) else None
 
-        common_params = _parse_common_export_params(request) # Pass the whole request object
+        common_params = _parse_common_export_params(request)
         
-        # For DOCX, 'style_options' is the key used in the controller and service
-        style_options = _extract_style_options(request.form) 
+        style_options = _extract_style_options(request.form)
         logger.debug(f"Custom DOCX export: submission_id={submission_id}, style_options_count={len(style_options)}")
 
         docx_data, metadata, error = ExportSubmissionController.generate_docx_export(
@@ -410,11 +440,11 @@ def export_custom_submission_to_docx(submission_id):
             current_user=str(user_claims),
             user_role=user_role,
             header_image=common_params.get('header_image'),
-            header_size=common_params.get('header_size'), # Percentage
-            header_width=common_params.get('header_width'), # Pixels
-            header_height=common_params.get('header_height'), # Pixels
+            header_size=common_params.get('header_size'), 
+            header_width=common_params.get('header_width'),
+            header_height=common_params.get('header_height'),
             header_alignment=common_params.get('header_alignment', "center"),
-            signatures_size=common_params.get('signatures_size', 100), # Percentage
+            signatures_size=common_params.get('signatures_size', 100),
             signatures_alignment=common_params.get('signatures_alignment', "vertical"),
             include_signatures=common_params.get('include_signatures', True),
             style_options=style_options

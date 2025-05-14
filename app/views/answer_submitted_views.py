@@ -30,6 +30,14 @@ def create_answer_submitted():
                 "required_fields": required_fields
             }), 400
 
+        # Extract question_order if provided
+        question_order = None
+        if 'question_order' in data:
+            try:
+                question_order = int(data['question_order'])
+            except (ValueError, TypeError):
+                return jsonify({"error": "question_order must be an integer"}), 400
+
         # Extract table-specific fields if necessary
         column = None
         row = None
@@ -49,6 +57,7 @@ def create_answer_submitted():
             question_text=data['question_text'],
             question_type_text=data['question_type_text'],
             answer_text=data['answer_text'],
+            question_order=question_order,  # Added question_order
             current_user=current_user,
             column=column,
             row=row,
@@ -92,6 +101,13 @@ def bulk_create_answers_submitted():
             if submission['question_type_text'] == 'table':
                 if 'column' not in submission or 'row' not in submission:
                     return jsonify({"error": "Column and row are required for table-type questions"}), 400
+            
+            # Validate question_order if present
+            if 'question_order' in submission:
+                try:
+                    submission['question_order'] = int(submission['question_order'])
+                except (ValueError, TypeError):
+                    return jsonify({"error": "question_order must be an integer"}), 400
 
         submissions, error = AnswerSubmittedController.bulk_create_answers_submitted(
             form_submission_id=int(data['form_submission_id']),
@@ -118,6 +134,10 @@ def bulk_create_answers_submitted():
                         'created_at': submission.created_at.isoformat() if submission.created_at else None,
                         'updated_at': submission.updated_at.isoformat() if submission.updated_at else None
                     }
+                    
+                    # Add question_order if available
+                    if hasattr(submission, 'question_order'):
+                        submission_dict['question_order'] = submission.question_order
                     
                     # Add table-specific fields if applicable
                     if submission.question_type == 'table':
@@ -157,6 +177,11 @@ def get_all_answers_submitted():
         question_type = request.args.get('question_type')
         if question_type:
             filters['question_type'] = question_type
+            
+        # Question order filter
+        question_order = request.args.get('question_order', type=int)
+        if question_order is not None:
+            filters['question_order'] = question_order
             
         # Table-specific filters
         column = request.args.get('column', type=int)
@@ -202,6 +227,7 @@ def get_batch_answers_submitted():
         include_deleted = request.args.get('include_deleted', '').lower() == 'true'
         form_submission_id = request.args.get('form_submission_id', type=int)
         question_type = request.args.get('question_type')
+        question_order = request.args.get('question_order', type=int)
         
         # Table-specific filters
         column = request.args.get('column', type=int)
@@ -218,6 +244,7 @@ def get_batch_answers_submitted():
             include_deleted=include_deleted,
             form_submission_id=form_submission_id,
             question_type=question_type,
+            question_order=question_order,
             column=column,
             row=row,
             current_user=user
@@ -235,6 +262,7 @@ def get_batch_answers_submitted():
                 "filters_applied": {
                     "form_submission_id": form_submission_id,
                     "question_type": question_type,
+                    "question_order": question_order,
                     "column": column,
                     "row": row
                 }
@@ -369,6 +397,14 @@ def update_answer_submitted(answer_submitted_id):
         if error:
             return jsonify({"error": error}), 404
 
+        # Extract question_order if provided
+        question_order = None
+        if 'question_order' in data:
+            try:
+                question_order = int(data['question_order'])
+            except (ValueError, TypeError):
+                return jsonify({"error": "question_order must be an integer"}), 400
+
         # Extract table-specific fields if necessary
         column = None
         row = None
@@ -386,6 +422,7 @@ def update_answer_submitted(answer_submitted_id):
         updated_answer, error = AnswerSubmittedController.update_answer_submitted(
             answer_submitted_id=answer_submitted_id,
             answer_text=data.get('answer_text'),
+            question_order=question_order,
             column=column,
             row=row,
             cell_content=cell_content,

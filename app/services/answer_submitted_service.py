@@ -23,6 +23,7 @@ class AnswerSubmittedService:
         question_text: str,
         question_type_text: str,
         answer_text: str,
+        question_order: Optional[int] = None,  # Added question_order parameter
         is_signature: bool = False,
         signature_file: Optional[FileStorage] = None,
         upload_path: Optional[str] = None,
@@ -38,6 +39,7 @@ class AnswerSubmittedService:
             question_text: The text of the question
             question_type_text: The type of question (text, choice, table, etc.)
             answer_text: The answer text
+            question_order: Order number of the question in the form
             is_signature: Whether this answer requires a signature
             signature_file: File object for signature if applicable
             upload_path: Base path for file uploads
@@ -64,12 +66,38 @@ class AnswerSubmittedService:
                 logger.info(f"Removed '~' characters from signature question text: '{question_text}' -> '{cleaned_question_text}'")
                 question_text = cleaned_question_text
 
+            # If question_order not provided, try to find it from the form_question
+            if question_order is None:
+                try:
+                    # Get the form_id from form_submission
+                    form_id = form_submission.form_id
+                    
+                    # Find the question in the form_questions table
+                    from app.models.form_question import FormQuestion
+                    
+                    question_query = db.session.query(FormQuestion).join(
+                        Question, 
+                        FormQuestion.question_id == Question.id
+                    ).filter(
+                        FormQuestion.form_id == form_id,
+                        Question.text == question_text,
+                        FormQuestion.is_deleted == False
+                    ).first()
+                    
+                    if question_query:
+                        question_order = question_query.order_number
+                        logger.info(f"Found question order {question_order} for question: {question_text}")
+                except Exception as e:
+                    logger.warning(f"Error finding question order: {str(e)}")
+                    # Continue without question_order if there's an error
+
             # Create answer submission
             answer_submitted = AnswerSubmitted(
                 form_submission_id=form_submission_id,
                 question=question_text,
                 question_type=question_type_text,
-                answer=answer_text
+                answer=answer_text,
+                question_order=question_order  # Added question_order
             )
 
             # Handle table-type questions
@@ -129,6 +157,9 @@ class AnswerSubmittedService:
             if not form_submission:
                 return None, "Form submission not found"
 
+            # Get form_id for looking up question orders if needed
+            form_id = form_submission.form_id
+            
             # Start transaction
             db.session.begin_nested()
 
@@ -142,11 +173,36 @@ class AnswerSubmittedService:
                     logger.info(f"Removed '~' characters from signature question text: '{question_text}' -> '{cleaned_question_text}'")
                     question_text = cleaned_question_text
                 
+                # Get question_order from data or find it
+                question_order = data.get('question_order')
+                
+                # If question_order not provided, try to find it
+                if question_order is None:
+                    try:
+                        from app.models.form_question import FormQuestion
+                        
+                        question_query = db.session.query(FormQuestion).join(
+                            Question, 
+                            FormQuestion.question_id == Question.id
+                        ).filter(
+                            FormQuestion.form_id == form_id,
+                            Question.text == question_text,
+                            FormQuestion.is_deleted == False
+                        ).first()
+                        
+                        if question_query:
+                            question_order = question_query.order_number
+                            logger.info(f"Found question order {question_order} for question: {question_text}")
+                    except Exception as e:
+                        logger.warning(f"Error finding question order: {str(e)}")
+                        # Continue without question_order if there's an error
+                
                 answer_submitted = AnswerSubmitted(
                     form_submission_id=form_submission_id,
                     question=question_text,
                     question_type=data['question_type_text'],
-                    answer=data['answer_text']
+                    answer=data['answer_text'],
+                    question_order=question_order  # Added question_order
                 )
                 
                 # Handle table-type questions
@@ -212,6 +268,10 @@ class AnswerSubmittedService:
                 if 'question_type' in filters:
                     query = query.filter(AnswerSubmitted.question_type == filters['question_type'])
                 
+                # Question order filtering
+                if 'question_order' in filters:
+                    query = query.filter(AnswerSubmitted.question_order == filters['question_order'])
+                
                 # Table-specific filtering
                 if 'column' in filters:
                     query = query.filter(AnswerSubmitted.column == filters['column'])
@@ -219,7 +279,11 @@ class AnswerSubmittedService:
                 if 'row' in filters:
                     query = query.filter(AnswerSubmitted.row == filters['row'])
             
-            return query.order_by(AnswerSubmitted.created_at.desc()).all()
+            # First order by question_order, then by id for consistent results
+            return query.order_by(
+                AnswerSubmitted.question_order.nulls_last(),
+                AnswerSubmitted.created_at.desc()
+            ).all()
         except Exception as e:
             logger.error(f"Error in get_all_answers_submitted service: {str(e)}")
             return []
@@ -258,6 +322,11 @@ class AnswerSubmittedService:
             question_type = filters.get('question_type')
             if question_type:
                 query = query.filter(AnswerSubmitted.question_type == question_type)
+                
+            # Question order filtering
+            question_order = filters.get('question_order')
+            if question_order is not None:
+                query = query.filter(AnswerSubmitted.question_order == question_order)
             
             # Table-specific filtering
             column = filters.get('column')
@@ -293,8 +362,11 @@ class AnswerSubmittedService:
             # Get total count
             total_count = query.count()
             
-            # Apply pagination
-            answers_submitted = query.order_by(AnswerSubmitted.id).offset(offset).limit(per_page).all()
+            # Apply sorting and pagination
+            answers_submitted = query.order_by(
+                AnswerSubmitted.question_order.nulls_last(),
+                AnswerSubmitted.id
+            ).offset(offset).limit(per_page).all()
             
             # Convert to dictionary representation
             answers_submitted_data = [answer.to_dict() for answer in answers_submitted]
@@ -312,6 +384,9 @@ class AnswerSubmittedService:
             answers = AnswerSubmitted.query.filter_by(
                 form_submission_id=submission_id,
                 is_deleted=False
+            ).order_by(
+                AnswerSubmitted.question_order.nulls_last(),
+                AnswerSubmitted.id
             ).all()
             return answers, None
         except Exception as e:
@@ -322,6 +397,7 @@ class AnswerSubmittedService:
     def update_answer_submitted(
         answer_submitted_id: int,
         answer_text: Optional[str] = None,
+        question_order: Optional[int] = None,  # Added question_order
         column: Optional[int] = None,
         row: Optional[int] = None,
         cell_content: Optional[str] = None
@@ -338,6 +414,10 @@ class AnswerSubmittedService:
 
             if answer_text is not None:
                 answer.answer = answer_text
+                
+            # Update question_order if provided
+            if question_order is not None:
+                answer.question_order = question_order
                 
             # Update table-specific fields if this is a table-type question
             if answer.question_type == 'table':
@@ -436,6 +516,12 @@ class AnswerSubmittedService:
                 'columns': max_column + 1,
                 'cells': {}
             }
+            
+            # Find the question_order for this question
+            question_order = None
+            if cells and hasattr(cells[0], 'question_order') and cells[0].question_order is not None:
+                question_order = cells[0].question_order
+                table['question_order'] = question_order
             
             # Fill in cell data
             for cell in cells:

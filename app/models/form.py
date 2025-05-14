@@ -21,6 +21,9 @@ class Form(TimestampMixin, SoftDeleteMixin, db.Model):
 
     # Relationships
     creator = db.relationship('User', back_populates='created_forms')
+    report_templates = db.relationship('ReportTemplate', back_populates='form',
+                                        cascade='all, delete-orphan',
+                                        order_by='ReportTemplate.created_at.desc()')
     form_questions = db.relationship('FormQuestion', back_populates='form', 
                                    cascade='all, delete-orphan',
                                    order_by='FormQuestion.order_number')

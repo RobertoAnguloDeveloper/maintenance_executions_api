@@ -13,6 +13,7 @@ class AnswerSubmitted(TimestampMixin, SoftDeleteMixin, db.Model):
     question_type = db.Column(db.String(255), nullable=False)
     answer = db.Column(db.Text)
     form_submission_id = db.Column(db.Integer, db.ForeignKey('form_submissions.id'), nullable=False)
+    question_order = db.Column(db.Integer, nullable=True)  # Added question_order field
     column = db.Column(db.Integer, nullable=True)
     row = db.Column(db.Integer, nullable=True)
     cell_content = db.Column(db.Text, nullable=True)
@@ -31,6 +32,7 @@ class AnswerSubmitted(TimestampMixin, SoftDeleteMixin, db.Model):
             'question_type': self.question_type,
             'answer': self.answer,
             'form_submission_id': self.form_submission_id,
+            'question_order': self.question_order,  # Added question_order
             'column': self.column,
             'row': self.row,
             'cell_content': self.cell_content,
@@ -47,6 +49,7 @@ class AnswerSubmitted(TimestampMixin, SoftDeleteMixin, db.Model):
             'question': self.question,
             'question_type': self.question_type,
             'answer': self.answer,
+            'question_order': self.question_order,  # Added question_order
             'column': self.column,
             'row': self.row,
             'cell_content': self.cell_content,

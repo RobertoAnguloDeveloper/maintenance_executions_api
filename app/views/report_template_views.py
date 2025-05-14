@@ -50,7 +50,7 @@ def create_report_template():
     """
     API endpoint to create a new report template.
     Requires JWT authentication.
-    Expects JSON body with: name (str, required), configuration (dict, required),
+    Expects JSON body with: name (str, required), form_id (int, required), configuration (dict, required),
                            description (str, optional), is_public (bool, optional, default=false).
     """
     user, error_response = _get_current_user()
@@ -78,7 +78,7 @@ def create_report_template():
 def list_report_templates():
     """
     API endpoint to list report templates accessible to the current user.
-    Lists templates created by the user and any public templates.
+    Lists templates associated with forms owned by the user and any public templates.
     Requires JWT authentication.
     """
     user, error_response = _get_current_user()
@@ -94,6 +94,26 @@ def list_report_templates():
     # Return the list of templates (using basic representation)
     return jsonify(template_list), status_code
 
+@report_template_bp.route('/form/<int:form_id>', methods=['GET'])
+@jwt_required()
+def get_templates_by_form(form_id):
+    """
+    API endpoint to retrieve templates associated with a specific form.
+    Requires JWT authentication.
+    User must have access to the form to see its templates.
+    """
+    user, error_response = _get_current_user()
+    if error_response:
+        return jsonify(error_response[0]), error_response[1]
+    
+    # Call a controller method to find templates for this form
+    template_list, error, status_code = ReportTemplateController.get_templates_by_form(form_id, user)
+    
+    if error:
+        return jsonify({"error": error}), status_code
+    
+    return jsonify(template_list), status_code
+
 @report_template_bp.route('/<int:template_id>', methods=['GET'])
 @jwt_required()
 # Optional: Add role/permission check decorator. Access logic is handled in the controller.
@@ -101,7 +121,7 @@ def get_report_template(template_id):
     """
     API endpoint to retrieve a specific report template by its ID.
     Requires JWT authentication.
-    User must own the template, it must be public, or user must be admin.
+    User must own the form associated with the template, the template must be public, or user must be admin.
     """
     user, error_response = _get_current_user()
     if error_response:
@@ -122,8 +142,8 @@ def get_report_template(template_id):
 def update_report_template(template_id):
     """
     API endpoint to update a specific report template.
-    Requires JWT authentication. User must be the owner or an admin.
-    Expects JSON body with fields to update (name, description, configuration, is_public).
+    Requires JWT authentication. User must own the form or be an admin.
+    Expects JSON body with fields to update (name, description, configuration, is_public, form_id).
     """
     user, error_response = _get_current_user()
     if error_response:
@@ -150,7 +170,7 @@ def update_report_template(template_id):
 def delete_report_template(template_id):
     """
     API endpoint to soft-delete a specific report template.
-    Requires JWT authentication. User must be the owner or an admin.
+    Requires JWT authentication. User must own the form or be an admin.
     """
     user, error_response = _get_current_user()
     if error_response:

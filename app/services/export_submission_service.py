@@ -27,22 +27,21 @@ from collections import defaultdict
 from werkzeug.datastructures import FileStorage # type: ignore
 
 # Assuming your models are correctly imported from your app structure
-from app.models.form_question import FormQuestion
+# Models like FormQuestion, Question, QuestionType are no longer directly used for Q&A content
 from app.models.form_submission import FormSubmission
 from app.models.attachment import Attachment
-from app.models.answer_submitted import AnswerSubmitted
+from app.models.answer_submitted import AnswerSubmitted # Primary source for Q&A
 from app.models.form import Form
-from app.models.question import Question
-from app.models.question_type import QuestionType
+
 
 # Imports for DOCX generation
-from docx import Document
-from docx.shared import Inches, Pt, RGBColor
-from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
-from docx.enum.table import WD_TABLE_ALIGNMENT, WD_CELL_VERTICAL_ALIGNMENT
-from docx.oxml import OxmlElement
-from docx.oxml.ns import qn, nsdecls
-from docx.oxml import parse_xml
+from docx import Document # type: ignore
+from docx.shared import Inches, Pt, RGBColor # type: ignore
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING # type: ignore
+from docx.enum.table import WD_TABLE_ALIGNMENT, WD_CELL_VERTICAL_ALIGNMENT # type: ignore
+from docx.oxml import OxmlElement # type: ignore
+from docx.oxml.ns import qn, nsdecls # type: ignore
+from docx.oxml import parse_xml # type: ignore
 
 
 logger = logging.getLogger(__name__)
@@ -130,7 +129,7 @@ def _color_to_hex_string_rl(color_obj: Any) -> str: # Returns hex string without
         try:
             temp_color = _get_color_rl(color_obj) # Ensure it's a ReportLab Color object
             if hasattr(temp_color, 'hexval') and callable(getattr(temp_color, 'hexval')):
-                 # hexval() often includes '#', so strip it.
+                  # hexval() often includes '#', so strip it.
                 return temp_color.hexval().lstrip('#')
             # Fallback for non-HexColor ReportLab Color objects
             r_float, g_float, b_float = temp_color.red, temp_color.green, temp_color.blue
@@ -190,30 +189,19 @@ def _get_docx_color(color_input: Any, default_hex: str = "000000") -> Optional[R
         def_r, def_g, def_b = int(default_hex_clean[0:2],16), int(default_hex_clean[2:4],16), int(default_hex_clean[4:6],16)
         return RGBColor(def_r, def_g, def_b)
 
-# --- CORRECTED FUNCTION ---
 def _set_cell_background_docx(cell, color_string_input: str):
-    """Sets the background color of a DOCX table cell.
-    color_string_input can be a hex string (e.g., "FF0000", "#FF0000") or a common color name.
-    """
     docx_rgb_object = _get_docx_color(color_string_input) 
-
     if docx_rgb_object is None: 
         logger.warning(f"DOCX: _get_docx_color returned None for background color input '{color_string_input}'. Skipping background.")
         return
-
-    # The str() of a python-docx RGBColor object IS its hex representation (e.g., "FF0000").
     hex_fill_value = str(docx_rgb_object) 
-
     shading_elm_str = f'<w:shd {nsdecls("w")} w:fill="{hex_fill_value}" w:val="clear" />'
     try:
         shading_elm = parse_xml(shading_elm_str)
         tcPr = cell._tc.get_or_add_tcPr()
-        # Remove existing shading elements to prevent conflicts or multiple shadings
-        for existing_shd in tcPr.xpath('w:shd'):
-            tcPr.remove(existing_shd)
+        for existing_shd in tcPr.xpath('w:shd'): tcPr.remove(existing_shd)
         tcPr.append(shading_elm)
-    except Exception as e:
-        logger.error(f"Error setting DOCX cell background with color {hex_fill_value}: {e}", exc_info=True)
+    except Exception as e: logger.error(f"Error setting DOCX cell background with color {hex_fill_value}: {e}", exc_info=True)
 
 
 class ExportSubmissionService:
@@ -234,10 +222,8 @@ class ExportSubmissionService:
                 full_path = os.path.join(upload_path_base, image_file) if upload_path_base and not os.path.isabs(image_file) else image_file
                 if os.path.exists(full_path):
                     with open(full_path, 'rb') as f: img_data = f.read()
-                else:
-                    logger.error(f"Header image file not found at path: {full_path}"); return None
-            else:
-                logger.error(f"Invalid header_image type: {type(image_file)}"); return None
+                else: logger.error(f"Header image file not found at path: {full_path}"); return None
+            else: logger.error(f"Invalid header_image type: {type(image_file)}"); return None
 
             if not img_data: return None
             img = PILImage.open(io.BytesIO(img_data))
@@ -247,8 +233,7 @@ class ExportSubmissionService:
             orig_width_px, orig_height_px = img.size
             new_width_px, new_height_px = float(orig_width_px), float(orig_height_px)
 
-            if width_px is not None and height_px is not None:
-                new_width_px, new_height_px = float(width_px), float(height_px)
+            if width_px is not None and height_px is not None: new_width_px, new_height_px = float(width_px), float(height_px)
             elif width_px is not None:
                 new_width_px = float(width_px)
                 new_height_px = new_width_px * (orig_height_px / orig_width_px) if orig_width_px > 0 else 0
@@ -259,29 +244,21 @@ class ExportSubmissionService:
                 scale_factor = float(size_percent) / 100.0
                 new_width_px *= scale_factor; new_height_px *= scale_factor
             
-            if new_width_px <=0 or new_height_px <=0: 
-                new_width_px, new_height_px = float(orig_width_px), float(orig_height_px)
+            if new_width_px <=0 or new_height_px <=0: new_width_px, new_height_px = float(orig_width_px), float(orig_height_px)
 
-            if img.mode in ('P', 'LA') or (img.mode == 'RGBA' and img.info.get('transparency') is not None):
-                 img = img.convert('RGBA')
+            if img.mode in ('P', 'LA') or (img.mode == 'RGBA' and img.info.get('transparency') is not None): img = img.convert('RGBA')
             elif img.mode != 'RGB': img = img.convert('RGB')
-
-            img_resized = img.resize((int(new_width_px), int(new_height_px)), PILImage.LANCZOS) # Use LANCZOS for better quality
+            img_resized = img.resize((int(new_width_px), int(new_height_px)), PILImage.LANCZOS)
             
             img_format_upper = img.format.upper() if img.format else 'PNG'
             if img_format_upper in ['SVG', 'WEBP', 'GIF']: img_format_upper = 'PNG'
-
             result_io = io.BytesIO()
-            # Ensure JPEG is saved as RGB
-            if img_format_upper == 'JPEG' and img_resized.mode == 'RGBA':
-                img_resized = img_resized.convert('RGB')
+            if img_format_upper == 'JPEG' and img_resized.mode == 'RGBA': img_resized = img_resized.convert('RGB')
             
             img_resized.save(result_io, format=img_format_upper)
             result_io.seek(0)
             return result_io, new_width_px, new_height_px
-        except Exception as e:
-            logger.error(f"Error processing header image: {str(e)}", exc_info=True)
-            return None
+        except Exception as e: logger.error(f"Error processing header image: {str(e)}", exc_info=True); return None
 
     @staticmethod
     def _add_header_image_to_reportlab_story(
@@ -289,9 +266,7 @@ class ExportSubmissionService:
         opacity: float, size_percent: Optional[float], width_px: Optional[float], height_px: Optional[float],
         alignment_str: str, page_margin_left: float, page_margin_right: float, doc_width: float
     ):
-        processed_image_data = ExportSubmissionService._process_header_image(
-            header_image_input, upload_path_base, size_percent, width_px, height_px
-        )
+        processed_image_data = ExportSubmissionService._process_header_image(header_image_input, upload_path_base, size_percent, width_px, height_px)
         if processed_image_data:
             image_io, img_w_px, img_h_px = processed_image_data
             img_w_pt = img_w_px * (72.0 / 96.0); img_h_pt = img_h_px * (72.0 / 96.0)
@@ -305,11 +280,7 @@ class ExportSubmissionService:
             table_style_align_map = {TA_LEFT: 'LEFT', TA_CENTER: 'CENTER', TA_RIGHT: 'RIGHT'}
             img_align_for_table_style = table_style_align_map.get(align_code, 'CENTER')
             img_table = ReportLabTable([[img_obj]], colWidths=[doc_width])
-            img_table.setStyle(ReportLabTableStyle([
-                ('ALIGN', (0,0), (0,0), img_align_for_table_style), ('VALIGN', (0,0), (0,0), 'MIDDLE'),
-                ('LEFTPADDING', (0,0), (0,0), 0), ('RIGHTPADDING', (0,0), (0,0), 0),
-                ('TOPPADDING', (0,0), (0,0), 0), ('BOTTOMPADDING', (0,0), (0,0), 0),
-            ]))
+            img_table.setStyle(ReportLabTableStyle([('ALIGN', (0,0), (0,0), img_align_for_table_style), ('VALIGN', (0,0), (0,0), 'MIDDLE'), ('LEFTPADDING', (0,0), (0,0), 0), ('RIGHTPADDING', (0,0), (0,0), 0), ('TOPPADDING', (0,0), (0,0), 0), ('BOTTOMPADDING', (0,0), (0,0), 0)]))
             story.append(img_table); story.append(Spacer(1, 0.1 * inch))
 
     @staticmethod
@@ -376,9 +347,7 @@ class ExportSubmissionService:
             image_io, img_w_px, _ = processed_image_data
             img_width_inches = img_w_px / 96.0 
             header = doc.sections[0].header
-            # Clear existing paragraphs in header to avoid multiple images if called multiple times (though unlikely for header)
-            for para in header.paragraphs:
-                para._p.getparent().remove(para._p)
+            for para in header.paragraphs: para._p.getparent().remove(para._p)
             p_header_img = header.add_paragraph()
             run_header_img = p_header_img.add_run()
             try: run_header_img.add_picture(image_io, width=Inches(img_width_inches))
@@ -412,35 +381,30 @@ class ExportSubmissionService:
 
         if alignment_str.lower() == "horizontal" and len(sig_attachments_info) > 1:
             page_width_inches = (doc.sections[0].page_width - doc.sections[0].left_margin - doc.sections[0].right_margin) / Inches(1)
-            # Add some spacing between signature blocks in a row
             effective_sig_block_width = sig_img_width_final_inches + 0.5 # 0.5 inch spacing
             max_cols = int(page_width_inches / effective_sig_block_width) if effective_sig_block_width > 0 else 1
-            max_cols = max(1, min(max_cols, len(sig_attachments_info), 3)) # Limit to 3 columns max for readability
+            max_cols = max(1, min(max_cols, len(sig_attachments_info), 3)) 
             num_rows = (len(sig_attachments_info) + max_cols - 1) // max_cols
             
             sig_table = doc.add_table(rows=num_rows, cols=max_cols)
             sig_table.alignment = WD_TABLE_ALIGNMENT.CENTER 
-            # Attempt to make table borders invisible for layout purposes
-            sig_table.style = 'TableGrid' # Apply a base style that has borders to then remove them
-            # Iterate through cells to remove borders - more complex than ideal, might need custom style
+            sig_table.style = 'TableGrid' 
             for row_obj in sig_table.rows:
                 for cell_obj in row_obj.cells:
                     tcPr = cell_obj._tc.get_or_add_tcPr()
                     tcBorders = OxmlElement('w:tcBorders')
                     for border_name in ['top', 'left', 'bottom', 'right', 'insideH', 'insideV']:
                         border_el = OxmlElement(f'w:{border_name}')
-                        border_el.set(qn('w:val'), 'nil') # 'nil' or 'none' can remove border
+                        border_el.set(qn('w:val'), 'nil') 
                         tcBorders.append(border_el)
                     tcPr.append(tcBorders)
-
 
             for idx, sig_info in enumerate(sig_attachments_info):
                 cell = sig_table.cell(idx // max_cols, idx % max_cols)
                 cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
-                # Clear default paragraph in cell if it exists and is empty
                 if cell.paragraphs and cell.paragraphs[0].text == "":
-                     p = cell.paragraphs[0]._element
-                     p.getparent().remove(p)
+                    p_elem = cell.paragraphs[0]._element
+                    p_elem.getparent().remove(p_elem)
 
                 p_img = cell.add_paragraph(); p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 if sig_info["exists"]:
@@ -448,7 +412,6 @@ class ExportSubmissionService:
                     except Exception as e: p_img.add_run(f"[Img Err: {e}]")
                 else: p_img.add_run(f"[Img Miss: {os.path.basename(sig_info['path'])}]")
                 
-                # Signature line and text
                 p_line = cell.add_paragraph("___________________________"); p_line.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 for run in p_line.runs: run.font.name = sig_text_font_fam; run.font.size = sig_text_font_sz; 
                 if sig_text_font_color: run.font.color.rgb = sig_text_font_color
@@ -464,9 +427,8 @@ class ExportSubmissionService:
                 p_position.add_run(sig_info['position'])
                 for run in p_position.runs: run.font.name = sig_text_font_fam; run.font.size = sig_text_font_sz; 
                 if sig_text_font_color: run.font.color.rgb = sig_text_font_color
-                p_position.paragraph_format.space_after = Pt(0) # No space after last line in cell
-            doc.add_paragraph().paragraph_format.space_after = sig_space_after_pt # Space after the table
-
+                p_position.paragraph_format.space_after = Pt(0) 
+            doc.add_paragraph().paragraph_format.space_after = sig_space_after_pt 
         else: # Vertical alignment
             for sig_info in sig_attachments_info:
                 p_img = doc.add_paragraph(); p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -512,24 +474,18 @@ class ExportSubmissionService:
     ) -> Tuple[Optional[BytesIO], Optional[str]]:
         
         final_config = DEFAULT_STYLE_CONFIG.copy()
-        user_overrides = {} # To specifically track user-provided values
+        user_overrides = {} 
         if pdf_style_options:
             for key, value in pdf_style_options.items():
                 if key in final_config:
-                    final_config[key] = value # Update final_config for general use
-                    user_overrides[key] = value # Track separately for unit logic
-                else:
-                    logger.warning(f"PDF Export: Unknown style option '{key}' provided.")
+                    final_config[key] = value 
+                    user_overrides[key] = value 
+                else: logger.warning(f"PDF Export: Unknown style option '{key}' provided.")
 
         buffer = BytesIO()
         try:
-            from reportlab.platypus import KeepTogether # Ensure import
-
             submission = FormSubmission.query.options(
-                joinedload(FormSubmission.form)
-                    .joinedload(Form.form_questions)
-                    .joinedload(FormQuestion.question)
-                    .joinedload(Question.question_type),
+                joinedload(FormSubmission.form), 
                 joinedload(FormSubmission.answers_submitted),
                 joinedload(FormSubmission.attachments)
             ).filter_by(id=submission_id, is_deleted=False).first()
@@ -549,68 +505,20 @@ class ExportSubmissionService:
             story: List[Flowable] = []
             styles_pdf = getSampleStyleSheet()
 
-            # Helper to determine final style value in points for PDF ParagraphStyle
-            # For keys listed in `pdf_spacing_keys_in_inches_default`, if user overrides, assume points.
-            # Otherwise, default is in inches from DEFAULT_STYLE_CONFIG and needs conversion.
-            pdf_spacing_keys_in_inches_default = [
-                "title_space_after", "description_space_after", "info_space_after",
-                "question_left_indent", "question_space_before", "question_space_after",
-                "answer_left_indent", "answer_space_before", "answer_space_after",
-                "table_space_after" 
-                # Note: Paddings like table_cell_padding_... are direct points for TableStyle, not handled here.
-            ]
-
+            pdf_spacing_keys_in_inches_default = ["title_space_after", "description_space_after", "info_space_after", "question_left_indent", "question_space_before", "question_space_after", "answer_left_indent", "answer_space_before", "answer_space_after", "table_space_after"]
             def get_style_attr_val_points(key_name: str, default_config_value_if_not_overridden: Any) -> float:
-                if key_name in user_overrides: # User provided this value
-                    # Assume user intends point values for these specific keys when overriding for PDF
-                    return _parse_numeric_value(user_overrides[key_name])
-                else: # Use default value
-                    # Default values for these keys in DEFAULT_STYLE_CONFIG are in inches
-                    return _parse_numeric_value(default_config_value_if_not_overridden) * inch
+                if key_name in user_overrides: return _parse_numeric_value(user_overrides[key_name])
+                else: return _parse_numeric_value(default_config_value_if_not_overridden) * inch
 
-            styles_pdf.add(ReportLabParagraphStyle(name='CustomTitle',
-                fontName=str(final_config["title_font_family"]), fontSize=_parse_numeric_value(final_config["title_font_size"]),
-                leading=_parse_numeric_value(final_config.get("title_leading", _parse_numeric_value(final_config["title_font_size"]) * 1.2)),
-                textColor=_get_color_rl(final_config["title_font_color"]), alignment=_get_alignment_code_rl(final_config["title_alignment"]),
-                spaceAfter=get_style_attr_val_points("title_space_after", DEFAULT_STYLE_CONFIG["title_space_after"])))
-
-            styles_pdf.add(ReportLabParagraphStyle(name='CustomDescription',
-                fontName=str(final_config.get("description_font_family","Helvetica")), fontSize=_parse_numeric_value(final_config.get("description_font_size",10)),
-                leading=_parse_numeric_value(final_config.get("description_leading",12)), textColor=_get_color_rl(final_config.get("description_font_color",colors.darkslategray)),
-                alignment=_get_alignment_code_rl(final_config.get("description_alignment",TA_LEFT)),
-                spaceAfter=get_style_attr_val_points("description_space_after", DEFAULT_STYLE_CONFIG["description_space_after"])))
-
-            styles_pdf.add(ReportLabParagraphStyle(name='CustomSubmissionInfo',
-                fontName=str(final_config["info_font_family"]), fontSize=_parse_numeric_value(final_config["info_font_size"]),
-                leading=_parse_numeric_value(final_config.get("info_leading", _parse_numeric_value(final_config["info_font_size"]) * 1.2)),
-                textColor=_get_color_rl(final_config["info_font_color"]), alignment=_get_alignment_code_rl(final_config.get("info_alignment", TA_LEFT)),
-                spaceAfter=get_style_attr_val_points("info_space_after", DEFAULT_STYLE_CONFIG["info_space_after"])))
-
-            styles_pdf.add(ReportLabParagraphStyle(name='CustomQuestion',
-                fontName=str(final_config["question_font_family"]), fontSize=_parse_numeric_value(final_config["question_font_size"]),
-                leading=_parse_numeric_value(final_config["question_leading"]), textColor=_get_color_rl(final_config["question_font_color"]),
-                leftIndent=get_style_attr_val_points("question_left_indent", DEFAULT_STYLE_CONFIG["question_left_indent"]),
-                spaceBefore=get_style_attr_val_points("question_space_before", DEFAULT_STYLE_CONFIG["question_space_before"]),
-                spaceAfter=get_style_attr_val_points("question_space_after", DEFAULT_STYLE_CONFIG["question_space_after"])))
-
-            styles_pdf.add(ReportLabParagraphStyle(name='CustomAnswer',
-                fontName=str(final_config["answer_font_family"]), fontSize=_parse_numeric_value(final_config["answer_font_size"]),
-                leading=_parse_numeric_value(final_config["answer_leading"]), textColor=_get_color_rl(final_config["answer_font_color"]),
-                leftIndent=get_style_attr_val_points("answer_left_indent", DEFAULT_STYLE_CONFIG["answer_left_indent"]),
-                spaceBefore=get_style_attr_val_points("answer_space_before", DEFAULT_STYLE_CONFIG["answer_space_before"]),
-                spaceAfter=get_style_attr_val_points("answer_space_after", DEFAULT_STYLE_CONFIG["answer_space_after"])))
-
-            styles_pdf.add(ReportLabParagraphStyle(name='CustomQACombined', 
-                fontName=str(final_config["question_font_family"]), fontSize=_parse_numeric_value(final_config["question_font_size"]),
-                leading=_parse_numeric_value(final_config["question_leading"]), textColor=_get_color_rl(final_config["question_font_color"]),
-                leftIndent=get_style_attr_val_points("question_left_indent", DEFAULT_STYLE_CONFIG["question_left_indent"]),
-                spaceBefore=get_style_attr_val_points("question_space_before", DEFAULT_STYLE_CONFIG["question_space_before"]),
-                spaceAfter=get_style_attr_val_points("answer_space_after", DEFAULT_STYLE_CONFIG["answer_space_after"])))
-
+            styles_pdf.add(ReportLabParagraphStyle(name='CustomTitle', fontName=str(final_config["title_font_family"]), fontSize=_parse_numeric_value(final_config["title_font_size"]), leading=_parse_numeric_value(final_config.get("title_leading", _parse_numeric_value(final_config["title_font_size"]) * 1.2)), textColor=_get_color_rl(final_config["title_font_color"]), alignment=_get_alignment_code_rl(final_config["title_alignment"]), spaceAfter=get_style_attr_val_points("title_space_after", DEFAULT_STYLE_CONFIG["title_space_after"])))
+            styles_pdf.add(ReportLabParagraphStyle(name='CustomDescription', fontName=str(final_config.get("description_font_family","Helvetica")), fontSize=_parse_numeric_value(final_config.get("description_font_size",10)), leading=_parse_numeric_value(final_config.get("description_leading",12)), textColor=_get_color_rl(final_config.get("description_font_color",colors.darkslategray)), alignment=_get_alignment_code_rl(final_config.get("description_alignment",TA_LEFT)), spaceAfter=get_style_attr_val_points("description_space_after", DEFAULT_STYLE_CONFIG["description_space_after"])))
+            styles_pdf.add(ReportLabParagraphStyle(name='CustomSubmissionInfo', fontName=str(final_config["info_font_family"]), fontSize=_parse_numeric_value(final_config["info_font_size"]), leading=_parse_numeric_value(final_config.get("info_leading", _parse_numeric_value(final_config["info_font_size"]) * 1.2)), textColor=_get_color_rl(final_config["info_font_color"]), alignment=_get_alignment_code_rl(final_config.get("info_alignment", TA_LEFT)), spaceAfter=get_style_attr_val_points("info_space_after", DEFAULT_STYLE_CONFIG["info_space_after"])))
+            styles_pdf.add(ReportLabParagraphStyle(name='CustomQuestion', fontName=str(final_config["question_font_family"]), fontSize=_parse_numeric_value(final_config["question_font_size"]), leading=_parse_numeric_value(final_config["question_leading"]), textColor=_get_color_rl(final_config["question_font_color"]), leftIndent=get_style_attr_val_points("question_left_indent", DEFAULT_STYLE_CONFIG["question_left_indent"]), spaceBefore=get_style_attr_val_points("question_space_before", DEFAULT_STYLE_CONFIG["question_space_before"]), spaceAfter=get_style_attr_val_points("question_space_after", DEFAULT_STYLE_CONFIG["question_space_after"])))
+            styles_pdf.add(ReportLabParagraphStyle(name='CustomAnswer', fontName=str(final_config["answer_font_family"]), fontSize=_parse_numeric_value(final_config["answer_font_size"]), leading=_parse_numeric_value(final_config["answer_leading"]), textColor=_get_color_rl(final_config["answer_font_color"]), leftIndent=get_style_attr_val_points("answer_left_indent", DEFAULT_STYLE_CONFIG["answer_left_indent"]), spaceBefore=get_style_attr_val_points("answer_space_before", DEFAULT_STYLE_CONFIG["answer_space_before"]), spaceAfter=get_style_attr_val_points("answer_space_after", DEFAULT_STYLE_CONFIG["answer_space_after"])))
+            styles_pdf.add(ReportLabParagraphStyle(name='CustomQACombined', fontName=str(final_config["question_font_family"]), fontSize=_parse_numeric_value(final_config["question_font_size"]), leading=_parse_numeric_value(final_config["question_leading"]), textColor=_get_color_rl(final_config["question_font_color"]), leftIndent=get_style_attr_val_points("question_left_indent", DEFAULT_STYLE_CONFIG["question_left_indent"]), spaceBefore=get_style_attr_val_points("question_space_before", DEFAULT_STYLE_CONFIG["question_space_before"]), spaceAfter=get_style_attr_val_points("answer_space_after", DEFAULT_STYLE_CONFIG["answer_space_after"])))
             styles_pdf.add(ReportLabParagraphStyle(name='CustomTableHeader', fontName=str(final_config["table_header_font_family"]), fontSize=_parse_numeric_value(final_config["table_header_font_size"]), textColor=_get_color_rl(final_config["table_header_font_color"]), alignment=_get_alignment_code_rl(final_config["table_header_alignment"]), leading=_parse_numeric_value(final_config.get("table_header_leading",_parse_numeric_value(final_config["table_header_font_size"])*1.2))))
             styles_pdf.add(ReportLabParagraphStyle(name='CustomTableCell', fontName=str(final_config["table_cell_font_family"]), fontSize=_parse_numeric_value(final_config["table_cell_font_size"]), textColor=_get_color_rl(final_config["table_cell_font_color"]), alignment=_get_alignment_code_rl(final_config["table_cell_alignment"]), leading=_parse_numeric_value(final_config.get("table_cell_leading",_parse_numeric_value(final_config["table_cell_font_size"])*1.2))))
             styles_pdf.add(ReportLabParagraphStyle(name='CustomTableError', parent=styles_pdf['CustomTableCell'], textColor=colors.red))
-
             styles_pdf.PAGE_WIDTH = letter[0]; styles_pdf.LEFT_MARGIN = page_margin_left_val; styles_pdf.RIGHT_MARGIN = page_margin_right_val
             
             if header_image: ExportSubmissionService._add_header_image_to_reportlab_story(story, header_image, upload_path, header_opacity, header_size, header_width, header_height, header_alignment, doc_pdf.leftMargin, doc_pdf.rightMargin, doc_pdf.width)
@@ -619,46 +527,121 @@ class ExportSubmissionService:
             info_text = f"<b>Submitted by:</b> {submission.submitted_by or 'N/A'}<br/><b>Date:</b> {submission.submitted_at.strftime('%Y-%m-%d %H:%M:%S') if submission.submitted_at else 'N/A'}"
             story.append(ReportLabParagraph(info_text, styles_pdf['CustomSubmissionInfo']))
 
-            all_submitted_answers_map={}; choice_submitted_answers_grouped=defaultdict(list)
-            table_answers_submitted_raw = [ans for ans in submission.answers_submitted if ans.question_type and ans.question_type.lower()=='table']
+            # --- Data processing from answers_submitted ---
+            all_renderable_items = []
+            answers_by_question_text_and_order = defaultdict(lambda: {"text": "", "type": "", "order": float('inf'), "answers_list": []})
             cell_based_tables_data = defaultdict(lambda: {'name':'', 'headers':{}, 'cells':{}, 'row_indices':set(), 'col_indices':set(), 'header_row_present':False, 'order':float('inf')})
-            for ans_cell in table_answers_submitted_raw:
-                table_q_text = str(ans_cell.question or "Unnamed Table").strip()
-                cell_based_tables_data[table_q_text]['name'] = table_q_text
-                if ans_cell.question_order is not None: cell_based_tables_data[table_q_text]['order'] = min(cell_based_tables_data[table_q_text]['order'], ans_cell.question_order)
-                cell_content_str = str(ans_cell.cell_content if ans_cell.cell_content is not None else ans_cell.answer or "").strip()
-                try:
-                    if ans_cell.row is None or ans_cell.column is None: logger.warning(f"PDF: Table cell for '{table_q_text}' has None for row or column. Skipping."); continue
-                    row_idx, col_idx = int(ans_cell.row), int(ans_cell.column)
-                    if row_idx == 0: cell_based_tables_data[table_q_text]['headers'][col_idx]=cell_content_str; cell_based_tables_data[table_q_text]['col_indices'].add(col_idx); cell_based_tables_data[table_q_text]['header_row_present']=True
-                    elif row_idx > 0: cell_based_tables_data[table_q_text]['cells'][(row_idx,col_idx)]=cell_content_str; cell_based_tables_data[table_q_text]['row_indices'].add(row_idx); cell_based_tables_data[table_q_text]['col_indices'].add(col_idx)
-                except (ValueError,TypeError) as e_cell: logger.warning(f"PDF: Invalid table cell index for table '{table_q_text}' (row='{ans_cell.row}', col='{ans_cell.column}', error: {e_cell}). Skipping cell."); continue
+
+            # Initial pass to populate structures
             for ans in submission.answers_submitted:
                 if not (ans.question and ans.question_type): continue
-                q_text_key=str(ans.question).strip(); q_type_key=str(ans.question_type).lower().strip()
-                if q_type_key not in ['table','signature']: all_submitted_answers_map[(q_text_key,q_type_key)]=ans
-                if q_type_key in ['dropdown','select','multiselect','checkbox','multiple_choices','single_choice']: choice_submitted_answers_grouped[q_text_key].append(ans)
-            
-            ordered_form_questions = sorted(form.form_questions, key=lambda fq: fq.order_number if fq.order_number is not None else float('inf'))
-            qa_layout = str(final_config.get("qa_layout","answer_below")); answer_same_line_max_len = int(_parse_numeric_value(final_config.get("answer_same_line_max_length"),70)); answer_font_color_html = _color_to_hex_string_rl(final_config["answer_font_color"])
-            processed_questions_text_for_pdf=set(); processed_table_questions_text_for_pdf=set()
-
-            for form_question_assoc in ordered_form_questions:
-                if form_question_assoc.is_deleted or not form_question_assoc.question or form_question_assoc.question.is_deleted: continue
-                question_model=form_question_assoc.question; q_text=str(question_model.text or "Untitled Question").strip(); q_type=str(question_model.question_type.type.lower() if question_model.question_type and hasattr(question_model.question_type,'type') else "").strip()
                 
-                if q_type=='table':
-                    if q_text in processed_table_questions_text_for_pdf: continue
-                    processed_table_questions_text_for_pdf.add(q_text)
+                q_text_key = str(ans.question).strip()
+                q_type_lower = str(ans.question_type).lower().strip()
+                q_order = ans.question_order if ans.question_order is not None else float('inf')
+
+                if q_type_lower == 'table':
+                    cell_based_tables_data[q_text_key]['name'] = q_text_key
+                    cell_based_tables_data[q_text_key]['order'] = min(cell_based_tables_data[q_text_key]['order'], q_order)
+                    cell_content_str = str(ans.cell_content if ans.cell_content is not None else ans.answer or "").strip()
+                    try:
+                        if ans.row is None or ans.column is None: logger.warning(f"PDF: Table cell for '{q_text_key}' has None for row or column. Skipping."); continue
+                        row_idx, col_idx = int(ans.row), int(ans.column)
+                        if row_idx == 0: 
+                            cell_based_tables_data[q_text_key]['headers'][col_idx] = cell_content_str
+                            cell_based_tables_data[q_text_key]['col_indices'].add(col_idx)
+                            cell_based_tables_data[q_text_key]['header_row_present'] = True
+                        elif row_idx > 0: 
+                            cell_based_tables_data[q_text_key]['cells'][(row_idx,col_idx)] = cell_content_str
+                            cell_based_tables_data[q_text_key]['row_indices'].add(row_idx)
+                            cell_based_tables_data[q_text_key]['col_indices'].add(col_idx)
+                    except (ValueError,TypeError) as e_cell: logger.warning(f"PDF: Invalid table cell index for table '{q_text_key}' (row='{ans.row}', col='{ans.column}', error: {e_cell}). Skipping cell."); continue
+                elif q_type_lower != 'signature': # Regular Q&A
+                    # Use (q_order, q_text_key) to uniquely identify a question instance if order matters for same text
+                    # However, usually q_text_key itself is enough if question texts are unique per form context in submission
+                    unique_q_key = (q_order, q_text_key)
+                    if not answers_by_question_text_and_order[unique_q_key]["text"]: # Initialize if first time
+                         answers_by_question_text_and_order[unique_q_key]["text"] = q_text_key
+                         answers_by_question_text_and_order[unique_q_key]["type"] = q_type_lower
+                         answers_by_question_text_and_order[unique_q_key]["order"] = q_order
+                    answers_by_question_text_and_order[unique_q_key]["answers_list"].append(ans.answer)
+            
+            # Prepare Q&A items
+            for _key, q_data in answers_by_question_text_and_order.items():
+                ans_val_display = "<i>No answer provided</i>"
+                q_type_lower = q_data['type']
+                raw_answers = q_data['answers_list']
+
+                if q_type_lower in ['dropdown','select','multiselect','checkbox','multiple_choices','single_choice']:
+                    combined_options=[]
+                    for ans_content in raw_answers:
+                        if ans_content is not None and str(ans_content).strip() != "":
+                            try:
+                                parsed_json_options=json.loads(ans_content)
+                                if isinstance(parsed_json_options,list): combined_options.extend([str(item).strip() for item in parsed_json_options if str(item).strip()])
+                                elif str(parsed_json_options).strip(): combined_options.append(str(parsed_json_options).strip())
+                            except (json.JSONDecodeError,TypeError):
+                                if str(ans_content).strip(): combined_options.append(str(ans_content).strip())
+                    unique_options=list(dict.fromkeys(opt for opt in combined_options if opt))
+                    ans_val_display=", ".join(unique_options) if unique_options else "<i>No selection</i>"
+                else: # For simple text, number, date, etc.
+                    # Assuming single answer string for these types (or join if multiple raw_answers exist)
+                    ans_val_display = ", ".join(str(a).strip() for a in raw_answers if a is not None and str(a).strip()) or "<i>No answer provided</i>"
+
+                all_renderable_items.append({
+                    "type": "qa", "order": q_data['order'], 
+                    "question_text": q_data['text'], "answer_display": ans_val_display
+                })
+
+            # Prepare Table items
+            for table_name, table_render_data in cell_based_tables_data.items():
+                all_renderable_items.append({
+                    "type": "table", "order": table_render_data['order'],
+                    "data": table_render_data, "name": table_name # name is already in table_render_data
+                })
+            
+            all_renderable_items.sort(key=lambda x: (x['order'] if x['order'] is not None else float('inf'), x.get('name', x.get('question_text', ''))))
+
+            qa_layout = str(final_config.get("qa_layout","answer_below"))
+            answer_same_line_max_len = int(_parse_numeric_value(final_config.get("answer_same_line_max_length"),70))
+            answer_font_color_html = _color_to_hex_string_rl(final_config["answer_font_color"])
+
+            for item in all_renderable_items:
+                if item['type'] == "qa":
+                    q_text_p_escaped = item['question_text'].replace('&','&amp;').replace('<','&lt;').replace('>','&gt;').replace('\n','<br/>\n')
+                    ans_val_p_escaped = item['answer_display'].replace('&','&amp;').replace('<','&lt;').replace('>','&gt;').replace('\n','<br/>\n')
+                    
+                    if qa_layout == "answer_same_line" and len(item['answer_display']) <= answer_same_line_max_len and \
+                       ('<br/>' not in ans_val_p_escaped and '\n' not in item['answer_display']): # Check original string for actual newlines
+                        combined_text_html = f"<b>{q_text_p_escaped}:</b> <font color='#{answer_font_color_html}'>{ans_val_p_escaped}</font>"
+                        story.append(ReportLabParagraph(combined_text_html, styles_pdf['CustomQACombined']))
+                    else:
+                        q_paragraph = ReportLabParagraph(q_text_p_escaped, styles_pdf['CustomQuestion'])
+                        a_paragraph = ReportLabParagraph(ans_val_p_escaped, styles_pdf['CustomAnswer'])
+                        story.append(KeepTogether([q_paragraph, a_paragraph]))
+
+                elif item['type'] == "table":
+                    table_data_render = item['data']
+                    q_text = table_data_render['name'] # This is the question text for the table
                     story.append(ReportLabParagraph(q_text.replace('\n','<br/>\n'), styles_pdf['CustomQuestion']))
-                    table_data_render = cell_based_tables_data.get(q_text)
+
                     if table_data_render and (table_data_render['header_row_present'] or table_data_render['cells']):
                         all_cols = sorted(list(table_data_render['col_indices']))
-                        if not all_cols: story.append(ReportLabParagraph("<i>Table has no columns defined or no data.</i>",styles_pdf['CustomTableError'])); story.append(Spacer(1,get_style_attr_val_points("table_space_after", DEFAULT_STYLE_CONFIG["table_space_after"]))); continue
+                        if not all_cols: 
+                            story.append(ReportLabParagraph("<i>Table has no columns defined or no data.</i>",styles_pdf['CustomTableError']))
+                            story.append(Spacer(1,get_style_attr_val_points("table_space_after", DEFAULT_STYLE_CONFIG["table_space_after"])))
+                            continue
+                        
                         table_rows_styled_content=[]
-                        if table_data_render['header_row_present']: header_row=[ReportLabParagraph(str(table_data_render['headers'].get(c,'')).replace('\n','<br/>\n'),styles_pdf['CustomTableHeader']) for c in all_cols]; table_rows_styled_content.append(header_row)
+                        if table_data_render['header_row_present']: 
+                            header_row=[ReportLabParagraph(str(table_data_render['headers'].get(c,'')).replace('\n','<br/>\n'),styles_pdf['CustomTableHeader']) for c in all_cols]
+                            table_rows_styled_content.append(header_row)
+                        
                         data_row_indices = sorted(list(r for r in table_data_render['row_indices'] if r > 0))
-                        for r_idx in data_row_indices: data_row=[ReportLabParagraph(str(table_data_render['cells'].get((r_idx,c),'')).replace('\n','<br/>\n'),styles_pdf['CustomTableCell']) for c in all_cols]; table_rows_styled_content.append(data_row)
+                        for r_idx in data_row_indices: 
+                            data_row=[ReportLabParagraph(str(table_data_render['cells'].get((r_idx,c),'')).replace('\n','<br/>\n'),styles_pdf['CustomTableCell']) for c in all_cols]
+                            table_rows_styled_content.append(data_row)
+                        
                         if not table_rows_styled_content: story.append(ReportLabParagraph("<i>No data rows for this table.</i>",styles_pdf['CustomAnswer']))
                         else:
                             rl_table_obj=ReportLabTable(table_rows_styled_content,repeatRows=(1 if table_data_render['header_row_present'] else 0))
@@ -667,31 +650,6 @@ class ExportSubmissionService:
                             rl_table_obj.setStyle(ReportLabTableStyle(table_style_cmds)); story.append(rl_table_obj)
                     else: story.append(ReportLabParagraph("<i>No data submitted for this table.</i>",styles_pdf['CustomAnswer']))
                     story.append(Spacer(1, get_style_attr_val_points("table_space_after", DEFAULT_STYLE_CONFIG["table_space_after"])))
-                
-                elif q_type !='signature':
-                    if q_text in processed_questions_text_for_pdf: continue
-                    processed_questions_text_for_pdf.add(q_text)
-                    ans_val_display="<i>No answer provided</i>"; choice_based_types=['dropdown','select','multiselect','checkbox','multiple_choices','single_choice']
-                    if q_type in choice_based_types:
-                        submitted_choices=choice_submitted_answers_grouped.get(q_text,[]); combined_options=[]
-                        for choice_ans_submitted in submitted_choices:
-                            if choice_ans_submitted.answer is not None and str(choice_ans_submitted.answer).strip()!="":
-                                try:
-                                    parsed_json_options=json.loads(choice_ans_submitted.answer)
-                                    if isinstance(parsed_json_options,list): combined_options.extend([str(item).strip() for item in parsed_json_options if str(item).strip()])
-                                    elif str(parsed_json_options).strip(): combined_options.append(str(parsed_json_options).strip())
-                                except (json.JSONDecodeError,TypeError):
-                                    if str(choice_ans_submitted.answer).strip(): combined_options.append(str(choice_ans_submitted.answer).strip())
-                        unique_options=list(dict.fromkeys(opt for opt in combined_options if opt)); ans_val_display=", ".join(unique_options) if unique_options else "<i>No selection</i>"
-                    else:
-                        ans_submitted_obj=all_submitted_answers_map.get((q_text,q_type))
-                        if ans_submitted_obj and ans_submitted_obj.answer is not None and str(ans_submitted_obj.answer).strip()!="": ans_val_display=str(ans_submitted_obj.answer)
-                    ans_val_p_escaped=ans_val_display.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;').replace('\n','<br/>\n'); q_text_p_escaped=q_text.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;').replace('\n','<br/>\n')
-                    if qa_layout=="answer_same_line" and len(ans_val_display)<=answer_same_line_max_len and ('<br/>' not in ans_val_p_escaped and '\n' not in ans_val_display):
-                        combined_text_html=f"<b>{q_text_p_escaped}:</b> <font color='{answer_font_color_html}'>{ans_val_p_escaped}</font>"; story.append(ReportLabParagraph(combined_text_html,styles_pdf['CustomQACombined']))
-                    else:
-                        q_paragraph=ReportLabParagraph(q_text_p_escaped,styles_pdf['CustomQuestion']); a_paragraph=ReportLabParagraph(ans_val_p_escaped,styles_pdf['CustomAnswer'])
-                        story.append(KeepTogether([q_paragraph,a_paragraph]))
             
             if include_signatures: ExportSubmissionService._add_signatures_to_reportlab_story(story,submission.attachments,upload_path,signatures_size/100.0,signatures_alignment,styles_pdf,final_config)
             
@@ -706,7 +664,6 @@ class ExportSubmissionService:
     def export_submission_to_pdf(*args, **kwargs): # Wrapper for backward compatibility
         return ExportSubmissionService.export_structured_submission_to_pdf(*args, **kwargs)
 
-    # (export_submission_to_docx method below this line)
     @staticmethod
     def export_submission_to_docx(
         submission_id: int, upload_path: str, include_signatures: bool = True,
@@ -717,13 +674,13 @@ class ExportSubmissionService:
     ) -> Tuple[Optional[BytesIO], Optional[str]]:
         final_config_docx = DEFAULT_STYLE_CONFIG.copy()
         if style_options:
-            for key, value in style_options.items():
-                final_config_docx[key] = value 
+            for key, value in style_options.items(): final_config_docx[key] = value 
 
         try:
             submission = FormSubmission.query.options(
-                joinedload(FormSubmission.form).joinedload(Form.form_questions).joinedload(FormQuestion.question).joinedload(Question.question_type),
-                joinedload(FormSubmission.answers_submitted), joinedload(FormSubmission.attachments)
+                joinedload(FormSubmission.form), 
+                joinedload(FormSubmission.answers_submitted), 
+                joinedload(FormSubmission.attachments)
             ).filter_by(id=submission_id, is_deleted=False).first()
 
             if not submission: return None, "Submission not found"
@@ -735,8 +692,7 @@ class ExportSubmissionService:
             font.name = str(final_config_docx.get("default_font_family_docx", "Calibri"))
             font.size = Pt(_parse_numeric_value(final_config_docx.get("default_font_size_docx", 11)))
             default_font_color_val = _get_docx_color(final_config_docx.get("default_font_color_docx", "000000"))
-            if default_font_color_val:
-                 font.color.rgb = default_font_color_val # type: ignore
+            if default_font_color_val: font.color.rgb = default_font_color_val # type: ignore
             
             for section in doc.sections:
                 section.top_margin = Inches(_parse_numeric_value(final_config_docx.get("page_margin_top"), 0.75))
@@ -744,8 +700,7 @@ class ExportSubmissionService:
                 section.left_margin = Inches(_parse_numeric_value(final_config_docx.get("page_margin_left"), 0.75))
                 section.right_margin = Inches(_parse_numeric_value(final_config_docx.get("page_margin_right"), 0.75))
 
-            if header_image_file:
-                ExportSubmissionService._add_header_image_to_docx_header(doc, header_image_file, upload_path, header_size_percent, header_width_px, header_height_px, header_alignment_str)
+            if header_image_file: ExportSubmissionService._add_header_image_to_docx_header(doc, header_image_file, upload_path, header_size_percent, header_width_px, header_height_px, header_alignment_str)
 
             if form.title:
                 title_p = doc.add_paragraph(); title_run = title_p.add_run(form.title)
@@ -784,115 +739,82 @@ class ExportSubmissionService:
             if info_font_color_val: run_date_val.font.color.rgb = info_font_color_val # type: ignore
             info_p.alignment = _get_docx_alignment(final_config_docx.get("info_alignment_docx", "left")); info_p.paragraph_format.space_after = Pt(_parse_numeric_value(final_config_docx.get("info_space_after_docx", 12)))
 
-            all_submitted_answers_map_docx = { (str(ans.question).strip(), str(ans.question_type).lower().strip()): ans for ans in submission.answers_submitted if ans.question and ans.question_type and ans.question_type.lower() not in ['table', 'signature']}
-            choice_submitted_answers_grouped_docx = defaultdict(list)
-            for ans in submission.answers_submitted:
-                if ans.question and ans.question_type and ans.question_type.lower() in ['dropdown', 'select', 'multiselect', 'checkbox', 'multiple_choices', 'single_choice']:
-                    choice_submitted_answers_grouped_docx[str(ans.question).strip()].append(ans)
+            # --- Data processing from answers_submitted for DOCX ---
+            all_renderable_items_docx = []
+            answers_by_question_text_and_order_docx = defaultdict(lambda: {"text": "", "type": "", "order": float('inf'), "answers_list": []})
+            cell_based_tables_data_docx = defaultdict(lambda: {'name':'', 'headers':{}, 'cells':{}, 'row_indices':set(), 'col_indices':set(), 'header_row_present':False, 'order':float('inf')})
 
-            table_answers_submitted_docx = [ans for ans in submission.answers_submitted if ans.question_type and ans.question_type.lower() == 'table']
-            cell_based_tables_data_docx = defaultdict(lambda: {
-                'name': '', 'headers': {}, 'cells': {}, 
-                'row_indices': set(), 'col_indices': set(), 
-                'header_row_present': False, 'order': float('inf')
-            })
-            for ans_cell_docx in table_answers_submitted_docx:
-                table_id_docx = str(ans_cell_docx.question or "Unnamed Table").strip()
-                cell_based_tables_data_docx[table_id_docx]['name'] = table_id_docx
-                if ans_cell_docx.question_order is not None:
-                     cell_based_tables_data_docx[table_id_docx]['order'] = min(cell_based_tables_data_docx[table_id_docx]['order'], ans_cell_docx.question_order)
-                cell_content_str_docx = str(ans_cell_docx.cell_content if ans_cell_docx.cell_content is not None else ans_cell_docx.answer or "").strip()
-                try:
-                    if ans_cell_docx.row is None or ans_cell_docx.column is None: logger.warning(f"DOCX: Table cell for '{table_id_docx}' has None for row or column. Skipping."); continue
-                    row_idx_docx, col_idx_docx = int(ans_cell_docx.row), int(ans_cell_docx.column)
-                    if row_idx_docx == 0: 
-                        cell_based_tables_data_docx[table_id_docx]['headers'][col_idx_docx] = cell_content_str_docx
-                        cell_based_tables_data_docx[table_id_docx]['col_indices'].add(col_idx_docx) 
-                        cell_based_tables_data_docx[table_id_docx]['header_row_present'] = True    
-                    elif row_idx_docx > 0: 
-                        cell_based_tables_data_docx[table_id_docx]['cells'][(row_idx_docx, col_idx_docx)] = cell_content_str_docx
-                        cell_based_tables_data_docx[table_id_docx]['row_indices'].add(row_idx_docx) 
-                        cell_based_tables_data_docx[table_id_docx]['col_indices'].add(col_idx_docx) 
-                except (ValueError, TypeError) as e_cell_docx: logger.warning(f"DOCX: Invalid table cell index for table '{table_id_docx}' (row='{ans_cell_docx.row}', col='{ans_cell_docx.column}', error: {e_cell_docx}). Skipping cell."); continue
+            for ans_docx in submission.answers_submitted:
+                if not (ans_docx.question and ans_docx.question_type): continue
+                
+                q_text_key_docx = str(ans_docx.question).strip()
+                q_type_lower_docx = str(ans_docx.question_type).lower().strip()
+                q_order_docx = ans_docx.question_order if ans_docx.question_order is not None else float('inf')
+
+                if q_type_lower_docx == 'table':
+                    cell_based_tables_data_docx[q_text_key_docx]['name'] = q_text_key_docx
+                    cell_based_tables_data_docx[q_text_key_docx]['order'] = min(cell_based_tables_data_docx[q_text_key_docx]['order'], q_order_docx)
+                    cell_content_str_docx = str(ans_docx.cell_content if ans_docx.cell_content is not None else ans_docx.answer or "").strip()
+                    try:
+                        if ans_docx.row is None or ans_docx.column is None: logger.warning(f"DOCX: Table cell for '{q_text_key_docx}' has None for row or column. Skipping."); continue
+                        row_idx_docx, col_idx_docx = int(ans_docx.row), int(ans_docx.column)
+                        if row_idx_docx == 0: 
+                            cell_based_tables_data_docx[q_text_key_docx]['headers'][col_idx_docx] = cell_content_str_docx
+                            cell_based_tables_data_docx[q_text_key_docx]['col_indices'].add(col_idx_docx)
+                            cell_based_tables_data_docx[q_text_key_docx]['header_row_present'] = True
+                        elif row_idx_docx > 0: 
+                            cell_based_tables_data_docx[q_text_key_docx]['cells'][(row_idx_docx,col_idx_docx)] = cell_content_str_docx
+                            cell_based_tables_data_docx[q_text_key_docx]['row_indices'].add(row_idx_docx)
+                            cell_based_tables_data_docx[q_text_key_docx]['col_indices'].add(col_idx_docx)
+                    except (ValueError, TypeError) as e_cell_docx: logger.warning(f"DOCX: Invalid table cell index for table '{q_text_key_docx}' (row='{ans_docx.row}', col='{ans_docx.column}', error: {e_cell_docx}). Skipping cell."); continue
+                elif q_type_lower_docx != 'signature':
+                    unique_q_key_docx = (q_order_docx, q_text_key_docx)
+                    if not answers_by_question_text_and_order_docx[unique_q_key_docx]["text"]:
+                        answers_by_question_text_and_order_docx[unique_q_key_docx]["text"] = q_text_key_docx
+                        answers_by_question_text_and_order_docx[unique_q_key_docx]["type"] = q_type_lower_docx
+                        answers_by_question_text_and_order_docx[unique_q_key_docx]["order"] = q_order_docx
+                    answers_by_question_text_and_order_docx[unique_q_key_docx]["answers_list"].append(ans_docx.answer)
+
+            for _key_docx, q_data_docx in answers_by_question_text_and_order_docx.items():
+                ans_text_val_docx = "No answer provided"
+                q_type_val_docx = q_data_docx['type']
+                raw_answers_docx = q_data_docx['answers_list']
+                
+                if q_type_val_docx in ['dropdown', 'select', 'multiselect', 'checkbox', 'multiple_choices', 'single_choice']:
+                    combined_options_docx = []
+                    for ans_content_docx in raw_answers_docx:
+                        if ans_content_docx is not None and str(ans_content_docx).strip() != "":
+                            try:
+                                parsed_json_options_docx = json.loads(ans_content_docx)
+                                if isinstance(parsed_json_options_docx, list): combined_options_docx.extend([str(item).strip() for item in parsed_json_options_docx if str(item).strip()])
+                                elif str(parsed_json_options_docx).strip(): combined_options_docx.append(str(parsed_json_options_docx).strip())
+                            except (json.JSONDecodeError, TypeError):
+                                if str(ans_content_docx).strip(): combined_options_docx.append(str(ans_content_docx).strip())
+                    unique_options_docx = list(dict.fromkeys(opt for opt in combined_options_docx if opt))
+                    ans_text_val_docx = ", ".join(unique_options_docx) if unique_options_docx else "No selection"
+                else:
+                    ans_text_val_docx = ", ".join(str(a).strip() for a in raw_answers_docx if a is not None and str(a).strip()) or "No answer provided"
+                
+                all_renderable_items_docx.append({
+                    "type": "qa", "order": q_data_docx['order'],
+                    "question_text": q_data_docx['text'], "answer_display": ans_text_val_docx
+                })
+
+            for table_name_docx, table_render_data_docx in cell_based_tables_data_docx.items():
+                all_renderable_items_docx.append({
+                    "type": "table", "order": table_render_data_docx['order'],
+                    "data": table_render_data_docx, "name": table_name_docx
+                })
             
-            ordered_form_questions_docx = sorted(form.form_questions, key=lambda fq_docx: fq_docx.order_number if fq_docx.order_number is not None else float('inf'))
+            all_renderable_items_docx.sort(key=lambda x: (x['order'] if x['order'] is not None else float('inf'), x.get('name', x.get('question_text', ''))))
+            
             qa_layout_pref_docx = str(final_config_docx.get("qa_layout", "answer_below"))
             ans_same_line_max_len_docx = int(_parse_numeric_value(final_config_docx.get("answer_same_line_max_length"), 70))
-            processed_questions_text_for_docx = set()
-            processed_table_questions_text_for_docx = set()
 
-            for form_question_assoc_docx in ordered_form_questions_docx:
-                if form_question_assoc_docx.is_deleted or not form_question_assoc_docx.question or form_question_assoc_docx.question.is_deleted: continue
-                question_model_docx = form_question_assoc_docx.question
-                q_text_val_docx = str(question_model_docx.text or "Untitled Question").strip()
-                q_type_val_docx = str(question_model_docx.question_type.type.lower() if question_model_docx.question_type and hasattr(question_model_docx.question_type, 'type') else "").strip()
-
-                if q_type_val_docx == 'table':
-                    if q_text_val_docx in processed_table_questions_text_for_docx: continue
-                    processed_table_questions_text_for_docx.add(q_text_val_docx)
-                    tbl_title_p_docx = doc.add_paragraph(); tbl_title_run_docx = tbl_title_p_docx.add_run(q_text_val_docx.split('\n')[0])
-                    tbl_title_run_docx.font.name = str(final_config_docx.get("question_font_family_docx", font.name)); tbl_title_run_docx.font.size = Pt(_parse_numeric_value(final_config_docx.get("question_font_size_docx", 12))); tbl_title_run_docx.bold = True
-                    q_font_color_val = _get_docx_color(final_config_docx.get("question_font_color_docx", "000000"))
-                    if q_font_color_val: tbl_title_run_docx.font.color.rgb = q_font_color_val # type: ignore
-                    tbl_title_p_docx.paragraph_format.space_before = Pt(_parse_numeric_value(final_config_docx.get("question_space_before_docx", 8))); tbl_title_p_docx.paragraph_format.space_after = Pt(_parse_numeric_value(final_config_docx.get("question_space_after_docx", 3)))
-                    table_data_render_docx = cell_based_tables_data_docx.get(q_text_val_docx)
-                    if table_data_render_docx and (table_data_render_docx['header_row_present'] or table_data_render_docx['cells']):
-                        all_cols_docx = sorted(list(table_data_render_docx['col_indices']))
-                        if not all_cols_docx: doc.add_paragraph("Table has no columns defined or no data.").paragraph_format.space_after = Pt(_parse_numeric_value(final_config_docx.get("table_space_after_docx", 12))); continue
-                        data_row_indices_docx = sorted(list(r for r in table_data_render_docx['row_indices'] if r > 0))
-                        num_data_rows_docx = len(data_row_indices_docx)
-                        total_docx_rows = (1 if table_data_render_docx['header_row_present'] else 0) + num_data_rows_docx
-                        if total_docx_rows == 0: doc.add_paragraph("No data for this table.").paragraph_format.space_after = Pt(_parse_numeric_value(final_config_docx.get("table_space_after_docx", 12))); continue
-                        docx_table_obj = doc.add_table(rows=total_docx_rows, cols=len(all_cols_docx)); docx_table_obj.style = str(final_config_docx.get('table_style_docx', 'TableGrid'))
-                        table_align_str_val = final_config_docx.get("table_alignment_docx", "left") # Default to left for tables
-                        if table_align_str_val == "center": docx_table_obj.alignment = WD_TABLE_ALIGNMENT.CENTER
-                        elif table_align_str_val == "right": docx_table_obj.alignment = WD_TABLE_ALIGNMENT.RIGHT
-                        else: docx_table_obj.alignment = WD_TABLE_ALIGNMENT.LEFT
-                        if table_data_render_docx['header_row_present']:
-                            header_cells_docx = docx_table_obj.rows[0].cells
-                            for c_idx, actual_col_idx in enumerate(all_cols_docx):
-                                cell_p = header_cells_docx[c_idx].paragraphs[0]; cell_p.text = str(table_data_render_docx['headers'].get(actual_col_idx, '')); cell_p.alignment = _get_docx_alignment(final_config_docx.get("table_header_alignment_docx", "center"))
-                                for run in cell_p.runs: 
-                                    run.font.name = str(final_config_docx.get("table_header_font_family_docx", font.name)); run.font.size = Pt(_parse_numeric_value(final_config_docx.get("table_header_font_size_docx", 10))); run.bold = True
-                                    th_font_color_val = _get_docx_color(final_config_docx.get("table_header_font_color_docx", "000000"))
-                                    if th_font_color_val: run.font.color.rgb = th_font_color_val #type: ignore
-                                _set_cell_background_docx(header_cells_docx[c_idx], str(final_config_docx.get("table_header_bg_color_docx", "D3D3D3")))
-                        current_docx_data_row_render_idx = 1 if table_data_render_docx['header_row_present'] else 0
-                        for r_form_idx in data_row_indices_docx: 
-                            if current_docx_data_row_render_idx >= total_docx_rows: break 
-                            row_cells_docx = docx_table_obj.rows[current_docx_data_row_render_idx].cells
-                            for c_idx, actual_col_idx in enumerate(all_cols_docx):
-                                cell_p_data = row_cells_docx[c_idx].paragraphs[0]; cell_p_data.text = str(table_data_render_docx['cells'].get((r_form_idx, actual_col_idx), '')); cell_p_data.alignment = _get_docx_alignment(final_config_docx.get("table_cell_alignment_docx", "left"))
-                                for run in cell_p_data.runs: 
-                                    run.font.name = str(final_config_docx.get("table_cell_font_family_docx", font.name)); run.font.size = Pt(_parse_numeric_value(final_config_docx.get("table_cell_font_size_docx", 9)))
-                                    tc_font_color_val = _get_docx_color(final_config_docx.get("table_cell_font_color_docx", "000000"))
-                                    if tc_font_color_val: run.font.color.rgb = tc_font_color_val #type: ignore
-                            current_docx_data_row_render_idx += 1
-                        doc.add_paragraph().paragraph_format.space_after = Pt(_parse_numeric_value(final_config_docx.get("table_space_after_docx", 12)))
-                    else: 
-                        doc.add_paragraph("No data submitted for this table.").paragraph_format.space_after = Pt(_parse_numeric_value(final_config_docx.get("table_space_after_docx", 12)))
-                
-                elif q_type_val_docx != 'signature': 
-                    if q_text_val_docx in processed_questions_text_for_docx: continue
-                    processed_questions_text_for_docx.add(q_text_val_docx)
-                    ans_text_val_docx = "No answer provided"
-                    choice_based_types_docx = ['dropdown', 'select', 'multiselect', 'checkbox', 'multiple_choices', 'single_choice']
-                    if q_type_val_docx in choice_based_types_docx:
-                        submitted_choices_docx = choice_submitted_answers_grouped_docx.get(q_text_val_docx, [])
-                        combined_options_docx = []
-                        for choice_ans_submitted_docx in submitted_choices_docx:
-                            if choice_ans_submitted_docx.answer is not None and str(choice_ans_submitted_docx.answer).strip() != "":
-                                try:
-                                    parsed_json_options_docx = json.loads(choice_ans_submitted_docx.answer)
-                                    if isinstance(parsed_json_options_docx, list): combined_options_docx.extend([str(item).strip() for item in parsed_json_options_docx if str(item).strip()])
-                                    elif str(parsed_json_options_docx).strip(): combined_options_docx.append(str(parsed_json_options_docx).strip())
-                                except (json.JSONDecodeError, TypeError):
-                                    if str(choice_ans_submitted_docx.answer).strip(): combined_options_docx.append(str(choice_ans_submitted_docx.answer).strip())
-                        unique_options_docx = list(dict.fromkeys(opt for opt in combined_options_docx if opt))
-                        ans_text_val_docx = ", ".join(unique_options_docx) if unique_options_docx else "No selection"
-                    else:
-                        ans_submitted_obj_docx = all_submitted_answers_map_docx.get((q_text_val_docx, q_type_val_docx))
-                        if ans_submitted_obj_docx and ans_submitted_obj_docx.answer is not None: ans_text_val_docx = str(ans_submitted_obj_docx.answer)
+            for item_docx in all_renderable_items_docx:
+                if item_docx['type'] == "qa":
+                    q_text_val_docx = item_docx['question_text']
+                    ans_text_val_docx = item_docx['answer_display']
 
                     if qa_layout_pref_docx == "answer_same_line" and len(ans_text_val_docx) <= ans_same_line_max_len_docx and '\n' not in ans_text_val_docx:
                         p_qa = doc.add_paragraph(); q_run = p_qa.add_run(f"{q_text_val_docx}: ")
@@ -915,6 +837,7 @@ class ExportSubmissionService:
                             q_font_color_val = _get_docx_color(final_config_docx.get("question_font_color_docx", "000000"))
                             if q_font_color_val: run.font.color.rgb = q_font_color_val # type: ignore
                         q_p.paragraph_format.space_before = Pt(_parse_numeric_value(final_config_docx.get("question_space_before_docx", 8))); q_p.paragraph_format.space_after = Pt(_parse_numeric_value(final_config_docx.get("question_space_after_docx", 3)))
+                        
                         a_p = doc.add_paragraph()
                         a_lines = ans_text_val_docx.split('\n')
                         for i_aline, a_line in enumerate(a_lines): a_p.add_run(a_line)
@@ -925,14 +848,64 @@ class ExportSubmissionService:
                             if ans_font_color_val: run.font.color.rgb = ans_font_color_val # type: ignore
                         a_p.paragraph_format.left_indent = Inches(_parse_numeric_value(final_config_docx.get("answer_left_indent_docx", 0.25)))
                         a_p.paragraph_format.space_after = Pt(_parse_numeric_value(final_config_docx.get("answer_space_after_docx", 6)))
+                
+                elif item_docx['type'] == "table":
+                    table_data_render_docx = item_docx['data']
+                    q_text_val_docx = table_data_render_docx['name']
+                    tbl_title_p_docx = doc.add_paragraph(); tbl_title_run_docx = tbl_title_p_docx.add_run(q_text_val_docx.split('\n')[0])
+                    tbl_title_run_docx.font.name = str(final_config_docx.get("question_font_family_docx", font.name)); tbl_title_run_docx.font.size = Pt(_parse_numeric_value(final_config_docx.get("question_font_size_docx", 12))); tbl_title_run_docx.bold = True
+                    q_font_color_val = _get_docx_color(final_config_docx.get("question_font_color_docx", "000000"))
+                    if q_font_color_val: tbl_title_run_docx.font.color.rgb = q_font_color_val # type: ignore
+                    tbl_title_p_docx.paragraph_format.space_before = Pt(_parse_numeric_value(final_config_docx.get("question_space_before_docx", 8))); tbl_title_p_docx.paragraph_format.space_after = Pt(_parse_numeric_value(final_config_docx.get("question_space_after_docx", 3)))
+
+                    if table_data_render_docx and (table_data_render_docx['header_row_present'] or table_data_render_docx['cells']):
+                        all_cols_docx = sorted(list(table_data_render_docx['col_indices']))
+                        if not all_cols_docx: doc.add_paragraph("Table has no columns defined or no data.").paragraph_format.space_after = Pt(_parse_numeric_value(final_config_docx.get("table_space_after_docx", 12))); continue
+                        
+                        data_row_indices_docx = sorted(list(r for r in table_data_render_docx['row_indices'] if r > 0))
+                        num_data_rows_docx = len(data_row_indices_docx)
+                        total_docx_rows = (1 if table_data_render_docx['header_row_present'] else 0) + num_data_rows_docx
+                        
+                        if total_docx_rows == 0: doc.add_paragraph("No data for this table.").paragraph_format.space_after = Pt(_parse_numeric_value(final_config_docx.get("table_space_after_docx", 12))); continue
+                        
+                        docx_table_obj = doc.add_table(rows=total_docx_rows, cols=len(all_cols_docx)); docx_table_obj.style = str(final_config_docx.get('table_style_docx', 'TableGrid'))
+                        table_align_str_val = final_config_docx.get("table_alignment_docx", "left") 
+                        if table_align_str_val == "center": docx_table_obj.alignment = WD_TABLE_ALIGNMENT.CENTER
+                        elif table_align_str_val == "right": docx_table_obj.alignment = WD_TABLE_ALIGNMENT.RIGHT
+                        else: docx_table_obj.alignment = WD_TABLE_ALIGNMENT.LEFT
+                        
+                        if table_data_render_docx['header_row_present']:
+                            header_cells_docx = docx_table_obj.rows[0].cells
+                            for c_idx, actual_col_idx in enumerate(all_cols_docx):
+                                cell_p = header_cells_docx[c_idx].paragraphs[0]; cell_p.text = str(table_data_render_docx['headers'].get(actual_col_idx, '')); cell_p.alignment = _get_docx_alignment(final_config_docx.get("table_header_alignment_docx", "center"))
+                                for run in cell_p.runs: 
+                                    run.font.name = str(final_config_docx.get("table_header_font_family_docx", font.name)); run.font.size = Pt(_parse_numeric_value(final_config_docx.get("table_header_font_size_docx", 10))); run.bold = True
+                                    th_font_color_val = _get_docx_color(final_config_docx.get("table_header_font_color_docx", "000000"))
+                                    if th_font_color_val: run.font.color.rgb = th_font_color_val #type: ignore
+                                _set_cell_background_docx(header_cells_docx[c_idx], str(final_config_docx.get("table_header_bg_color_docx", "D3D3D3")))
+                        
+                        current_docx_data_row_render_idx = 1 if table_data_render_docx['header_row_present'] else 0
+                        for r_form_idx in data_row_indices_docx: 
+                            if current_docx_data_row_render_idx >= total_docx_rows: break 
+                            row_cells_docx = docx_table_obj.rows[current_docx_data_row_render_idx].cells
+                            for c_idx, actual_col_idx in enumerate(all_cols_docx):
+                                cell_p_data = row_cells_docx[c_idx].paragraphs[0]; cell_p_data.text = str(table_data_render_docx['cells'].get((r_form_idx, actual_col_idx), '')); cell_p_data.alignment = _get_docx_alignment(final_config_docx.get("table_cell_alignment_docx", "left"))
+                                for run in cell_p_data.runs: 
+                                    run.font.name = str(final_config_docx.get("table_cell_font_family_docx", font.name)); run.font.size = Pt(_parse_numeric_value(final_config_docx.get("table_cell_font_size_docx", 9)))
+                                    tc_font_color_val = _get_docx_color(final_config_docx.get("table_cell_font_color_docx", "000000"))
+                                    if tc_font_color_val: run.font.color.rgb = tc_font_color_val #type: ignore
+                            current_docx_data_row_render_idx += 1
+                        doc.add_paragraph().paragraph_format.space_after = Pt(_parse_numeric_value(final_config_docx.get("table_space_after_docx", 12)))
+                    else: 
+                        doc.add_paragraph("No data submitted for this table.").paragraph_format.space_after = Pt(_parse_numeric_value(final_config_docx.get("table_space_after_docx", 12)))
 
             if include_signatures:
                 ExportSubmissionService._add_signatures_to_docx(doc, submission.attachments, upload_path, signatures_size_percent, signatures_alignment_str, final_config_docx)
 
-            buffer = BytesIO()
-            doc.save(buffer)
-            buffer.seek(0)
-            return buffer, None
+            buffer_docx = BytesIO()
+            doc.save(buffer_docx)
+            buffer_docx.seek(0)
+            return buffer_docx, None
         except Exception as e:
             logger.error(f"Error exporting submission {submission_id} to DOCX: {str(e)}", exc_info=True)
             return None, f"An error occurred during DOCX generation: {str(e)}"

@@ -1,6 +1,7 @@
 # app/services/export_submission_service.py
 
 import io
+import warnings
 import itertools
 from typing import Dict, List, Optional, Tuple, Union, Any
 from datetime import datetime
@@ -45,6 +46,7 @@ from docx.oxml import parse_xml
 
 
 logger = logging.getLogger(__name__)
+warnings.filterwarnings("ignore", category=UserWarning, module="docx.styles.styles", message="style lookup by style_id is deprecated")
 
 # --- Default Style Configuration (for PDF and adapted for DOCX) ---
 DEFAULT_STYLE_CONFIG: Dict[str, Any] = {
@@ -500,27 +502,28 @@ class ExportSubmissionService:
         include_signatures: bool = True,
         header_image: Optional[Any] = None,
         header_opacity: float = 1.0,
-        header_size: Optional[float] = None, # Percentage
-        header_width: Optional[float] = None, # Pixels
-        header_height: Optional[float] = None, # Pixels
+        header_size: Optional[float] = None,
+        header_width: Optional[float] = None,
+        header_height: Optional[float] = None,
         header_alignment: str = "center",
-        signatures_size: float = 100, # Percentage for scaling signature images
-        signatures_alignment: str = "vertical", # "vertical" or "horizontal"
+        signatures_size: float = 100,
+        signatures_alignment: str = "vertical",
         pdf_style_options: Optional[Dict[str, Any]] = None
     ) -> Tuple[Optional[BytesIO], Optional[str]]:
+        
         final_config = DEFAULT_STYLE_CONFIG.copy()
-        user_overrides = {} # Store user overrides separately to handle units correctly
+        user_overrides = {} # To specifically track user-provided values
         if pdf_style_options:
             for key, value in pdf_style_options.items():
                 if key in final_config:
-                    final_config[key] = value # Update final_config
-                    user_overrides[key] = value # Keep track of what user provided
+                    final_config[key] = value # Update final_config for general use
+                    user_overrides[key] = value # Track separately for unit logic
                 else:
                     logger.warning(f"PDF Export: Unknown style option '{key}' provided.")
 
         buffer = BytesIO()
         try:
-            from reportlab.platypus import KeepTogether
+            from reportlab.platypus import KeepTogether # Ensure import
 
             submission = FormSubmission.query.options(
                 joinedload(FormSubmission.form)
@@ -546,109 +549,83 @@ class ExportSubmissionService:
             story: List[Flowable] = []
             styles_pdf = getSampleStyleSheet()
 
-            # Helper to get style values, interpreting user overrides as points for specific keys
-            def get_pdf_style_value(key: str, is_spacing_or_indent: bool) -> float:
-                if key in user_overrides: # User override takes precedence
-                    # Assume user provides these specific spacing/indent values in points
-                    return _parse_numeric_value(user_overrides[key])
-                else: # Default value from config
-                    default_val = _parse_numeric_value(DEFAULT_STYLE_CONFIG[key])
-                    # Defaults for spacing/indents are in inches in config, convert to points
-                    return default_val * inch if is_spacing_or_indent else default_val
+            # Helper to determine final style value in points for PDF ParagraphStyle
+            # For keys listed in `pdf_spacing_keys_in_inches_default`, if user overrides, assume points.
+            # Otherwise, default is in inches from DEFAULT_STYLE_CONFIG and needs conversion.
+            pdf_spacing_keys_in_inches_default = [
+                "title_space_after", "description_space_after", "info_space_after",
+                "question_left_indent", "question_space_before", "question_space_after",
+                "answer_left_indent", "answer_space_before", "answer_space_after",
+                "table_space_after" 
+                # Note: Paddings like table_cell_padding_... are direct points for TableStyle, not handled here.
+            ]
 
+            def get_style_attr_val_points(key_name: str, default_config_value_if_not_overridden: Any) -> float:
+                if key_name in user_overrides: # User provided this value
+                    # Assume user intends point values for these specific keys when overriding for PDF
+                    return _parse_numeric_value(user_overrides[key_name])
+                else: # Use default value
+                    # Default values for these keys in DEFAULT_STYLE_CONFIG are in inches
+                    return _parse_numeric_value(default_config_value_if_not_overridden) * inch
 
             styles_pdf.add(ReportLabParagraphStyle(name='CustomTitle',
-                                         fontName=str(final_config["title_font_family"]),
-                                         fontSize=_parse_numeric_value(final_config["title_font_size"]),
-                                         leading=_parse_numeric_value(final_config.get("title_leading", _parse_numeric_value(final_config["title_font_size"]) * 1.2)),
-                                         textColor=_get_color_rl(final_config["title_font_color"]),
-                                         alignment=_get_alignment_code_rl(final_config["title_alignment"]),
-                                         spaceAfter=get_pdf_style_value("title_space_after", True))) # True because it's spacing
+                fontName=str(final_config["title_font_family"]), fontSize=_parse_numeric_value(final_config["title_font_size"]),
+                leading=_parse_numeric_value(final_config.get("title_leading", _parse_numeric_value(final_config["title_font_size"]) * 1.2)),
+                textColor=_get_color_rl(final_config["title_font_color"]), alignment=_get_alignment_code_rl(final_config["title_alignment"]),
+                spaceAfter=get_style_attr_val_points("title_space_after", DEFAULT_STYLE_CONFIG["title_space_after"])))
 
             styles_pdf.add(ReportLabParagraphStyle(name='CustomDescription',
-                                         fontName=str(final_config.get("description_font_family","Helvetica")),
-                                         fontSize=_parse_numeric_value(final_config.get("description_font_size",10)),
-                                         leading=_parse_numeric_value(final_config.get("description_leading",12)),
-                                         textColor=_get_color_rl(final_config.get("description_font_color",colors.darkslategray)),
-                                         alignment=_get_alignment_code_rl(final_config.get("description_alignment",TA_LEFT)),
-                                         spaceAfter=get_pdf_style_value("description_space_after", True)))
+                fontName=str(final_config.get("description_font_family","Helvetica")), fontSize=_parse_numeric_value(final_config.get("description_font_size",10)),
+                leading=_parse_numeric_value(final_config.get("description_leading",12)), textColor=_get_color_rl(final_config.get("description_font_color",colors.darkslategray)),
+                alignment=_get_alignment_code_rl(final_config.get("description_alignment",TA_LEFT)),
+                spaceAfter=get_style_attr_val_points("description_space_after", DEFAULT_STYLE_CONFIG["description_space_after"])))
 
             styles_pdf.add(ReportLabParagraphStyle(name='CustomSubmissionInfo',
-                                         fontName=str(final_config["info_font_family"]),
-                                         fontSize=_parse_numeric_value(final_config["info_font_size"]),
-                                         leading=_parse_numeric_value(final_config.get("info_leading", _parse_numeric_value(final_config["info_font_size"]) * 1.2)),
-                                         textColor=_get_color_rl(final_config["info_font_color"]),
-                                         alignment=_get_alignment_code_rl(final_config.get("info_alignment", TA_LEFT)),
-                                         spaceAfter=get_pdf_style_value("info_space_after", True)))
+                fontName=str(final_config["info_font_family"]), fontSize=_parse_numeric_value(final_config["info_font_size"]),
+                leading=_parse_numeric_value(final_config.get("info_leading", _parse_numeric_value(final_config["info_font_size"]) * 1.2)),
+                textColor=_get_color_rl(final_config["info_font_color"]), alignment=_get_alignment_code_rl(final_config.get("info_alignment", TA_LEFT)),
+                spaceAfter=get_style_attr_val_points("info_space_after", DEFAULT_STYLE_CONFIG["info_space_after"])))
 
             styles_pdf.add(ReportLabParagraphStyle(name='CustomQuestion',
-                                         fontName=str(final_config["question_font_family"]),
-                                         fontSize=_parse_numeric_value(final_config["question_font_size"]),
-                                         leading=_parse_numeric_value(final_config["question_leading"]),
-                                         textColor=_get_color_rl(final_config["question_font_color"]),
-                                         leftIndent=get_pdf_style_value("question_left_indent", True),
-                                         spaceBefore=get_pdf_style_value("question_space_before", True),
-                                         spaceAfter=get_pdf_style_value("question_space_after", True)))
+                fontName=str(final_config["question_font_family"]), fontSize=_parse_numeric_value(final_config["question_font_size"]),
+                leading=_parse_numeric_value(final_config["question_leading"]), textColor=_get_color_rl(final_config["question_font_color"]),
+                leftIndent=get_style_attr_val_points("question_left_indent", DEFAULT_STYLE_CONFIG["question_left_indent"]),
+                spaceBefore=get_style_attr_val_points("question_space_before", DEFAULT_STYLE_CONFIG["question_space_before"]),
+                spaceAfter=get_style_attr_val_points("question_space_after", DEFAULT_STYLE_CONFIG["question_space_after"])))
 
             styles_pdf.add(ReportLabParagraphStyle(name='CustomAnswer',
-                                         fontName=str(final_config["answer_font_family"]),
-                                         fontSize=_parse_numeric_value(final_config["answer_font_size"]),
-                                         leading=_parse_numeric_value(final_config["answer_leading"]),
-                                         textColor=_get_color_rl(final_config["answer_font_color"]),
-                                         leftIndent=get_pdf_style_value("answer_left_indent", True),
-                                         spaceBefore=get_pdf_style_value("answer_space_before", True),
-                                         spaceAfter=get_pdf_style_value("answer_space_after", True)))
+                fontName=str(final_config["answer_font_family"]), fontSize=_parse_numeric_value(final_config["answer_font_size"]),
+                leading=_parse_numeric_value(final_config["answer_leading"]), textColor=_get_color_rl(final_config["answer_font_color"]),
+                leftIndent=get_style_attr_val_points("answer_left_indent", DEFAULT_STYLE_CONFIG["answer_left_indent"]),
+                spaceBefore=get_style_attr_val_points("answer_space_before", DEFAULT_STYLE_CONFIG["answer_space_before"]),
+                spaceAfter=get_style_attr_val_points("answer_space_after", DEFAULT_STYLE_CONFIG["answer_space_after"])))
 
             styles_pdf.add(ReportLabParagraphStyle(name='CustomQACombined', 
-                                         fontName=str(final_config["question_font_family"]),
-                                         fontSize=_parse_numeric_value(final_config["question_font_size"]),
-                                         leading=_parse_numeric_value(final_config["question_leading"]),
-                                         textColor=_get_color_rl(final_config["question_font_color"]),
-                                         leftIndent=get_pdf_style_value("question_left_indent", True), # Uses question_left_indent
-                                         spaceBefore=get_pdf_style_value("question_space_before", True),# Uses question_space_before
-                                         spaceAfter=get_pdf_style_value("answer_space_after", True)))   # Uses answer_space_after
+                fontName=str(final_config["question_font_family"]), fontSize=_parse_numeric_value(final_config["question_font_size"]),
+                leading=_parse_numeric_value(final_config["question_leading"]), textColor=_get_color_rl(final_config["question_font_color"]),
+                leftIndent=get_style_attr_val_points("question_left_indent", DEFAULT_STYLE_CONFIG["question_left_indent"]),
+                spaceBefore=get_style_attr_val_points("question_space_before", DEFAULT_STYLE_CONFIG["question_space_before"]),
+                spaceAfter=get_style_attr_val_points("answer_space_after", DEFAULT_STYLE_CONFIG["answer_space_after"])))
 
-            styles_pdf.add(ReportLabParagraphStyle(name='CustomTableHeader',
-                                         fontName=str(final_config["table_header_font_family"]),
-                                         fontSize=_parse_numeric_value(final_config["table_header_font_size"]),
-                                         textColor=_get_color_rl(final_config["table_header_font_color"]),
-                                         alignment=_get_alignment_code_rl(final_config["table_header_alignment"]),
-                                         leading=_parse_numeric_value(final_config.get("table_header_leading", _parse_numeric_value(final_config["table_header_font_size"])*1.2))))
-
-            styles_pdf.add(ReportLabParagraphStyle(name='CustomTableCell',
-                                         fontName=str(final_config["table_cell_font_family"]),
-                                         fontSize=_parse_numeric_value(final_config["table_cell_font_size"]),
-                                         textColor=_get_color_rl(final_config["table_cell_font_color"]),
-                                         alignment=_get_alignment_code_rl(final_config["table_cell_alignment"]),
-                                         leading=_parse_numeric_value(final_config.get("table_cell_leading",_parse_numeric_value(final_config["table_cell_font_size"])*1.2))))
-            
+            styles_pdf.add(ReportLabParagraphStyle(name='CustomTableHeader', fontName=str(final_config["table_header_font_family"]), fontSize=_parse_numeric_value(final_config["table_header_font_size"]), textColor=_get_color_rl(final_config["table_header_font_color"]), alignment=_get_alignment_code_rl(final_config["table_header_alignment"]), leading=_parse_numeric_value(final_config.get("table_header_leading",_parse_numeric_value(final_config["table_header_font_size"])*1.2))))
+            styles_pdf.add(ReportLabParagraphStyle(name='CustomTableCell', fontName=str(final_config["table_cell_font_family"]), fontSize=_parse_numeric_value(final_config["table_cell_font_size"]), textColor=_get_color_rl(final_config["table_cell_font_color"]), alignment=_get_alignment_code_rl(final_config["table_cell_alignment"]), leading=_parse_numeric_value(final_config.get("table_cell_leading",_parse_numeric_value(final_config["table_cell_font_size"])*1.2))))
             styles_pdf.add(ReportLabParagraphStyle(name='CustomTableError', parent=styles_pdf['CustomTableCell'], textColor=colors.red))
 
             styles_pdf.PAGE_WIDTH = letter[0]; styles_pdf.LEFT_MARGIN = page_margin_left_val; styles_pdf.RIGHT_MARGIN = page_margin_right_val
             
-            if header_image:
-                ExportSubmissionService._add_header_image_to_reportlab_story(
-                    story, header_image, upload_path, header_opacity, header_size,
-                    header_width, header_height, header_alignment,
-                    doc_pdf.leftMargin, doc_pdf.rightMargin, doc_pdf.width
-                )
-
+            if header_image: ExportSubmissionService._add_header_image_to_reportlab_story(story, header_image, upload_path, header_opacity, header_size, header_width, header_height, header_alignment, doc_pdf.leftMargin, doc_pdf.rightMargin, doc_pdf.width)
             if form.title: story.append(ReportLabParagraph(form.title, styles_pdf['CustomTitle']))
-            if form.description: story.append(ReportLabParagraph(form.description.replace('\n', '<br/>\n') if form.description else "", styles_pdf['CustomDescription']))
-            
+            if form.description: story.append(ReportLabParagraph(form.description.replace('\n','<br/>\n') if form.description else "", styles_pdf['CustomDescription']))
             info_text = f"<b>Submitted by:</b> {submission.submitted_by or 'N/A'}<br/><b>Date:</b> {submission.submitted_at.strftime('%Y-%m-%d %H:%M:%S') if submission.submitted_at else 'N/A'}"
             story.append(ReportLabParagraph(info_text, styles_pdf['CustomSubmissionInfo']))
 
-            all_submitted_answers_map = {} 
-            choice_submitted_answers_grouped = defaultdict(list)
-            table_answers_submitted_raw = [ans for ans in submission.answers_submitted if ans.question_type and ans.question_type.lower() == 'table']
-            cell_based_tables_data = defaultdict(lambda: {'name': '', 'headers': {}, 'cells': {}, 'row_indices': set(), 'col_indices': set(), 'header_row_present': False, 'order': float('inf')})
-            
+            all_submitted_answers_map={}; choice_submitted_answers_grouped=defaultdict(list)
+            table_answers_submitted_raw = [ans for ans in submission.answers_submitted if ans.question_type and ans.question_type.lower()=='table']
+            cell_based_tables_data = defaultdict(lambda: {'name':'', 'headers':{}, 'cells':{}, 'row_indices':set(), 'col_indices':set(), 'header_row_present':False, 'order':float('inf')})
             for ans_cell in table_answers_submitted_raw:
                 table_q_text = str(ans_cell.question or "Unnamed Table").strip()
                 cell_based_tables_data[table_q_text]['name'] = table_q_text
-                if ans_cell.question_order is not None:
-                     cell_based_tables_data[table_q_text]['order'] = min(cell_based_tables_data[table_q_text]['order'], ans_cell.question_order)
+                if ans_cell.question_order is not None: cell_based_tables_data[table_q_text]['order'] = min(cell_based_tables_data[table_q_text]['order'], ans_cell.question_order)
                 cell_content_str = str(ans_cell.cell_content if ans_cell.cell_content is not None else ans_cell.answer or "").strip()
                 try:
                     if ans_cell.row is None or ans_cell.column is None: logger.warning(f"PDF: Table cell for '{table_q_text}' has None for row or column. Skipping."); continue
@@ -656,15 +633,13 @@ class ExportSubmissionService:
                     if row_idx == 0: cell_based_tables_data[table_q_text]['headers'][col_idx]=cell_content_str; cell_based_tables_data[table_q_text]['col_indices'].add(col_idx); cell_based_tables_data[table_q_text]['header_row_present']=True
                     elif row_idx > 0: cell_based_tables_data[table_q_text]['cells'][(row_idx,col_idx)]=cell_content_str; cell_based_tables_data[table_q_text]['row_indices'].add(row_idx); cell_based_tables_data[table_q_text]['col_indices'].add(col_idx)
                 except (ValueError,TypeError) as e_cell: logger.warning(f"PDF: Invalid table cell index for table '{table_q_text}' (row='{ans_cell.row}', col='{ans_cell.column}', error: {e_cell}). Skipping cell."); continue
-            
             for ans in submission.answers_submitted:
                 if not (ans.question and ans.question_type): continue
                 q_text_key=str(ans.question).strip(); q_type_key=str(ans.question_type).lower().strip()
                 if q_type_key not in ['table','signature']: all_submitted_answers_map[(q_text_key,q_type_key)]=ans
                 if q_type_key in ['dropdown','select','multiselect','checkbox','multiple_choices','single_choice']: choice_submitted_answers_grouped[q_text_key].append(ans)
-
-            ordered_form_questions = sorted(form.form_questions, key=lambda fq: fq.order_number if fq.order_number is not None else float('inf'))
             
+            ordered_form_questions = sorted(form.form_questions, key=lambda fq: fq.order_number if fq.order_number is not None else float('inf'))
             qa_layout = str(final_config.get("qa_layout","answer_below")); answer_same_line_max_len = int(_parse_numeric_value(final_config.get("answer_same_line_max_length"),70)); answer_font_color_html = _color_to_hex_string_rl(final_config["answer_font_color"])
             processed_questions_text_for_pdf=set(); processed_table_questions_text_for_pdf=set()
 
@@ -679,7 +654,7 @@ class ExportSubmissionService:
                     table_data_render = cell_based_tables_data.get(q_text)
                     if table_data_render and (table_data_render['header_row_present'] or table_data_render['cells']):
                         all_cols = sorted(list(table_data_render['col_indices']))
-                        if not all_cols: story.append(ReportLabParagraph("<i>Table has no columns defined or no data.</i>",styles_pdf['CustomTableError'])); story.append(Spacer(1,get_pdf_style_value("table_space_after", True))); continue
+                        if not all_cols: story.append(ReportLabParagraph("<i>Table has no columns defined or no data.</i>",styles_pdf['CustomTableError'])); story.append(Spacer(1,get_style_attr_val_points("table_space_after", DEFAULT_STYLE_CONFIG["table_space_after"]))); continue
                         table_rows_styled_content=[]
                         if table_data_render['header_row_present']: header_row=[ReportLabParagraph(str(table_data_render['headers'].get(c,'')).replace('\n','<br/>\n'),styles_pdf['CustomTableHeader']) for c in all_cols]; table_rows_styled_content.append(header_row)
                         data_row_indices = sorted(list(r for r in table_data_render['row_indices'] if r > 0))
@@ -691,7 +666,7 @@ class ExportSubmissionService:
                             if table_data_render['header_row_present']: table_style_cmds.append(('BACKGROUND',(0,0),(-1,0),_get_color_rl(final_config["table_header_bg_color"])))
                             rl_table_obj.setStyle(ReportLabTableStyle(table_style_cmds)); story.append(rl_table_obj)
                     else: story.append(ReportLabParagraph("<i>No data submitted for this table.</i>",styles_pdf['CustomAnswer']))
-                    story.append(Spacer(1, get_pdf_style_value("table_space_after", True)))
+                    story.append(Spacer(1, get_style_attr_val_points("table_space_after", DEFAULT_STYLE_CONFIG["table_space_after"])))
                 
                 elif q_type !='signature':
                     if q_text in processed_questions_text_for_pdf: continue
@@ -718,8 +693,7 @@ class ExportSubmissionService:
                         q_paragraph=ReportLabParagraph(q_text_p_escaped,styles_pdf['CustomQuestion']); a_paragraph=ReportLabParagraph(ans_val_p_escaped,styles_pdf['CustomAnswer'])
                         story.append(KeepTogether([q_paragraph,a_paragraph]))
             
-            if include_signatures: 
-                ExportSubmissionService._add_signatures_to_reportlab_story(story,submission.attachments,upload_path,signatures_size/100.0,signatures_alignment,styles_pdf,final_config)
+            if include_signatures: ExportSubmissionService._add_signatures_to_reportlab_story(story,submission.attachments,upload_path,signatures_size/100.0,signatures_alignment,styles_pdf,final_config)
             
             doc_pdf.build(story); buffer.seek(0); return buffer,None
         except NameError as ne:

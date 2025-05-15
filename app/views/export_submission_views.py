@@ -97,58 +97,29 @@ def get_export_customization_options():
     """
     options = {
         "common_options": [
-            # ... (common options remain the same) ...
-            {
-                "key": "header_image", "type": "file",
-                "description": "Image file for the header.",
-                "notes": "Supported: PNG, JPG, JPEG, GIF, SVG. SVG best for PDF; GIF (first frame only)."
-            },
-            {
-                "key": "header_opacity", "type": "float (0-100)",
-                "description": "Header image opacity (PDF only).", "example_pdf": "80", "example_docx": "N/A"
-            },
-            {
-                "key": "header_size", "type": "float (%)",
-                "description": "Header image size percentage.", "example_pdf": "50", "example_docx": "50"
-            },
-            {
-                "key": "header_width", "type": "float (px)",
-                "description": "Header image width in pixels.", "example_pdf": "200", "example_docx": "200"
-            },
-            {
-                "key": "header_height", "type": "float (px)",
-                "description": "Header image height in pixels.", "example_pdf": "100", "example_docx": "100"
-            },
-            {
-                "key": "header_alignment", "type": "string",
-                "description": "Header image alignment.", "accepted_values": ["left", "center", "right"],
-                "example_pdf": "center", "example_docx": "center"
-            },
-            {
-                "key": "signatures_size", "type": "float (%)",
-                "description": "Signature images size percentage.", "example_pdf": "80", "example_docx": "80"
-            },
-            {
-                "key": "signatures_alignment", "type": "string",
-                "description": "Layout for multiple signatures.", "accepted_values": ["vertical", "horizontal"],
-                "example_pdf": "vertical", "example_docx": "vertical"
-            },
-            {
-                "key": "include_signatures", "type": "boolean",
-                "description": "Include signatures in export.", "accepted_values": ["true", "false", "1", "0"],
-                "example_pdf": "true", "example_docx": "true"
-            }
+            {"key": "header_image", "type": "file", "description": "Image file for the header.", "notes": "Supported: PNG, JPG, JPEG, GIF, SVG."},
+            {"key": "header_opacity", "type": "float (0-100)", "description": "Header image opacity (PDF only).", "example_pdf": "80", "example_docx": "N/A"},
+            {"key": "header_size", "type": "float (%)", "description": "Header image size percentage.", "example_pdf": "50", "example_docx": "50"},
+            {"key": "header_width", "type": "float (px)", "description": "Header image width in pixels.", "example_pdf": "200", "example_docx": "200"},
+            {"key": "header_height", "type": "float (px)", "description": "Header image height in pixels.", "example_pdf": "100", "example_docx": "100"},
+            {"key": "header_alignment", "type": "string", "description": "Header image alignment.", "accepted_values": ["left", "center", "right"], "example_pdf": "center", "example_docx": "center"},
+            {"key": "signatures_size", "type": "float (%)", "description": "Signature images size percentage.", "example_pdf": "80", "example_docx": "80"},
+            {"key": "signatures_alignment", "type": "string", "description": "Layout for multiple signatures.", "accepted_values": ["vertical", "horizontal"], "example_pdf": "vertical", "example_docx": "vertical"},
+            {"key": "include_signatures", "type": "boolean", "description": "Include signatures in export.", "accepted_values": ["true", "false", "1", "0"], "example_pdf": "true", "example_docx": "true"}
         ],
         "style_options": [] 
     }
 
-    pdf_point_override_keys = [ # Keys where user override for PDF should be in points
+    # Keys for PDF ParagraphStyle whose user-provided overrides should be in Points.
+    # Their defaults in DEFAULT_STYLE_CONFIG are in Inches.
+    pdf_style_spatial_keys_user_input_as_points = [
+        "title_space_after", "description_space_after", "info_space_after",
         "question_left_indent", "question_space_before", "question_space_after",
         "answer_left_indent", "answer_space_before", "answer_space_after",
-        "title_space_after", "description_space_after", "info_space_after", "table_space_after",
-        # Margins are typically larger, so keeping them as inches from user might be fine, 
-        # but if they also cause issues, they could be added here.
-        # For now, focusing on the smaller paragraph/element spacing.
+        "table_space_after"
+    ]
+    # Keys for PDF TableStyle which are always in Points.
+    pdf_style_table_padding_keys = [
         "table_cell_padding_left", "table_cell_padding_right", 
         "table_cell_padding_top", "table_cell_padding_bottom", "table_grid_thickness"
     ]
@@ -160,41 +131,42 @@ def get_export_customization_options():
         base_key_name = key[:-5] if is_docx_specific_key else key
         
         if is_docx_specific_key: param_info["description"] = f"DOCX specific: Styling for {base_key_name.replace('_', ' ')}."
-        else: param_info["description"] = f"Styling for {key.replace('_', ' ')}. Primarily for PDF unless overridden by a DOCX-specific variant."
+        else: param_info["description"] = f"Styling for {key.replace('_', ' ')}."
 
-        # Type, Examples, Notes
-        if key.endswith("_color"):
+        if key in pdf_style_spatial_keys_user_input_as_points:
+            param_info["type"] = "float or integer (points)"
+            param_info["notes"] = "For PDF, provide this override value in points. Default is calculated from inches in config."
+            param_info["example_pdf"] = f"{_parse_numeric_value(default_value) * 72.0:.1f} (points, this is the default converted from inches)"
+            param_info["example_docx"] = str(DEFAULT_STYLE_CONFIG.get(doc_variant_key, "N/A if not applicable"))
+        elif key in pdf_style_table_padding_keys:
+            param_info["type"] = "float or integer (points)"
+            param_info["notes"] = "For PDF TableStyle, value is in points."
+            param_info["example_pdf"] = str(default_value)
+            param_info["example_docx"] = str(DEFAULT_STYLE_CONFIG.get(doc_variant_key, default_value))
+        elif key.endswith("_color"):
             param_info["type"] = "string (color)"; 
-            if is_docx_specific_key: param_info["example_pdf"] = "N/A"; param_info["example_docx"] = str(default_value) + " (e.g., '#RRGGBB' or '000000')"
-            else: param_info["example_pdf"] = str(default_value) + " (e.g., '#RRGGBB' or name)"; param_info["example_docx"] = str(DEFAULT_STYLE_CONFIG.get(doc_variant_key, default_value))
+            if is_docx_specific_key: param_info["example_pdf"] = "N/A"; param_info["example_docx"] = str(default_value) + " (hex or name)"
+            else: param_info["example_pdf"] = str(default_value) + " (hex, name, or ReportLab color)"; param_info["example_docx"] = str(DEFAULT_STYLE_CONFIG.get(doc_variant_key, default_value))
         elif key.endswith("_font_family"):
             param_info["type"] = "string (font name)";
             if is_docx_specific_key: param_info["example_pdf"] = "N/A"; param_info["example_docx"] = str(default_value)
             else: param_info["example_pdf"] = str(default_value); param_info["example_docx"] = str(DEFAULT_STYLE_CONFIG.get(doc_variant_key, "System default"))
-        elif key in pdf_point_override_keys and not is_docx_specific_key: # PDF Spacing/Indent: user input is points
+        elif key.endswith(("_font_size", "_leading", "_docx_pt")) or \
+             (is_docx_specific_key and ("_space_" in key or "_indent" in key or "_padding" in key or "_thickness" in key)):
             param_info["type"] = "float or integer (points)"
-            param_info["notes"] = "For PDF, provide this value in points. Default is derived from inches in config."
-            param_info["example_pdf"] = f"{_parse_numeric_value(default_value) * 72.0:.1f} (points, this is the default converted)" # Show default in points
-            param_info["example_docx"] = str(DEFAULT_STYLE_CONFIG.get(doc_variant_key, default_value)) + " (DOCX uses its own system/units)"
-        elif key.endswith(("_font_size", "_leading", "_docx_pt")) or (is_docx_specific_key and ("_space_" in key or "_indent" in key or "_padding" in key or "_thickness" in key)): # Typically points
-            param_info["type"] = "float or integer (points)"
-            param_info["notes"] = "Units are typically points."
             if is_docx_specific_key: param_info["example_pdf"] = "N/A"; param_info["example_docx"] = str(default_value)
             else: param_info["example_pdf"] = str(default_value); param_info["example_docx"] = str(DEFAULT_STYLE_CONFIG.get(doc_variant_key, default_value))
-        elif key.startswith("page_margin_") or (not is_docx_specific_key and ("_space_" in key or "_indent" in key or key.startswith("signature_image_"))): # Inches for PDF default
+        elif key.startswith("page_margin_") or key.startswith("signature_image_"): # These are in inches
             param_info["type"] = "float (inches)"
-            param_info["notes"] = "For PDF, default is in inches. If overriding, see specific key notes (some now expect points)."
-            if key in pdf_point_override_keys: # Should have been caught by previous elif, but good for clarity
-                 param_info["notes"] = "For PDF override, provide value in POINTS. Default in config is inches."
-            param_info["example_pdf"] = str(default_value)
-            param_info["example_docx"] = str(DEFAULT_STYLE_CONFIG.get(doc_variant_key, default_value))
-        elif key.endswith("_alignment"): # Alignment string/int
+            param_info["notes"] = "Value in inches."
+            param_info["example_pdf"] = str(default_value); param_info["example_docx"] = str(DEFAULT_STYLE_CONFIG.get(doc_variant_key, default_value))
+        elif key.endswith("_alignment"):
              param_info["type"] = "string or integer"; 
              if is_docx_specific_key: param_info["example_pdf"] = "N/A"; param_info["example_docx"] = str(default_value); param_info["accepted_values_docx"] = ["left", "center", "right", "justify"]
              else: param_info["example_pdf"] = str(default_value); param_info["example_docx"] = str(DEFAULT_STYLE_CONFIG.get(doc_variant_key, "center")); param_info["accepted_values_pdf"] = ["LEFT", "CENTER", "RIGHT", "JUSTIFY", "0", "1", "2", "4"]
         elif key == "qa_layout":
             param_info["type"] = "string"; param_info["accepted_values"] = ["answer_below", "answer_same_line"]; param_info["example_pdf"] = str(default_value); param_info["example_docx"] = str(default_value)
-        else: # Generic fallback
+        else: 
             param_info["type"] = "string, float, or integer"; 
             param_info["example_pdf"] = str(default_value) if not callable(default_value) else "varies"
             param_info["example_docx"] = str(DEFAULT_STYLE_CONFIG.get(doc_variant_key, default_value if not callable(default_value) else "varies"))

@@ -536,7 +536,8 @@ class ExportSubmissionService:
             for ans in submission.answers_submitted:
                 if not (ans.question and ans.question_type): continue
                 
-                q_text_key = str(ans.question).strip()
+                # Replace tilde in question text here
+                q_text_key = str(ans.question).replace("~", " ").strip()
                 q_type_lower = str(ans.question_type).lower().strip()
                 q_order = ans.question_order if ans.question_order is not None else float('inf')
 
@@ -557,8 +558,6 @@ class ExportSubmissionService:
                             cell_based_tables_data[q_text_key]['col_indices'].add(col_idx)
                     except (ValueError,TypeError) as e_cell: logger.warning(f"PDF: Invalid table cell index for table '{q_text_key}' (row='{ans.row}', col='{ans.column}', error: {e_cell}). Skipping cell."); continue
                 elif q_type_lower != 'signature': # Regular Q&A
-                    # Use (q_order, q_text_key) to uniquely identify a question instance if order matters for same text
-                    # However, usually q_text_key itself is enough if question texts are unique per form context in submission
                     unique_q_key = (q_order, q_text_key)
                     if not answers_by_question_text_and_order[unique_q_key]["text"]: # Initialize if first time
                          answers_by_question_text_and_order[unique_q_key]["text"] = q_text_key
@@ -584,8 +583,7 @@ class ExportSubmissionService:
                                 if str(ans_content).strip(): combined_options.append(str(ans_content).strip())
                     unique_options=list(dict.fromkeys(opt for opt in combined_options if opt))
                     ans_val_display=", ".join(unique_options) if unique_options else "<i>No selection</i>"
-                else: # For simple text, number, date, etc.
-                    # Assuming single answer string for these types (or join if multiple raw_answers exist)
+                else: 
                     ans_val_display = ", ".join(str(a).strip() for a in raw_answers if a is not None and str(a).strip()) or "<i>No answer provided</i>"
 
                 all_renderable_items.append({
@@ -597,7 +595,7 @@ class ExportSubmissionService:
             for table_name, table_render_data in cell_based_tables_data.items():
                 all_renderable_items.append({
                     "type": "table", "order": table_render_data['order'],
-                    "data": table_render_data, "name": table_name # name is already in table_render_data
+                    "data": table_render_data, "name": table_name 
                 })
             
             all_renderable_items.sort(key=lambda x: (x['order'] if x['order'] is not None else float('inf'), x.get('name', x.get('question_text', ''))))
@@ -612,7 +610,7 @@ class ExportSubmissionService:
                     ans_val_p_escaped = item['answer_display'].replace('&','&amp;').replace('<','&lt;').replace('>','&gt;').replace('\n','<br/>\n')
                     
                     if qa_layout == "answer_same_line" and len(item['answer_display']) <= answer_same_line_max_len and \
-                       ('<br/>' not in ans_val_p_escaped and '\n' not in item['answer_display']): # Check original string for actual newlines
+                       ('<br/>' not in ans_val_p_escaped and '\n' not in item['answer_display']): 
                         combined_text_html = f"<b>{q_text_p_escaped}:</b> <font color='#{answer_font_color_html}'>{ans_val_p_escaped}</font>"
                         story.append(ReportLabParagraph(combined_text_html, styles_pdf['CustomQACombined']))
                     else:
@@ -622,7 +620,7 @@ class ExportSubmissionService:
 
                 elif item['type'] == "table":
                     table_data_render = item['data']
-                    q_text = table_data_render['name'] # This is the question text for the table
+                    q_text = table_data_render['name'] 
                     story.append(ReportLabParagraph(q_text.replace('\n','<br/>\n'), styles_pdf['CustomQuestion']))
 
                     if table_data_render and (table_data_render['header_row_present'] or table_data_render['cells']):
@@ -747,7 +745,8 @@ class ExportSubmissionService:
             for ans_docx in submission.answers_submitted:
                 if not (ans_docx.question and ans_docx.question_type): continue
                 
-                q_text_key_docx = str(ans_docx.question).strip()
+                # Replace tilde in question text here
+                q_text_key_docx = str(ans_docx.question).replace("~", " ").strip()
                 q_type_lower_docx = str(ans_docx.question_type).lower().strip()
                 q_order_docx = ans_docx.question_order if ans_docx.question_order is not None else float('inf')
 

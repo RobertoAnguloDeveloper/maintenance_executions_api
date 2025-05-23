@@ -1,0 +1,3 @@
+
+# Database Configuration
+DATABASE_URL=postgresql://rangulot:plg-dev-2024@localhost/maintenance_executions

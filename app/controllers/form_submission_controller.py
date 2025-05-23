@@ -15,7 +15,8 @@ class FormSubmissionController:
     def create_submission(
         form_id: int,
         username: str,
-        answers_data: Optional[List[Dict]] = None
+        answers_data: Optional[List[Dict]] = None,
+        submitted_at: Optional[datetime] = None
     ) -> Tuple[Optional[FormSubmission], Optional[str]]:
         """
         Create a new form submission with validation and access control
@@ -24,6 +25,7 @@ class FormSubmissionController:
             form_id: ID of the form
             username: Username of submitter
             answers_data: Optional list of answer data
+            submitted_at: Optional timestamp for when the form was submitted
             
         Returns:
             tuple: (Created FormSubmission or None, Error message or None)
@@ -34,9 +36,6 @@ class FormSubmissionController:
             if not form:
                 return None, "Form not found"
 
-            # if not form.is_public and not form.creator.username == username:
-            #     return None, "Unauthorized access to form"
-
             # Get upload path for signatures
             upload_path = current_app.config.get('UPLOAD_FOLDER')
 
@@ -44,7 +43,8 @@ class FormSubmissionController:
                 form_id=form_id,
                 username=username,
                 answers_data=answers_data,
-                upload_path=upload_path
+                upload_path=upload_path,
+                submitted_at=submitted_at
             )
             
             if error:
@@ -78,8 +78,10 @@ class FormSubmissionController:
             # Apply role-based filtering
             if not user.role.is_super_user:
                 if user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
+                    # Site managers and supervisors can see all submissions in their environment
                     filters['environment_id'] = user.environment_id
                 else:
+                    # Regular users can only see their own submissions
                     filters['submitted_by'] = user.username
 
             return FormSubmissionService.get_all_submissions(user, filters)
@@ -87,6 +89,65 @@ class FormSubmissionController:
         except Exception as e:
             logger.error(f"Error in get_all_submissions controller: {str(e)}")
             return []
+        
+    @staticmethod
+    def get_all_submissions_compact(
+        user: User,
+        filters: Dict = None
+    ) -> List[Dict]:
+        """
+        Get a compact list of all submissions with minimal information
+        
+        Args:
+            user: Current user object
+            filters: Optional filters dictionary
+            
+        Returns:
+            List[Dict]: List of compact form submissions
+        """
+        try:
+            if not filters:
+                filters = {}
+
+            # Apply role-based filtering
+            if not user.role.is_super_user:
+                if user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
+                    # Site managers and supervisors can see all submissions in their environment
+                    filters['environment_id'] = user.environment_id
+                else:
+                    # Regular users can only see their own submissions
+                    filters['submitted_by'] = user.username
+
+            return FormSubmissionService.get_all_submissions_compact(user, filters)
+
+        except Exception as e:
+            logger.error(f"Error in get_all_submissions_compact controller: {str(e)}")
+            return []
+        
+    @staticmethod
+    def get_batch(page=1, per_page=50, **filters):
+        """
+        Get batch of form submissions with pagination
+        
+        Args:
+            page: Page number (starts from 1)
+            per_page: Number of items per page
+            **filters: Optional filters including:
+                - include_deleted: Whether to include deleted submissions
+                - form_id: Filter by specific form
+                - submitted_by: Filter by submitter username
+                - date_range: Dict with 'start' and 'end' dates
+                - current_user: Current user object for role-based access
+                
+        Returns:
+            tuple: (total_count, form_submissions)
+        """
+        try:
+            return FormSubmissionService.get_batch(page, per_page, **filters)
+        except Exception as e:
+            logger.error(f"Error in get_batch controller: {str(e)}")
+            return 0, []
+
 
     @staticmethod
     def get_submission(submission_id: int) -> Optional[FormSubmission]:
@@ -152,18 +213,82 @@ class FormSubmissionController:
                 return [], "Submission not found"
 
             # Access control
-            if user_role != RoleType.ADMIN:
-                if user_role in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                    if submission.form.creator.environment_id != submission.form.creator.environment_id:
-                        return [], "Unauthorized access"
-                elif submission.submitted_by != current_user:
+            if user_role == RoleType.ADMIN:
+                # Admins can see everything
+                pass
+            elif user_role in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
+                # Site managers and supervisors can see submissions from users in their environment
+                submitter = User.query.filter_by(username=submission.submitted_by).first()
+                if not submitter or submitter.environment_id != FormSubmissionService.get_user_environment_id(current_user):
                     return [], "Unauthorized access"
+            elif submission.submitted_by != current_user:
+                # Regular users can only see their own submissions
+                return [], "Unauthorized access"
 
             return FormSubmissionService.get_submission_answers(submission_id)
 
         except Exception as e:
             logger.error(f"Error getting submission answers: {str(e)}")
             return [], str(e)
+        
+    @staticmethod
+    def update_submission(
+        submission_id: int,
+        current_user: str,
+        user_role: str,
+        update_data: Dict,
+        answers_data: Optional[List[Dict]] = None
+    ) -> Tuple[Optional[FormSubmission], Optional[str]]:
+        """
+        Update an existing form submission with validation and access control
+        
+        Args:
+            submission_id: ID of the submission to update
+            current_user: Username of current user
+            user_role: Role of current user
+            update_data: Dictionary of fields to update
+            answers_data: Optional list of updated answer data
+            
+        Returns:
+            tuple: (Updated FormSubmission or None, Error message or None)
+        """
+        try:
+            # Verify submission exists
+            submission = FormSubmissionService.get_submission(submission_id)
+            if not submission:
+                return None, "Submission not found"
+
+            # Access control
+            if user_role != RoleType.ADMIN:
+                if user_role in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
+                    if submission.form.creator.environment_id != submission.form.creator.environment_id:
+                        return None, "Unauthorized access"
+                elif submission.submitted_by != current_user:
+                    return None, "Can only update own submissions"
+
+                # Check submission age for non-admin users
+                submission_age = datetime.utcnow() - submission.submitted_at
+                if submission_age.days > 7:  # Configurable timeframe
+                    return None, "Cannot update submissions older than 7 days"
+
+            # Get upload path for signatures
+            upload_path = current_app.config.get('UPLOAD_FOLDER')
+
+            submission, error = FormSubmissionService.update_submission(
+                submission_id=submission_id,
+                update_data=update_data,
+                answers_data=answers_data,
+                upload_path=upload_path
+            )
+            
+            if error:
+                return None, error
+
+            return submission, None
+
+        except Exception as e:
+            logger.error(f"Error in update_submission controller: {str(e)}")
+            return None, str(e)
 
     @staticmethod
     def delete_submission(

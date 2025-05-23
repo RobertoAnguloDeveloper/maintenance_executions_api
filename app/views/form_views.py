@@ -45,6 +45,71 @@ def get_all_forms():
     except Exception as e:
         logger.error(f"Error getting forms: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
+    
+@form_bp.route('/batch', methods=['GET'])
+@jwt_required()
+@PermissionManager.require_permission(action="view", entity_type=EntityType.FORMS)
+def get_batch_forms():
+    """
+    Get batch of forms with pagination
+    
+    Query Parameters:
+    - page: Page number (default: 1)
+    - per_page: Number of items per page (default: 50)
+    - include_deleted: Include deleted forms (default: false)
+    - is_public: Filter by public status (optional)
+    - user_id: Filter by creator user ID (optional)
+    - environment_id: Filter by environment ID (optional)
+    - only_editable: Return only forms that the user can edit (default: false)
+                     For admin users, this returns all forms; for other users, only their own forms
+    """
+    try:
+        # Get pagination parameters
+        page = request.args.get('page', type=int, default=1)
+        per_page = request.args.get('per_page', type=int, default=50)
+        
+        # Get filter parameters
+        include_deleted = request.args.get('include_deleted', '').lower() == 'true'
+        is_public = request.args.get('is_public', type=lambda v: v.lower() == 'true')
+        user_id = request.args.get('user_id', type=int)
+        environment_id = request.args.get('environment_id', type=int)
+        only_editable = request.args.get('only_editable', '').lower() == 'true'
+        
+        # Apply role-based access control
+        current_user = get_jwt_identity()
+        user = AuthService.get_current_user(current_user)
+        
+        # Call controller method with pagination
+        total_count, forms = FormController.get_batch(
+            page=page,
+            per_page=per_page,
+            include_deleted=include_deleted,
+            is_public=is_public,
+            user_id=user_id,
+            environment_id=environment_id,
+            current_user=user,
+            only_editable=only_editable
+        )
+        
+        # Calculate total pages
+        total_pages = (total_count + per_page - 1) // per_page if per_page > 0 else 0
+        
+        return jsonify({
+            "metadata": {
+                "total_items": total_count,
+                "total_pages": total_pages,
+                "current_page": page,
+                "per_page": per_page,
+            },
+            "items": forms
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error getting batch of forms: {str(e)}")
+        return jsonify({
+            "error": "Internal server error",
+            "details": str(e)
+        }), 500
 
 @form_bp.route('/<int:form_id>', methods=['GET'])
 @jwt_required()
@@ -58,14 +123,6 @@ def get_form(form_id):
         form = FormController.get_form(form_id)  # This should return a Form object
         if not form:
             return jsonify({"error": "Form not found"}), 404
-
-        # Role-based access control using RoleType
-        if user.role.name == RoleType.TECHNICIAN:
-            if not form.is_public:
-                return jsonify({"error": "Unauthorized access"}), 403
-        elif user.role.name in [RoleType.SUPERVISOR, RoleType.SITE_MANAGER]:
-            if form.creator.environment_id != user.environment_id:
-                return jsonify({"error": "Unauthorized access"}), 403
 
         return jsonify(form.to_dict()), 200
         
@@ -436,28 +493,6 @@ def delete_form(form_id):
         form = FormController.get_form(form_id)
         if not form:
             return jsonify({"error": "Form not found"}), 404
-
-        # Access control checks
-        if not user.role.is_super_user:
-            # Check environment access
-            if form.creator.environment_id != user.environment_id:
-                return jsonify({
-                    "error": "Unauthorized",
-                    "message": "You can only delete forms in your environment"
-                }), 403
-
-        # Check for active submissions if user is not admin or site manager
-        if user.role.name not in [RoleType.ADMIN, RoleType.SITE_MANAGER]:
-            active_submissions = FormSubmission.query.filter_by(
-                form_id=form_id,
-                is_deleted=False
-            ).count()
-            
-            if active_submissions > 0:
-                return jsonify({
-                    "error": "Cannot delete form with active submissions",
-                    "active_submissions": active_submissions
-                }), 400
 
         success, result = FormController.delete_form(form_id)
         if success:

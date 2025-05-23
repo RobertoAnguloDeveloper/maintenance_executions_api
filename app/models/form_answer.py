@@ -26,6 +26,19 @@ class FormAnswer(TimestampMixin, SoftDeleteMixin, db.Model):
 
     def __repr__(self):
         return f'<FormAnswer {self.id} - Question: {self.form_question_id}, Answer: {self.answer_id}>'
+    
+    def to_dict_basic(self) -> dict:
+        """Return dictionary with basic fields only"""
+        return {
+            'id': self.id,
+            'form_question_id': self.form_question_id,
+            'answer_id': self.answer_id,
+            'remarks': self.remarks,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            'is_deleted': self.is_deleted,
+            'deleted_at': self.deleted_at.isoformat() if self.deleted_at else None
+        }
 
     def soft_delete(self):
         """Perform soft delete"""

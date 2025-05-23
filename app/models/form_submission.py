@@ -27,6 +27,19 @@ class FormSubmission(TimestampMixin, SoftDeleteMixin, db.Model):
 
     def __repr__(self):
         return f'<FormSubmission {self.id} by {self.submitted_by}>'
+    
+    def to_dict_basic(self) -> dict:
+        """Return dictionary with basic fields only"""
+        return {
+            'id': self.id,
+            'form_id': self.form_id,
+            'submitted_by': self.submitted_by,
+            'submitted_at': self.submitted_at.isoformat() if self.submitted_at else None,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            'is_deleted': self.is_deleted,
+            'deleted_at': self.deleted_at.isoformat() if self.deleted_at else None
+        }
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert form submission to dictionary representation"""

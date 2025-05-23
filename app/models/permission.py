@@ -7,6 +7,8 @@ class Permission(TimestampMixin, SoftDeleteMixin, db.Model):
     __tablename__ = 'permissions'
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(50), nullable=False, unique=True)
+    action = db.Column(db.String(10), nullable=False)
+    entity = db.Column(db.String(50), nullable=False)
     description = db.Column(db.Text)
     
     created_at = db.Column(db.DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -18,10 +20,26 @@ class Permission(TimestampMixin, SoftDeleteMixin, db.Model):
     def __repr__(self):
         return f'<Permission {self.name}>'
     
+    def to_dict_basic(self) -> dict:
+        """Return dictionary with basic fields only"""
+        return {
+            'id': self.id,
+            'name': self.name,
+            'action': self.action,
+            'entity': self.entity,
+            'description': self.description,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            'is_deleted': self.is_deleted,
+            'deleted_at': self.deleted_at.isoformat() if self.deleted_at else None
+        }
+    
     def to_dict(self):
         return {
             'id': self.id,
             'name': self.name,
+            'action': self.action,
+            'entity': self.entity,
             'description': self.description,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None

@@ -8,6 +8,7 @@ from app.models.question import Question
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import or_
 from datetime import datetime
+from sqlalchemy.orm import joinedload
 import logging
 
 logger = logging.getLogger(__name__)
@@ -270,6 +271,78 @@ class QuestionService:
         if not include_deleted:
             query = query.filter(Question.is_deleted == False)
         return query.order_by(Question.id).all()
+    
+    @staticmethod
+    def get_batch(page=1, per_page=50, **filters):
+        """
+        Get batch of questions with pagination directly from database
+        
+        Args:
+            page: Page number (starts from 1)
+            per_page: Number of items per page
+            **filters: Optional filters
+            
+        Returns:
+            tuple: (total_count, questions)
+        """
+        try:
+            # Calculate offset
+            offset = (page - 1) * per_page if page > 0 and per_page > 0 else 0
+            
+            # Build base query with joins for efficiency
+            query = Question.query.options(
+                joinedload(Question.question_type)
+            )
+            
+            # Apply filters
+            include_deleted = filters.get('include_deleted', False)
+            if not include_deleted:
+                query = query.filter(Question.is_deleted == False)
+            
+            question_type_id = filters.get('question_type_id')
+            if question_type_id:
+                query = query.filter(Question.question_type_id == question_type_id)
+                
+            is_signature = filters.get('is_signature')
+            if is_signature is not None:
+                query = query.filter(Question.is_signature == is_signature)
+                
+            search_text = filters.get('search_text')
+            if search_text:
+                query = query.filter(Question.text.ilike(f'%{search_text}%'))
+            
+            # Apply role-based access control
+            current_user = filters.get('current_user')
+            if current_user and not current_user.role.is_super_user:
+                # Non-admin users can only see questions from their environment
+                # This requires joining through form questions to forms to creators
+                query = query.join(
+                    FormQuestion, 
+                    FormQuestion.question_id == Question.id
+                ).join(
+                    Form, 
+                    Form.id == FormQuestion.form_id
+                ).join(
+                    User, 
+                    User.id == Form.user_id
+                ).filter(
+                    User.environment_id == current_user.environment_id
+                ).distinct()
+            
+            # Get total count
+            total_count = query.count()
+            
+            # Apply pagination
+            questions = query.order_by(Question.id).offset(offset).limit(per_page).all()
+            
+            # Convert to dictionary representation
+            questions_data = [question.to_dict() for question in questions]
+            
+            return total_count, questions_data
+            
+        except Exception as e:
+            logger.error(f"Error in question batch pagination service: {str(e)}")
+            return 0, []
 
     @staticmethod
     def update_question(
@@ -319,7 +392,7 @@ class QuestionService:
                 is_deleted=False
             ).first():
                 # Only allow updating remarks if question is in use
-                if set(kwargs.keys()) - {'remarks'}:
+                if set(kwargs.keys()) - {'text'}:
                     return None, "Cannot modify question that is in use (except remarks)"
 
             # Start transaction

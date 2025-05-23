@@ -7,6 +7,7 @@ import os
 
 from app.models.attachment import Attachment
 from app.services.attachment_service import AttachmentService
+from app.services.auth_service import AuthService
 from app.services.form_submission_service import FormSubmissionService
 from app.utils.permission_manager import RoleType
 
@@ -20,7 +21,9 @@ class AttachmentController:
         current_user: str,
         is_signature: bool = False,
         user_role: str = None,
-        answer_submitted_id: int = None
+        answer_submitted_id: int = None,
+        signature_position: str = None,
+        signature_author: str = None
     ) -> Tuple[Optional[Dict], Optional[str]]:
         """
         Validate and create new attachment with proper authorization
@@ -30,14 +33,6 @@ class AttachmentController:
             submission = FormSubmissionService.get_submission(form_submission_id)
             if not submission:
                 return None, "Form submission not found"
-
-            # Access control
-            if user_role != RoleType.ADMIN:
-                if user_role in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                    if submission.form.creator.environment_id != current_user.environment_id:
-                        return None, "Unauthorized access"
-                elif submission.submitted_by != current_user:
-                    return None, "Can only add attachments to own submissions"
 
             # Validate file
             is_valid, mime_type_or_error = AttachmentService.validate_file(file, file.filename)
@@ -53,7 +48,9 @@ class AttachmentController:
                 upload_path=current_app.config['UPLOAD_FOLDER'],
                 file_type=mime_type_or_error,
                 is_signature=is_signature,
-                answer_submitted_id=answer_submitted_id  # Pass answer_submitted_id for signatures
+                answer_submitted_id=answer_submitted_id,  # Pass answer_submitted_id for signatures
+                signature_position=signature_position,    # Pass new signature position
+                signature_author=signature_author         # Pass new signature author
             )
 
             if error:
@@ -80,14 +77,6 @@ class AttachmentController:
             submission = FormSubmissionService.get_submission(form_submission_id)
             if not submission:
                 return None, "Form submission not found"
-                
-            # Access control
-            if user_role != RoleType.ADMIN:
-                if user_role in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                    if submission.form.creator.environment_id != current_user.environment_id:
-                        return None, "Unauthorized access"
-                elif submission.submitted_by != current_user:
-                    return None, "Can only add attachments to own submissions"
             
             # Validate all files first
             for file_data in files:
@@ -132,7 +121,7 @@ class AttachmentController:
         Get all attachments with role-based access control
         
         Args:
-            current_user: Username of current user
+            current_user: Username of current user (string)
             user_role: Role of current user
             filters: Optional filters
             
@@ -143,11 +132,16 @@ class AttachmentController:
             # Initialize filters if None
             filters = filters or {}
             
-            # Apply role-based filtering
+            # Apply role-based filterin
             if user_role != RoleType.ADMIN:
                 if user_role in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                    # Filter by environment
-                    filters['environment_id'] = current_user.environment_id
+                    # Get user object first - current_user is a username string, not a User object
+                    user_obj = AuthService.get_current_user(current_user)
+                    if not user_obj:
+                        return [], "User not found"
+                    
+                    # Filter by environment using the user object
+                    filters['environment_id'] = user_obj.environment_id
                 else:
                     # Regular users can only see their own submissions
                     filters['submitted_by'] = current_user
@@ -160,6 +154,21 @@ class AttachmentController:
         except Exception as e:
             logger.error(f"Error getting attachments in controller: {str(e)}")
             return [], str(e)
+        
+    @staticmethod
+    def get_batch(page=1, per_page=50, **filters):
+        """
+        Get batch of attachments with pagination
+        
+        Args:
+            page: Page number (starts from 1)
+            per_page: Number of items per page
+            **filters: Optional filters
+            
+        Returns:
+            tuple: (total_count, attachments)
+        """
+        return AttachmentService.get_batch(page, per_page, **filters)
 
     @staticmethod
     def get_attachment(
@@ -213,14 +222,6 @@ class AttachmentController:
             if error:
                 logger.error(f"Error retrieving attachment {attachment_id}: {error}")
                 return None, error
-                    
-            # Access control
-            if user_role != RoleType.ADMIN:
-                if user_role in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                    if attachment_data['record'].form_submission.form.creator.environment_id != current_user.environment_id:
-                        return None, "Unauthorized access"
-                elif attachment_data['record'].form_submission.submitted_by != current_user:
-                    return None, "Unauthorized access"
                         
             return attachment_data, None
                 
@@ -242,14 +243,6 @@ class AttachmentController:
             if not submission:
                 return [], "Form submission not found"
 
-            # Access control
-            if user_role != RoleType.ADMIN:
-                if user_role in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                    if submission.form.creator.environment_id != current_user.environment_id:
-                        return [], "Unauthorized access"
-                elif submission.submitted_by != current_user:
-                    return [], "Unauthorized access"
-
             attachments = Attachment.query.filter_by(
                 form_submission_id=form_submission_id,
                 is_deleted=False
@@ -260,6 +253,52 @@ class AttachmentController:
         except Exception as e:
             logger.error(f"Error getting submission attachments: {str(e)}")
             return [], str(e)
+            
+    @staticmethod
+    def update_attachment(
+        attachment_id: int,
+        signature_position: str = None,
+        signature_author: str = None,
+        is_signature: bool = None,
+        current_user: str = None,
+        user_role: str = None
+    ) -> Tuple[Optional[Dict], Optional[str]]:
+        """
+        Update attachment signature metadata with authorization check
+        
+        Args:
+            attachment_id: ID of the attachment to update
+            signature_position: New signature position
+            signature_author: New signature author
+            is_signature: Update is_signature flag
+            current_user: Username of current user
+            user_role: Role of current user
+            
+        Returns:
+            tuple: (Updated attachment dict or None, Error message or None)
+        """
+        try:
+            # Get attachment for access control
+            attachment = AttachmentService.get_attachment(attachment_id)
+            if not attachment:
+                return None, "Attachment not found"
+
+            # Update attachment
+            updated_attachment, error = AttachmentService.update_attachment(
+                attachment_id=attachment_id,
+                signature_position=signature_position,
+                signature_author=signature_author,
+                is_signature=is_signature
+            )
+            
+            if error:
+                return None, error
+                
+            return updated_attachment.to_dict(), None
+            
+        except Exception as e:
+            logger.error(f"Error updating attachment {attachment_id}: {str(e)}")
+            return None, str(e)
 
     @staticmethod
     def delete_attachment(
@@ -268,15 +307,7 @@ class AttachmentController:
         user_role: str = None
     ) -> Tuple[bool, str]:
         """
-        Delete attachment with authorization check
-        
-        Args:
-            attachment_id: ID of the attachment
-            current_user: Username of current user
-            user_role: Role of current user
-            
-        Returns:
-            tuple: (Success boolean, Success/Error message)
+        Delete an attachment
         """
         try:
             # Get attachment for access control

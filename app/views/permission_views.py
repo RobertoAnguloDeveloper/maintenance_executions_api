@@ -20,23 +20,24 @@ def create_permission():
     """Create a new permission - Admin only"""
     try:
         data = request.get_json()
-        name = data.get('name')
+        required_fields = ['name', 'action', 'entity']
         description = data.get('description')
 
-        if not name:
-            return jsonify({"error": "Name is required"}), 400
+        for field in required_fields:
+            if field not in data or not data[field]:
+                return jsonify({"error": f"{field} is required"}), 400
 
         # Validate permission name format
-        if not name.islower() or ' ' in name:
+        if not data['name'].islower() or ' ' in data['name']:
             return jsonify({
                 "error": "Permission name must be lowercase without spaces"
             }), 400
 
-        new_permission, error = PermissionController.create_permission(name, description)
+        new_permission, error = PermissionController.create_permission(data['name'],data['action'],data['entity'], description)
         if error:
             return jsonify({"error": error}), 400
 
-        logger.info(f"Permission '{name}' created successfully")
+        logger.info(f"Permission '{data['name']}' created successfully")
         return jsonify({
             "message": "Permission created successfully", 
             "permission": new_permission.to_dict()
@@ -66,6 +67,55 @@ def get_all_permissions():
     except Exception as e:
         logger.error(f"Error getting permissions: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
+    
+@permission_bp.route('/batch', methods=['GET'])
+@jwt_required()
+@PermissionManager.require_permission(action="view", entity_type=EntityType.ROLES)
+def get_batch_permissions():
+    """Get batch of permissions with pagination"""
+    try:
+        # Get pagination parameters
+        page = request.args.get('page', type=int, default=1)
+        per_page = request.args.get('per_page', type=int, default=50)
+        
+        # Get filter parameters
+        include_deleted = request.args.get('include_deleted', '').lower() == 'true'
+        action = request.args.get('action')
+        entity = request.args.get('entity')
+        
+        # Apply role-based access control
+        current_user = get_jwt_identity()
+        user = AuthService.get_current_user(current_user)
+        
+        # Call controller method with pagination
+        total_count, permissions = PermissionController.get_batch(
+            page=page,
+            per_page=per_page,
+            include_deleted=include_deleted,
+            action=action,
+            entity=entity,
+            current_user=user
+        )
+        
+        # Calculate total pages
+        total_pages = (total_count + per_page - 1) // per_page if per_page > 0 else 0
+        
+        return jsonify({
+            "metadata": {
+                "total_items": total_count,
+                "total_pages": total_pages,
+                "current_page": page,
+                "per_page": per_page,
+            },
+            "items": permissions
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error getting batch of permissions: {str(e)}")
+        return jsonify({
+            "error": "Internal server error",
+            "details": str(e)
+        }), 500
 
 @permission_bp.route('/<int:permission_id>', methods=['GET'])
 @jwt_required()
@@ -141,6 +191,8 @@ def update_permission(permission_id):
 
         data = request.get_json()
         name = data.get('name')
+        action = data.get('action')
+        entity = data.get('entity')
         description = data.get('description')
 
         # Validate new permission name
@@ -150,7 +202,7 @@ def update_permission(permission_id):
             }), 400
 
         updated_permission, error = PermissionController.update_permission(
-            permission_id, name, description
+            permission_id, name, action, entity, description
         )
         if error:
             return jsonify({"error": error}), 400

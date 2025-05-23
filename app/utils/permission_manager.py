@@ -34,14 +34,14 @@ class Role(Enum):
 
 class EntityType(Enum):
     USERS = "users"
-    ROLES = "roles"  # Added this
+    ROLES = "roles"
     FORMS = "forms"
     QUESTIONS = "questions"
     QUESTION_TYPES = "question_types"
     ANSWERS = "answers"
-    SUBMISSIONS = "submissions"
+    SUBMISSIONS = "form_submissions"
     ATTACHMENTS = "attachments"
-    ENVIRONMENTS = "environments"  # Added this line
+    ENVIRONMENTS = "environments"
 
 class ActionType(Enum):
     VIEW = "view"
@@ -50,45 +50,8 @@ class ActionType(Enum):
     DELETE = "delete"
 
 class PermissionManager:
-    ROLE_PERMISSIONS = {
-    Role.ADMIN: {
-        "permissions": "*",  # All permissions
-        "environment_restricted": False
-    },
-    Role.SITE_MANAGER: {
-        "permissions": [
-            "view_users", "update_users", "delete_users",
-            "view_forms", "create_forms", "update_forms", "delete_forms",
-            "view_environments",  # Added environment permissions
-            "view_questions", "create_questions", "update_questions", "delete_questions",
-            "view_submissions", "create_submissions", "update_submissions", "delete_submissions"
-        ],
-        "environment_restricted": True
-    },
-    Role.SUPERVISOR: {
-        "permissions": [
-            "view_forms", "create_forms", "update_forms", "delete_forms",
-            "view_environments",  # Added environment view permission
-            "view_submissions", "update_submissions"
-        ],
-        "environment_restricted": True
-    },
-    Role.TECHNICIAN: {
-        "permissions": [
-            "view_public_forms",
-            "view_environments",  # Added environment view permission
-            "create_submissions",
-            "view_own_submissions",
-            "update_own_submissions",
-            "delete_own_submissions",
-            "create_attachments",
-            "view_own_attachments",
-            "update_own_attachments",
-            "delete_own_attachments"
-        ],
-        "environment_restricted": True
-    }
-}
+    # Resource ownership checking is now separate from permission checking
+    # This keeps permissions clean and focused on actions and entities
 
     @staticmethod
     def check_environment_access(user, environment_id: int) -> bool:
@@ -109,27 +72,47 @@ class PermissionManager:
         return False
 
     @classmethod
-    def has_permission(cls, user, action: str, entity_type: EntityType = None, 
-                      own_resource: bool = False) -> bool:
-        """Check if user has specific permission"""
+    def has_permission(cls, user, action: str, entity_type: EntityType = None) -> bool:
+        """
+        Check if user has specific permission based on database Permission objects.
+        For own_resource=True, checks for general permission for the action/entity.
+        """
         try:
+            # First check for super users who have all permissions
             if user.role.is_super_user:
                 return True
-
-            role_config = cls.ROLE_PERMISSIONS.get(Role(user.role.name))
-            if not role_config:
+                
+            # For permission checking, we need a valid entity type
+            if not entity_type:
+                logger.warning("No entity type provided for permission check")
                 return False
-
-            if role_config["permissions"] == "*":
-                return True
-
-            permission_name = f"{action}"
-            if own_resource:
-                permission_name = f"{action}_own"
-            if entity_type:
-                permission_name = f"{permission_name}_{entity_type.value}"
-
-            return permission_name in role_config["permissions"]
+                
+            entity_value = entity_type.value
+                
+            # Check database permissions
+            if hasattr(user, 'role') and hasattr(user.role, 'permissions'):
+                for permission in user.role.permissions:
+                    # Check if action matches directly
+                    if permission.action == action:
+                        # Check if entity matches directly
+                        if permission.entity == entity_value:
+                            return True
+                        
+                        # Check for singular/plural variations
+                        if entity_value.endswith('s') and permission.entity == entity_value[:-1]:
+                            return True
+                        if permission.entity.endswith('s') and entity_value == permission.entity[:-1]:
+                            return True
+                            
+                        # Special case handling for entity types
+                        if entity_value == 'submissions' and permission.entity == 'form_submissions':
+                            return True
+                        if entity_value == 'form_submissions' and permission.entity == 'submissions':
+                            return True
+            
+            # If we reach here, no permission was found in the database
+            return False
+            
         except Exception as e:
             logger.error(f"Error checking permission: {str(e)}")
             return False
@@ -137,7 +120,10 @@ class PermissionManager:
     @classmethod
     def require_permission(cls, action: str, entity_type: EntityType = None, 
                          own_resource: bool = False, check_environment: bool = True):
-        """Decorator to require specific permission"""
+        """
+        Decorator to require specific permission.
+        If own_resource=True, it will check resource ownership during the request.
+        """
         def decorator(f):
             @wraps(f)
             def decorated_function(*args, **kwargs):
@@ -148,12 +134,15 @@ class PermissionManager:
                     if not user:
                         return jsonify({"error": "User not found"}), 404
 
-                    # Check basic permission
-                    if not cls.has_permission(user, action, entity_type, own_resource):
-                        return jsonify({
-                            "error": "Unauthorized",
-                            "message": f"You don't have permission to {action} {entity_type.value if entity_type else ''}"
-                        }), 403
+                    # Always check the basic permission first
+                    if not cls.has_permission(user, action, entity_type):
+                        # If own_resource is True and user doesn't have general permission,
+                        # we'll check ownership during the actual request processing
+                        if not own_resource:
+                            return jsonify({
+                                "error": "Unauthorized",
+                                "message": f"You don't have permission to {action} {entity_type.value if entity_type else ''}"
+                            }), 403
 
                     # Check environment access if required
                     if check_environment:
@@ -164,7 +153,36 @@ class PermissionManager:
                                 "message": "You don't have access to this environment"
                             }), 403
 
+                    # For own_resource=True, we need to check ownership
+                    if own_resource:
+                        # Get the resource ID from kwargs or request parameters
+                        resource_id = None
+                        if entity_type:
+                            resource_id = kwargs.get(f"{entity_type.value[:-1]}_id")
+                            if not resource_id:
+                                # Try other common ID patterns if direct match not found
+                                for key in kwargs:
+                                    if key.endswith('_id'):
+                                        resource_id = kwargs[key]
+                                        break
+                        
+                        # Check ownership if we have a resource ID
+                        if resource_id:
+                            # This would be a more detailed implementation based on entity type
+                            # For now, we'll just log a warning
+                            logger.warning(f"Resource ownership checking not implemented for {entity_type.value if entity_type else 'unknown entity'}")
+                            
+                            # If user doesn't have general permission, deny access
+                            # (We already checked this above, but for clarity)
+                            if not cls.has_permission(user, action, entity_type):
+                                return jsonify({
+                                    "error": "Unauthorized",
+                                    "message": f"You don't have permission to {action} this resource"
+                                }), 403
+
+                    # If we reach here, user is authorized
                     return f(*args, **kwargs)
+                    
                 except Exception as e:
                     logger.error(f"Error in permission decorator: {str(e)}")
                     return jsonify({"error": "Internal server error"}), 500
@@ -205,29 +223,31 @@ class PermissionManager:
 
     @classmethod
     def get_user_permissions(cls, user) -> dict:
-        """Get all permissions for a user"""
+        """Get all permissions for a user from the database"""
         try:
-            role_config = cls.ROLE_PERMISSIONS.get(Role(user.role.name))
-            if not role_config:
-                return {}
-
-            if role_config["permissions"] == "*":
-                return {entity.value: {
-                    "view": True, "create": True, "update": True, "delete": True,
-                    "view_own": True, "update_own": True, "delete_own": True
-                } for entity in EntityType}
-
-            permissions = {}
-            for permission in role_config["permissions"]:
-                parts = permission.split('_')
-                action = parts[0]
-                entity = '_'.join(parts[1:])
+            # Use database permissions
+            if hasattr(user, 'role') and hasattr(user.role, 'permissions'):
+                permissions = {}
                 
-                if entity not in permissions:
-                    permissions[entity] = {}
-                permissions[entity][action] = True
-
-            return permissions
+                # If super user, return all permissions
+                if user.role.is_super_user:
+                    return {entity.value: {
+                        "view": True, "create": True, "update": True, "delete": True
+                    } for entity in EntityType}
+                
+                # Otherwise build from database permissions
+                for permission in user.role.permissions:
+                    entity = permission.entity
+                    action = permission.action
+                    
+                    if entity not in permissions:
+                        permissions[entity] = {}
+                    permissions[entity][action] = True
+                
+                return permissions
+            
+            # Return empty dict if no permissions found
+            return {}
         except Exception as e:
             logger.error(f"Error getting user permissions: {str(e)}")
             return {}

@@ -34,10 +34,10 @@ class RoleService(BaseService):
             db.session.rollback()
             if "unique constraint" in str(e.orig).lower():
                 return None, "Role name already exists"
-            return None, str(e)
+            return None, "Role name already exists"
         except Exception as e:
             db.session.rollback()
-            return None, str(e)
+            return None, "Error creating role"
 
     @staticmethod
     def get_role(role_id: int) -> Optional[Role]:
@@ -74,6 +74,56 @@ class RoleService(BaseService):
     def get_all_roles() -> list[Role]:
         """Get all non-deleted roles"""
         return Role.query.filter_by(is_deleted=False).order_by(Role.id).all()
+    
+    @staticmethod
+    def get_batch(page=1, per_page=50, **filters):
+        """
+        Get batch of roles with pagination directly from database
+        
+        Args:
+            page: Page number (starts from 1)
+            per_page: Number of items per page
+            **filters: Optional filters
+            
+        Returns:
+            tuple: (total_count, roles)
+        """
+        try:
+            # Calculate offset
+            offset = (page - 1) * per_page if page > 0 and per_page > 0 else 0
+            
+            # Build base query
+            query = Role.query
+            
+            # Apply filters
+            include_deleted = filters.get('include_deleted', False)
+            if not include_deleted:
+                query = query.filter(Role.is_deleted == False)
+            
+            is_super_user = filters.get('is_super_user')
+            if is_super_user is not None:
+                query = query.filter(Role.is_super_user == is_super_user)
+                
+            # Apply role-based access control
+            current_user = filters.get('current_user')
+            if current_user and not current_user.role.is_super_user:
+                # Non-admin users can't see super user roles
+                query = query.filter(Role.is_super_user == False)
+            
+            # Get total count
+            total_count = query.count()
+            
+            # Apply pagination
+            roles = query.order_by(Role.id).offset(offset).limit(per_page).all()
+            
+            # Convert to dictionary representation
+            roles_data = [role.to_dict() for role in roles]
+            
+            return total_count, roles_data
+            
+        except Exception as e:
+            logger.error(f"Error in role batch pagination service: {str(e)}")
+            return 0, []
 
     @staticmethod
     def update_role(role_id, **kwargs):

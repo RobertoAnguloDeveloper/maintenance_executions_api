@@ -20,6 +20,19 @@ class Role(TimestampMixin, SoftDeleteMixin, db.Model):
     def __repr__(self):
         return f'<Role {self.name}>'
     
+    def to_dict_basic(self) -> dict:
+        """Return dictionary with basic fields only"""
+        return {
+            'id': self.id,
+            'name': self.name,
+            'description': self.description,
+            'is_super_user': self.is_super_user,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            'is_deleted': self.is_deleted,
+            'deleted_at': self.deleted_at.isoformat() if self.deleted_at else None
+        }
+    
     def to_dict(self):
         return {
             'id': self.id,

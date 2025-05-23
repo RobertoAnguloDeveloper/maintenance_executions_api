@@ -34,6 +34,21 @@ class FormAnswerController:
     def get_all_form_answers():
         """Get a specific form answer"""
         return FormAnswerService.get_all_form_answers()
+    
+    @staticmethod
+    def get_batch(page=1, per_page=50, **filters):
+        """
+        Get batch of form answers with pagination
+        
+        Args:
+            page: Page number (starts from 1)
+            per_page: Number of items per page
+            **filters: Optional filters
+            
+        Returns:
+            tuple: (total_count, form_answers)
+        """
+        return FormAnswerService.get_batch(page, per_page, **filters)
 
     @staticmethod
     def get_form_answer(form_answer_id):

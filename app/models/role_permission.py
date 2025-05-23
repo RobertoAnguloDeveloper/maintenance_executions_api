@@ -20,6 +20,18 @@ class RolePermission(TimestampMixin, SoftDeleteMixin, db.Model):
     def __repr__(self):
         return f'<RolePermission id={self.id} RolePermission role_id={self.role_id} permission_id={self.permission_id}>'
     
+    def to_dict_basic(self) -> dict:
+        """Return dictionary with basic fields only"""
+        return {
+            'id': self.id,
+            'role_id': self.role_id,
+            'permission_id': self.permission_id,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            'is_deleted': self.is_deleted,
+            'deleted_at': self.deleted_at.isoformat() if self.deleted_at else None
+        }
+    
     def to_dict(self):
         return {
             'id': self.id,
@@ -31,6 +43,8 @@ class RolePermission(TimestampMixin, SoftDeleteMixin, db.Model):
             'permissions': {
                             "id": self.permission_id,
                             "name": self.permission.name if self.permission else None,
+                            "action": self.permission.action if self.permission else None,
+                            "entity": self.permission.entity if self.permission else None,
                             "description": self.permission.description if self.permission else None
                             },
             'created_at': self.created_at.isoformat() if self.created_at else None,

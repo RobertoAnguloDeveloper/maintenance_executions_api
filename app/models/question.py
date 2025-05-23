@@ -18,6 +18,20 @@ class Question(TimestampMixin, SoftDeleteMixin, db.Model):
     def __repr__(self):
         return f'<Question {self.text[:20]}...>'
     
+    def to_dict_basic(self) -> dict:
+        """Return dictionary with basic fields only"""
+        return {
+            'id': self.id,
+            'text': self.text,
+            'question_type_id': self.question_type_id,
+            'is_signature': self.is_signature,
+            'remarks': self.remarks,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            'is_deleted': self.is_deleted,
+            'deleted_at': self.deleted_at.isoformat() if self.deleted_at else None
+        }
+    
     def to_dict(self):
         return {
             'id': self.id,

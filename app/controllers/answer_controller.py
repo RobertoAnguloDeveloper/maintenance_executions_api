@@ -28,6 +28,21 @@ class AnswerController:
         Get all answers
         """
         return AnswerService.get_all_answers()
+    
+    @staticmethod
+    def get_batch(page=1, per_page=50, **filters):
+        """
+        Get batch of answers with pagination
+        
+        Args:
+            page: Page number (starts from 1)
+            per_page: Number of items per page
+            **filters: Optional filters
+            
+        Returns:
+            tuple: (total_count, answers)
+        """
+        return AnswerService.get_batch(page, per_page, **filters)
 
     @staticmethod
     def update_answer(answer_id, value=None, remarks=None):

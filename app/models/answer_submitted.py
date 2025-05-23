@@ -13,12 +13,34 @@ class AnswerSubmitted(TimestampMixin, SoftDeleteMixin, db.Model):
     question_type = db.Column(db.String(255), nullable=False)
     answer = db.Column(db.Text)
     form_submission_id = db.Column(db.Integer, db.ForeignKey('form_submissions.id'), nullable=False)
+    question_order = db.Column(db.Integer, nullable=True)  # Added question_order field
+    column = db.Column(db.Integer, nullable=True)
+    row = db.Column(db.Integer, nullable=True)
+    cell_content = db.Column(db.Text, nullable=True)
 
     # Relationships
     form_submission = db.relationship('FormSubmission', back_populates='answers_submitted')
 
     def __repr__(self):
         return f'<AnswerSubmitted {self.id}>'
+    
+    def to_dict_basic(self) -> dict:
+        """Return dictionary with basic fields only"""
+        return {
+            'id': self.id,
+            'question': self.question,
+            'question_type': self.question_type,
+            'answer': self.answer,
+            'form_submission_id': self.form_submission_id,
+            'question_order': self.question_order,  # Added question_order
+            'column': self.column,
+            'row': self.row,
+            'cell_content': self.cell_content,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            'is_deleted': self.is_deleted,
+            'deleted_at': self.deleted_at.isoformat() if self.deleted_at else None
+        }
 
     def to_dict(self):
         """Convert answer submission to dictionary representation"""
@@ -27,6 +49,10 @@ class AnswerSubmitted(TimestampMixin, SoftDeleteMixin, db.Model):
             'question': self.question,
             'question_type': self.question_type,
             'answer': self.answer,
+            'question_order': self.question_order,  # Added question_order
+            'column': self.column,
+            'row': self.row,
+            'cell_content': self.cell_content,
             'form_submission': {
                 "id": self.form_submission.id,
                 "submitted_by": self.form_submission.submitted_by,

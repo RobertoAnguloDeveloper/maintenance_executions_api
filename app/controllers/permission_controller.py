@@ -2,8 +2,8 @@ from app.services.permission_service import PermissionService
 
 class PermissionController:
     @staticmethod
-    def create_permission(name, description):
-        return PermissionService.create_permission(name, description)
+    def create_permission(name, action, entity, description):
+        return PermissionService.create_permission(name, action, entity, description)
 
     @staticmethod
     def get_permission(permission_id):
@@ -16,10 +16,25 @@ class PermissionController:
     @staticmethod
     def get_all_permissions():
         return PermissionService.get_all_permissions()
+    
+    @staticmethod
+    def get_batch(page=1, per_page=50, **filters):
+        """
+        Get batch of permissions with pagination
+        
+        Args:
+            page: Page number (starts from 1)
+            per_page: Number of items per page
+            **filters: Optional filters
+            
+        Returns:
+            tuple: (total_count, permissions)
+        """
+        return PermissionService.get_batch(page, per_page, **filters)
 
     @staticmethod
-    def update_permission(permission_id, name=None, description=None):
-        return PermissionService.update_permission(permission_id, name, description)
+    def update_permission(permission_id, name=None, action=None, entity=None, description=None):
+        return PermissionService.update_permission(permission_id, name, action, entity, description)
 
     @staticmethod
     def delete_permission(permission_id):

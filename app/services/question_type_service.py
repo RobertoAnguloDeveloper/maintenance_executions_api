@@ -63,7 +63,47 @@ class QuestionTypeService:
         if not include_deleted:
             query = query.filter(QuestionType.is_deleted == False)
             
-        return query.order_by(QuestionType.type).all()
+        return query.order_by(QuestionType.id).all()
+    
+    @staticmethod
+    def get_batch(page=1, per_page=50, **filters):
+        """
+        Get batch of question types with pagination directly from database
+        
+        Args:
+            page: Page number (starts from 1)
+            per_page: Number of items per page
+            **filters: Optional filters
+            
+        Returns:
+            tuple: (total_count, question_types)
+        """
+        try:
+            # Calculate offset
+            offset = (page - 1) * per_page if page > 0 and per_page > 0 else 0
+            
+            # Build base query
+            query = QuestionType.query
+            
+            # Apply filters
+            include_deleted = filters.get('include_deleted', False)
+            if not include_deleted:
+                query = query.filter(QuestionType.is_deleted == False)
+            
+            # Get total count
+            total_count = query.count()
+            
+            # Apply pagination
+            question_types = query.order_by(QuestionType.id).offset(offset).limit(per_page).all()
+            
+            # Convert to dictionary representation
+            question_types_data = [qt.to_dict() for qt in question_types]
+            
+            return total_count, question_types_data
+            
+        except Exception as e:
+            logger.error(f"Error in question type batch pagination service: {str(e)}")
+            return 0, []
 
     @staticmethod
     def get_question_type(type_id: int) -> Optional[QuestionType]:

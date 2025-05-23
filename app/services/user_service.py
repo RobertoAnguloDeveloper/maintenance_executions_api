@@ -85,6 +85,79 @@ class UserService(BaseService):
         except Exception as e:
             logger.error(f"Database error getting users: {str(e)}", exc_info=True)
             raise
+        
+    @staticmethod
+    def get_batch(page=1, per_page=50, **filters):
+        """
+        Get batch of users with pagination directly from database
+        
+        Args:
+            page: Page number (starts from 1)
+            per_page: Number of items per page
+            **filters: Optional filters
+            
+        Returns:
+            tuple: (total_count, users)
+        """
+        try:
+            # Calculate offset
+            offset = (page - 1) * per_page if page > 0 and per_page > 0 else 0
+            
+            # Build base query with joins for efficiency
+            query = User.query.options(
+                joinedload(User.role),
+                joinedload(User.environment)
+            )
+            
+            # Apply filters
+            include_deleted = filters.get('include_deleted', False)
+            if not include_deleted:
+                query = query.filter(User.is_deleted == False)
+            
+            role_id = filters.get('role_id')
+            if role_id:
+                query = query.filter(User.role_id == role_id)
+                
+            environment_id = filters.get('environment_id')
+            if environment_id:
+                query = query.filter(User.environment_id == environment_id)
+            
+            # Get total count
+            total_count = query.count()
+            
+            # Apply pagination
+            users = query.order_by(User.id).offset(offset).limit(per_page).all()
+            
+            # Convert to dictionary representation
+            users_data = [
+                user.to_dict(
+                    include_details=True, 
+                    include_deleted=include_deleted
+                ) for user in users
+            ]
+            
+            return total_count, users_data
+            
+        except Exception as e:
+            logger.error(f"Error in user batch pagination service: {str(e)}")
+            return 0, []
+        
+    @staticmethod
+    def get_users_compact_list(include_deleted=False):
+        """Get all users for compact list view (without permissions)"""
+        try:
+            query = User.query.options(
+                joinedload(User.role),
+                joinedload(User.environment)
+            )
+            
+            if not include_deleted:
+                query = query.filter(User.is_deleted == False)
+                
+            return query.order_by(User.username).all()
+        except Exception as e:
+            logger.error(f"Database error getting compact users list: {str(e)}", exc_info=True)
+            raise
     
     @staticmethod
     def get_all_users_with_relations(include_deleted=False):
@@ -218,80 +291,6 @@ class UserService(BaseService):
                 'attachments': 0,
                 'answers_submitted': 0
             }
-
-            # 1. Soft delete forms created by user
-            forms = Form.query.filter_by(
-                user_id=user_id,
-                is_deleted=False
-            ).all()
-
-            for form in forms:
-                # Soft delete the form
-                form.soft_delete()
-                deletion_stats['forms'] += 1
-
-                # 2. Soft delete form questions
-                form_questions = FormQuestion.query.filter_by(
-                    form_id=form.id,
-                    is_deleted=False
-                ).all()
-                
-                for fq in form_questions:
-                    fq.soft_delete()
-                    deletion_stats['form_questions'] += 1
-
-                # 3. Soft delete form submissions and related data
-                submissions = FormSubmission.query.filter_by(
-                    form_id=form.id,
-                    is_deleted=False
-                ).all()
-
-                for submission in submissions:
-                    # Soft delete submission
-                    submission.soft_delete()
-                    deletion_stats['form_submissions'] += 1
-
-                    # 4. Soft delete attachments
-                    attachments = Attachment.query.filter_by(
-                        form_submission_id=submission.id,
-                        is_deleted=False
-                    ).all()
-                    
-                    for attachment in attachments:
-                        attachment.soft_delete()
-                        deletion_stats['attachments'] += 1
-
-                    # 5. Soft delete submitted answers
-                    answers_submitted = AnswerSubmitted.query.filter_by(
-                        form_submissions_id=submission.id,
-                        is_deleted=False
-                    ).all()
-                    
-                    for answer in answers_submitted:
-                        answer.soft_delete()
-                        deletion_stats['answers_submitted'] += 1
-
-            # 6. Soft delete submissions made by this user
-            user_submissions = FormSubmission.query.filter_by(
-                submitted_by=user.username,
-                is_deleted=False
-            ).all()
-
-            for submission in user_submissions:
-                if not submission.is_deleted:  # Check if not already deleted from form deletion
-                    submission.soft_delete()
-                    deletion_stats['form_submissions'] += 1
-
-                    # Soft delete related attachments and answers if not already deleted
-                    for attachment in submission.attachments:
-                        if not attachment.is_deleted:
-                            attachment.soft_delete()
-                            deletion_stats['attachments'] += 1
-
-                    for answer in submission.answers_submitted:
-                        if not answer.is_deleted:
-                            answer.soft_delete()
-                            deletion_stats['answers_submitted'] += 1
 
             # Finally soft delete the user
             user.soft_delete()

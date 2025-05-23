@@ -29,12 +29,24 @@ def register_user():
         required_fields = ['first_name', 'last_name', 'email', 'contact_number', 'username', 'password', 'role_id', 'environment_id']
         if not all(field in data for field in required_fields):
             return jsonify({"error": "Missing required fields"}), 400
+        
+        # Validate username
+        if data['username'].isspace():
+            return jsonify({"error": "Please write a username"}), 400
+        
+        # Validate username
+        if len(data['username']) < 4:
+            return jsonify({"error": "Please write a valid username"}), 400
+        
+        # Validate password
+        if data['password'].isspace():
+            return jsonify({"error": "Please write a password"}), 400
 
         # Validate password
         if len(data['password']) < 8:
             return jsonify({"error": "Password must be at least 8 characters long"}), 400
-
-        # Role-based validation
+        
+                # Role-based validation
         if not current_user_obj.role.is_super_user:
             # Site Managers can only create users in their environment
             if data['environment_id'] != current_user_obj.environment_id:
@@ -83,6 +95,35 @@ def login():
     except Exception as e:
         logger.error(f"Error during login: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
+    
+    
+@user_bp.route('/logout', methods=['POST'])
+def logout():
+    """User logout endpoint - attempts to blocklist token"""
+    try:
+        auth_header = request.headers.get('Authorization', '')
+        token = None
+        if auth_header.startswith('Bearer '):
+            token = auth_header[7:] # Extract the raw token string
+
+        # Call the controller/service, passing the raw token string
+        success, message = UserController.logout_user(token=token)
+
+        # Always return success to the client
+        if not success:
+             logger.warning(f"Server-side blocklisting failed during logout: {message}")
+
+        return jsonify({
+            "message": "Successfully logged out", # Consistent message
+            "status": "success"
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error during logout route execution: {str(e)}", exc_info=True)
+        return jsonify({
+            "message": "Successfully logged out (encountered server error)",
+            "status": "success"
+        }), 200
 
 @user_bp.route('', methods=['GET'])
 @jwt_required()
@@ -104,6 +145,7 @@ def get_all_users():
             else:
                 # Non-admin users only see active users in their environment
                 users = UserController.get_users_by_environment(current_user_obj.environment_id)
+                
 
             return jsonify([
                 user.to_dict(
@@ -118,6 +160,154 @@ def get_all_users():
 
     except Exception as e:
         logger.error(f"Error in get_all_users: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
+    
+@user_bp.route('/batch', methods=['GET'])
+@jwt_required()
+@PermissionManager.require_permission(action="view", entity_type=EntityType.USERS)
+def get_batch_users():
+    """Get batch of users with pagination using compact format"""
+    try:
+        # Get pagination parameters
+        page = request.args.get('page', type=int, default=1)
+        per_page = request.args.get('per_page', type=int, default=50)
+        
+        # Get filter parameters
+        include_deleted = request.args.get('include_deleted', '').lower() == 'true'
+        role_id = request.args.get('role_id', type=int)
+        environment_id = request.args.get('environment_id', type=int)
+        
+        # Apply role-based access control
+        current_user = get_jwt_identity()
+        user = AuthService.get_current_user(current_user)
+        
+        if not user.role.is_super_user:
+            # Non-admin users can only see users in their environment
+            environment_id = user.environment_id
+            include_deleted = False
+        
+        # Call controller method with pagination
+        total_count, users_data = UserController.get_batch(
+            page=page,
+            per_page=per_page,
+            include_deleted=include_deleted,
+            role_id=role_id,
+            environment_id=environment_id
+        )
+        
+        # Transform the data to match the compact-list format
+        compact_users = []
+        for user in users_data:
+            compact_user = {
+                'id': user['id'],
+                'username': user['username'],
+                'first_name': user['first_name'],
+                'last_name': user['last_name'],
+                'full_name': f"{user['first_name']} {user['last_name']}",
+                'email': user['email'],
+                'contact_number': user['contact_number'],
+                'role': {
+                    'id': user['role']['id'] if user['role'] else None,
+                    'name': user['role']['name'] if user['role'] else None,
+                    'description': user['role']['description'] if user['role'] else None,
+                    'is_super_user': user['role']['is_super_user'] if user['role'] else None
+                },
+                'environment': {
+                    'id': user['environment']['id'] if user['environment'] else None,
+                    'name': user['environment']['name'] if user['environment'] else None,
+                    'description': user['environment']['description'] if user['environment'] else None
+                }
+            }
+            
+            # Include deleted status for admins
+            if user.get('is_deleted') is not None and user.role.is_super_user:
+                compact_user['is_deleted'] = user['is_deleted']
+                
+            compact_users.append(compact_user)
+        
+        # Calculate total pages
+        total_pages = (total_count + per_page - 1) // per_page if per_page > 0 else 0
+        
+        return jsonify({
+            "metadata": {
+                "total_items": total_count,
+                "total_pages": total_pages,
+                "current_page": page,
+                "per_page": per_page,
+            },
+            "items": compact_users
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error getting batch of users: {str(e)}")
+        return jsonify({
+            "error": "Internal server error",
+            "details": str(e)
+        }), 500
+    
+@user_bp.route('/compact-list', methods=['GET'])
+@jwt_required()
+@PermissionManager.require_permission(action="view", entity_type=EntityType.USERS)
+def get_all_users_compact_list():
+    """Get all users with details but without permissions"""
+    try:
+        current_user = get_jwt_identity()
+        current_user_obj = AuthService.get_current_user(current_user)
+        if not current_user_obj:
+            return jsonify({"error": "User not found"}), 404
+
+        # Only admins can see deleted users
+        include_deleted = (current_user_obj.role.is_super_user and 
+                         request.args.get('include_deleted', '').lower() == 'true')
+
+        try:
+            if current_user_obj.role.is_super_user:
+                users = UserController.get_users_compact_list(include_deleted=include_deleted)
+            else:
+                # Non-admin users only see active users in their environment
+                users = UserController.get_users_by_environment(current_user_obj.environment_id)
+                
+            # Create compact representation manually
+            compact_users = []
+            for user in users:
+                active_role = user.role if user.role and not user.role.is_deleted else None
+                active_environment = user.environment if user.environment and not user.environment.is_deleted else None
+                
+                user_dict = {
+                    'id': user.id,
+                    'username': user.username,
+                    'first_name': user.first_name,
+                    'last_name': user.last_name,
+                    'full_name': f"{user.first_name} {user.last_name}",
+                    'email': user.email,
+                    'contact_number': user.contact_number,
+                    'role': {
+                        'id': active_role.id if active_role else None,
+                        'name': active_role.name if active_role else None,
+                        'description': active_role.description if active_role else None,
+                        'is_super_user': active_role.is_super_user if active_role else None
+                    },
+                    'environment': {
+                        'id': active_environment.id if active_environment else None,
+                        'name': active_environment.name if active_environment else None,
+                        'description': active_environment.description if active_environment else None
+                    }
+                }
+                
+                # Include deleted status for admins
+                if current_user_obj.role.is_super_user:
+                    user_dict['is_deleted'] = user.is_deleted
+                
+                compact_users.append(user_dict)
+                
+            return jsonify(compact_users), 200
+
+        except Exception as e:
+            logger.error(f"Database error while fetching users: {str(e)}")
+            return jsonify({"error": f"Database error: {str(e)}"}), 500
+
+    except Exception as e:
+        logger.error(f"Error in get_all_users_compact_list: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
     
 @user_bp.route('/byRole/<int:role_id>', methods=['GET'])
@@ -189,16 +379,35 @@ def search_users():
 
 @user_bp.route('/<int:user_id>', methods=['GET'])
 @jwt_required()
+@PermissionManager.require_permission(action="view", entity_type=EntityType.USERS)
 def get_user(user_id):
-    user = UserController.get_user(user_id)
-    if user:
-        return jsonify({
-            "id": user.id,
-            "username": user.username,
-            "role_id": user.role_id,
-            "environment_id": user.environment_id
-        }), 200
-    return jsonify({"error": "User not found"}), 404
+    """Get user with complete details"""
+    try:
+        current_user = get_jwt_identity()
+        current_user_obj = AuthService.get_current_user(current_user)
+        
+        user = UserController.get_user(user_id)
+        if not user:
+            return jsonify({"error": "User not found"}), 404
+            
+        # Role-based access control
+        if not current_user_obj.role.is_super_user:
+            # Can only view users in same environment
+            if user.environment_id != current_user_obj.environment_id:
+                return jsonify({"error": "Cannot view users from other environments"}), 403
+                
+        # Include details based on role
+        include_details = True
+        include_deleted = current_user_obj.role.is_super_user
+        
+        return jsonify(user.to_dict(
+            include_details=include_details,
+            include_deleted=include_deleted
+        )), 200
+            
+    except Exception as e:
+        logger.error(f"Error getting user {user_id}: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
 
 @user_bp.route('/<int:user_id>', methods=['PUT'])
 @jwt_required()

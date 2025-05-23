@@ -17,7 +17,9 @@ class Attachment(TimestampMixin, SoftDeleteMixin, db.Model):
     file_type = db.Column(db.String(50), nullable=False)
     file_path = db.Column(db.String(255), nullable=False)
     is_signature = db.Column(db.Boolean, nullable=False, default=False)
-
+    signature_position = db.Column(db.String(255), nullable=True)
+    signature_author = db.Column(db.String(255), nullable=True)
+    
     # Relationships
     form_submission = db.relationship('FormSubmission', back_populates='attachments')
     
@@ -48,14 +50,33 @@ class Attachment(TimestampMixin, SoftDeleteMixin, db.Model):
         return f'<Attachment {self.id}: {self.file_type}>'
 
     def to_dict(self):
+        """Convert attachment to dictionary representation"""
         return {
             'id': self.id,
             'form_submission_id': self.form_submission_id,
             'file_type': self.file_type,
             'file_path': self.file_path,
             'is_signature': self.is_signature,
+            'signature_position': self.signature_position,
+            'signature_author': self.signature_author,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
+        }
+        
+    def to_dict_basic(self) -> dict:
+        """Return dictionary with basic fields only"""
+        return {
+            'id': self.id,
+            'form_submission_id': self.form_submission_id,
+            'file_type': self.file_type,
+            'file_path': self.file_path,
+            'is_signature': self.is_signature,
+            'signature_position': self.signature_position,
+            'signature_author': self.signature_author,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            'is_deleted': self.is_deleted,
+            'deleted_at': self.deleted_at.isoformat() if self.deleted_at else None
         }
 
     @classmethod

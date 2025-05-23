@@ -71,6 +71,21 @@ class QuestionController:
         Get all questions
         """
         return QuestionService.get_all_questions()
+    
+    @staticmethod
+    def get_batch(page=1, per_page=50, **filters):
+        """
+        Get batch of questions with pagination
+        
+        Args:
+            page: Page number (starts from 1)
+            per_page: Number of items per page
+            **filters: Optional filters
+            
+        Returns:
+            tuple: (total_count, questions)
+        """
+        return QuestionService.get_batch(page, per_page, **filters)
 
     @staticmethod
     def update_question(user, question_id, **kwargs):

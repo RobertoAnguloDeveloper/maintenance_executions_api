@@ -21,6 +21,9 @@ class Form(TimestampMixin, SoftDeleteMixin, db.Model):
 
     # Relationships
     creator = db.relationship('User', back_populates='created_forms')
+    report_templates = db.relationship('ReportTemplate', back_populates='form',
+                                        cascade='all, delete-orphan',
+                                        order_by='ReportTemplate.created_at.desc()')
     form_questions = db.relationship('FormQuestion', back_populates='form', 
                                    cascade='all, delete-orphan',
                                    order_by='FormQuestion.order_number')
@@ -29,6 +32,20 @@ class Form(TimestampMixin, SoftDeleteMixin, db.Model):
 
     def __repr__(self) -> str:
         return f'<Form {self.title}>'
+    
+    def to_dict_basic(self) -> dict:
+        """Return dictionary with basic fields only"""
+        return {
+            'id': self.id,
+            'title': self.title,
+            'description': self.description,
+            'user_id': self.user_id,
+            'is_public': self.is_public,
+            'created_at': self._format_timestamp(self.created_at),
+            'updated_at': self._format_timestamp(self.updated_at),
+            'is_deleted': self.is_deleted,
+            'deleted_at': self._format_timestamp(self.deleted_at)
+        }
 
     def _get_creator_dict(self) -> Dict[str, Any]:
         """Get creator information as a dictionary."""
@@ -48,13 +65,24 @@ class Form(TimestampMixin, SoftDeleteMixin, db.Model):
                             }
         }
 
+    def _get_simplified_creator_dict(self) -> Dict[str, Any]:
+        """Get simplified creator information as a dictionary for batch responses."""
+        if not self.creator:
+            return None
+            
+        return {
+            'id': self.creator.id,
+            'fullname': self.creator.first_name+" "+self.creator.last_name
+        }
+
     def _get_submissions_count(self) -> int:
         """Get count of submissions for this form."""
         from app.models.form_submission import FormSubmission
         return FormSubmission.query.filter_by(form_id=str(self.id), is_deleted=False).count()
 
-
-    # app/models/form.py
+    def _get_questions_count(self) -> int:
+        """Get count of non-deleted questions for this form."""
+        return len([q for q in self.form_questions if not q.is_deleted])
 
     def _get_question_answers(self, form_question) -> List[Dict[str, Any]]:
         """
@@ -73,6 +101,10 @@ class Form(TimestampMixin, SoftDeleteMixin, db.Model):
             ).filter_by(
                 form_question_id=form_question.id,
                 is_deleted=False  # Add soft delete filter
+            ).join(
+                Answer, FormAnswer.answer_id == Answer.id  # Join with Answer table
+            ).order_by(
+                Answer.id  # Order by Answer ID to maintain consistent order
             ).all()
 
             # Create a dictionary of unique answers based on answer_id
@@ -85,7 +117,8 @@ class Form(TimestampMixin, SoftDeleteMixin, db.Model):
                         'value': form_answer.answer.value
                     }
 
-            return list(unique_answers.values())
+            # Return a list of answers ordered by answer ID
+            return [unique_answers[answer_id] for answer_id in sorted(unique_answers.keys())]
 
         except Exception as e:
             logger.error(f"Error getting answers for question {form_question.id}: {str(e)}")
@@ -111,7 +144,7 @@ class Form(TimestampMixin, SoftDeleteMixin, db.Model):
         }
 
         # Add possible answers only for choice-type questions
-        if question_type in ['checkbox', 'multiple_choices']:
+        if question_type in ['checkbox', 'multiple_choices','table', 'dropdown']:
             formatted_question['possible_answers'] = self._get_question_answers(form_question)
 
         return formatted_question
@@ -137,6 +170,24 @@ class Form(TimestampMixin, SoftDeleteMixin, db.Model):
             'created_by': self._get_creator_dict(),
             'questions': self._get_questions_list(),
             'submissions_count': self._get_submissions_count()
+        }
+        
+    def to_batch_dict(self) -> Dict[str, Any]:
+        """
+        Convert form to simplified dictionary representation for batch responses.
+        Returns only the essential attributes needed for the forms/batch endpoint.
+        """
+        return {
+            'id': self.id,
+            'title': self.title,
+            'description': self.description,
+            'is_public': self.is_public,
+            'created_at': self._format_timestamp(self.created_at),
+            'updated_at': self._format_timestamp(self.updated_at),
+            'created_by': self._get_simplified_creator_dict(),
+            'questions_count': self._get_questions_count(),
+            'submissions_count': self._get_submissions_count()
+            # 'is_editable' will be added in the controller/service
         }
 
     @classmethod

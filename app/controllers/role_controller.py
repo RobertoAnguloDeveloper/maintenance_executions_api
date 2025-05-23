@@ -19,6 +19,22 @@ class RoleController:
     @staticmethod
     def get_all_roles():
         return RoleService.get_all_roles()
+    
+    @staticmethod
+    def get_batch(page=1, per_page=50, **filters):
+        """
+        Get batch of roles with pagination
+        
+        Args:
+            page: Page number (starts from 1)
+            per_page: Number of items per page
+            **filters: Optional filters
+            
+        Returns:
+            tuple: (total_count, roles)
+        """
+        return RoleService.get_batch(page, per_page, **filters)
+
 
     @staticmethod
     def update_role(role_id, **kwargs):

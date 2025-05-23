@@ -17,11 +17,13 @@ class PermissionService(BaseService):
         super().__init__(Permission)
     
     @staticmethod
-    def create_permission(name, description):
+    def create_permission(name, action, entity, description):
         try:
             current_time = datetime.utcnow()
             new_permission = Permission(
-                name=name, 
+                name=name,
+                action=action,
+                entity=entity, 
                 description=description,
                 created_at=current_time,
                 updated_at=current_time
@@ -72,6 +74,8 @@ class PermissionService(BaseService):
 
                 permission = Permission(
                     name=name,
+                    action=data.get('action'),
+                    entity=data.get('entity'),
                     description=data.get('description')
                 )
                 db.session.add(permission)
@@ -170,18 +174,76 @@ class PermissionService(BaseService):
 
             logger.info(f"Number of permissions found: {len(permissions)}")
             for perm in permissions:
-                logger.info(f"Permission: id={perm.id}, name={perm.name}")
+                logger.info(f"Permission: id={perm.id}, name={perm.name}, action={perm.action}, entity={perm.entity}, description={perm.description}")
             return permissions
         except Exception as e:
             logger.error(f"Error when getting all permissions: {str(e)}")
             return []
+        
+    @staticmethod
+    def get_batch(page=1, per_page=50, **filters):
+        """
+        Get batch of permissions with pagination directly from database
+        
+        Args:
+            page: Page number (starts from 1)
+            per_page: Number of items per page
+            **filters: Optional filters
+            
+        Returns:
+            tuple: (total_count, permissions)
+        """
+        try:
+            # Calculate offset
+            offset = (page - 1) * per_page if page > 0 and per_page > 0 else 0
+            
+            # Build base query
+            query = Permission.query
+            
+            # Apply filters
+            include_deleted = filters.get('include_deleted', False)
+            if not include_deleted:
+                query = query.filter(Permission.is_deleted == False)
+            
+            action = filters.get('action')
+            if action:
+                query = query.filter(Permission.action == action)
+                
+            entity = filters.get('entity')
+            if entity:
+                query = query.filter(Permission.entity == entity)
+                
+            # Apply role-based access control
+            current_user = filters.get('current_user')
+            if current_user and not current_user.role.is_super_user:
+                # Non-admin users can't see admin-specific permissions
+                query = query.filter(~Permission.name.startswith('admin_'))
+            
+            # Get total count
+            total_count = query.count()
+            
+            # Apply pagination
+            permissions = query.order_by(Permission.id).offset(offset).limit(per_page).all()
+            
+            # Convert to dictionary representation
+            permissions_data = [permission.to_dict() for permission in permissions]
+            
+            return total_count, permissions_data
+            
+        except Exception as e:
+            logger.error(f"Error in permission batch pagination service: {str(e)}")
+            return 0, []
 
     @staticmethod
-    def update_permission(permission_id, name=None, description=None):
+    def update_permission(permission_id, name=None, action=None, entity=None, description=None):
         permission = Permission.query.get(permission_id)
         if permission:
             if name:
                 permission.name = name
+            if action is not None:
+                permission.action = action
+            if entity is not None:
+                permission.entity = entity
             if description is not None:
                 permission.description = description
             try:

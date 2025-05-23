@@ -71,7 +71,7 @@ class FormService(BaseService):
                 return query.order_by(Form.created_at.desc()).all()
             
             # For supervisors and site managers, see forms in their environment plus public forms
-            elif user.role.name in [RoleType.SUPERVISOR, RoleType.SITE_MANAGER]:
+            elif user.role.name in [RoleType.SUPERVISOR, RoleType.SITE_MANAGER, RoleType.TECHNICIAN]:
                 return (query.filter(
                     db.or_(
                         Form.is_public == True,
@@ -88,6 +88,104 @@ class FormService(BaseService):
         except Exception as e:
             logger.error(f"Error in get_all_forms: {str(e)}")
             raise
+        
+    @staticmethod
+    def get_batch(page=1, per_page=50, **filters):
+        """
+        Get batch of forms with pagination directly from database
+        
+        Args:
+            page: Page number (starts from 1)
+            per_page: Number of items per page
+            **filters: Optional filters including only_editable
+                
+        Returns:
+            tuple: (total_count, forms)
+        """
+        try:
+            # Build base query with joins for efficiency
+            query = Form.query.options(
+                joinedload(Form.creator).joinedload(User.environment),
+                joinedload(Form.form_questions).joinedload(FormQuestion.question).joinedload(Question.question_type)
+            )
+            
+            # Apply filters
+            include_deleted = filters.get('include_deleted', False)
+            if not include_deleted:
+                query = query.filter(Form.is_deleted == False)
+            
+            is_public = filters.get('is_public')
+            if is_public is not None:
+                query = query.filter(Form.is_public == is_public)
+                
+            user_id = filters.get('user_id')
+            if user_id:
+                query = query.filter(Form.user_id == user_id)
+                
+            environment_id = filters.get('environment_id')
+            if environment_id:
+                query = query.join(User, User.id == Form.user_id).filter(User.environment_id == environment_id)
+            
+            # Apply role-based access control
+            current_user = filters.get('current_user')
+            only_editable = filters.get('only_editable', False)
+            
+            if current_user:
+                if only_editable:
+                    # For admin users with only_editable=True, show all forms
+                    if current_user.role.is_super_user:
+                        # No additional filter needed, admins can edit all forms
+                        pass
+                    else:
+                        # Non-admin users can only edit their own forms
+                        query = query.filter(Form.user_id == current_user.id)
+                elif not current_user.role.is_super_user:
+                    if current_user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR, RoleType.TECHNICIAN]:
+                        # Site managers and supervisors can see public forms and forms from their environment
+                        query = query.filter(
+                            db.or_(
+                                Form.is_public == True,
+                                Form.creator.has(User.environment_id == current_user.environment_id)
+                            )
+                        )
+            
+            # Get total count
+            total_count = query.count()
+            
+            # Calculate total pages
+            total_pages = (total_count + per_page - 1) // per_page if per_page > 0 else 0
+            
+            # Ensure requested page is valid
+            if page > total_pages and total_pages > 0:
+                # If requested page exceeds total pages, use the last page
+                page = total_pages
+            elif page < 1:
+                # If page is less than 1, use the first page
+                page = 1
+                
+            # Calculate offset based on adjusted page number
+            offset = (page - 1) * per_page
+            
+            # Apply pagination with adjusted page
+            forms = query.order_by(Form.id).offset(offset).limit(per_page).all()
+            
+            # Convert to simplified dictionary representation using the new to_batch_dict method
+            forms_data = [form.to_batch_dict() for form in forms]
+            
+            # Add editable flag to each form
+            for form_data in forms_data:
+                if current_user.role.is_super_user:
+                    # Admin users can edit all forms
+                    form_data['is_editable'] = True
+                else:
+                    # Non-admin users can only edit their own forms
+                    form_data['is_editable'] = form_data['created_by']['id'] == current_user.id
+            
+            return total_count, forms_data
+                
+        except Exception as e:
+            logger.error(f"Error in form batch pagination service: {str(e)}")
+            return 0, []
 
     @staticmethod
     def get_form(form_id: int) -> Optional[Form]:
@@ -476,22 +574,54 @@ class FormService(BaseService):
 
     @classmethod
     def delete_form(cls, form_id: int) -> Tuple[bool, Union[Dict, str]]:
-        """Delete form and related data"""
+        """
+        Delete form while preserving related submission data.
+        This soft deletes the form but keeps submissions, attachments and submitted answers accessible.
+        """
         try:
             # Get the form with is_deleted=False check
             form = cls.get_form(form_id)
             if not form:
                 return False, "Form not found"
 
-            # Perform cascading soft delete
-            deletion_stats = cls._perform_cascading_delete(form)
-            
-            # Finally soft delete the form itself
-            form.soft_delete()
-            db.session.commit()
-            
-            logger.info(f"Form {form_id} and associated data deleted successfully")
-            return True, deletion_stats
+            # Start transaction
+            db.session.begin_nested()
+            try:
+                deletion_stats = {
+                    'form_questions': 0,
+                    'form_answers': 0
+                }
+                
+                # Soft delete form questions and their answers only
+                # NOT affecting submissions, attachments, or submitted answers
+                for form_question in FormQuestion.query.filter_by(
+                    form_id=form.id,
+                    is_deleted=False
+                ).all():
+                    form_question.soft_delete()
+                    deletion_stats['form_questions'] += 1
+
+                    # Soft delete form answers (template answers, not submitted answers)
+                    for form_answer in FormAnswer.query.filter_by(
+                        form_question_id=form_question.id,
+                        is_deleted=False
+                    ).all():
+                        form_answer.soft_delete()
+                        deletion_stats['form_answers'] += 1
+
+                # Soft delete the form itself only
+                form.soft_delete()
+                
+                # Commit changes
+                db.session.commit()
+                
+                logger.info(f"Form {form_id} deleted successfully while preserving submission data. "
+                        f"Stats: {deletion_stats}")
+                return True, deletion_stats
+                
+            except Exception as nested_exception:
+                db.session.rollback()
+                raise nested_exception
 
         except Exception as e:
             db.session.rollback()

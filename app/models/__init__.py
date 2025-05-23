@@ -12,6 +12,8 @@ from .form_answer import FormAnswer
 from .form_submission import FormSubmission
 from .answer_submitted import AnswerSubmitted
 from .attachment import Attachment
+from .token_blocklist import TokenBlocklist
+from .report_template import ReportTemplate
 
 __all__ = [
     'User',
@@ -27,5 +29,7 @@ __all__ = [
     'FormAnswer',
     'FormSubmission',
     'AnswerSubmitted',
-    'Attachment'
+    'Attachment',
+    'TokenBlocklist',
+    'ReportTemplate'
 ]

@@ -20,6 +20,21 @@ class EnvironmentController:
     def get_all_environments(include_deleted=False):
         """Get all environments with optional inclusion of deleted records"""
         return EnvironmentService.get_all_environments(include_deleted=include_deleted)
+    
+    @staticmethod
+    def get_batch(page=1, per_page=50, **filters):
+        """
+        Get batch of environments with pagination
+        
+        Args:
+            page: Page number (starts from 1)
+            per_page: Number of items per page
+            **filters: Optional filters
+            
+        Returns:
+            tuple: (total_count, environments)
+        """
+        return EnvironmentService.get_batch(page, per_page, **filters)
 
     @staticmethod
     def update_environment(environment_id, **kwargs):

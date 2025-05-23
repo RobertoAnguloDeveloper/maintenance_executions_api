@@ -2,6 +2,7 @@ from datetime import datetime
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.controllers.form_submission_controller import FormSubmissionController
+from app.models.user import User
 from app.services.auth_service import AuthService
 from app.utils.permission_manager import PermissionManager, EntityType, RoleType
 import logging
@@ -33,10 +34,19 @@ def create_submission():
                 if file_key in files:
                     answer['signature_file'] = files[file_key]
 
+        # Get submitted_at from request or use current time
+        submitted_at = None
+        if 'submitted_at' in data:
+            try:
+                submitted_at = datetime.fromisoformat(data['submitted_at'])
+            except (ValueError, TypeError):
+                return jsonify({"error": "Invalid submitted_at format. Use ISO format (YYYY-MM-DDTHH:MM:SS)"}), 400
+
         submission, error = FormSubmissionController.create_submission(
             form_id=int(data['form_id']),
             username=current_user,
-            answers_data=answers_data
+            answers_data=answers_data,
+            submitted_at=submitted_at
         )
 
         if error:
@@ -88,6 +98,110 @@ def get_all_submissions():
     except Exception as e:
         logger.error(f"Error getting submissions: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
+    
+@form_submission_bp.route('/compact-list', methods=['GET'])
+@jwt_required()
+@PermissionManager.require_permission(action="view", entity_type=EntityType.SUBMISSIONS)
+def get_all_submissions_compact_list():
+    """Get a compact list of submissions with minimal information"""
+    try:
+        current_user = get_jwt_identity()
+        user = AuthService.get_current_user(current_user)
+
+        # Build filters from query parameters
+        filters = {}
+        
+        # Form filter
+        form_id = request.args.get('form_id', type=int)
+        if form_id:
+            filters['form_id'] = form_id
+
+        # Date range filters
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        if start_date and end_date:
+            filters['date_range'] = {
+                'start': start_date,
+                'end': end_date
+            }
+            
+        # Get compact submissions list
+        compact_submissions = FormSubmissionController.get_all_submissions_compact(user, filters)
+
+        return jsonify({
+            'total_count': len(compact_submissions),
+            'filters_applied': filters,
+            'submissions': compact_submissions
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error getting compact submissions list: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
+    
+@form_submission_bp.route('/batch', methods=['GET'])
+@jwt_required()
+@PermissionManager.require_permission(action="view", entity_type=EntityType.SUBMISSIONS)
+def get_batch_form_submissions():
+    """Get batch of form submissions with pagination"""
+    try:
+        # Get pagination parameters
+        page = request.args.get('page', type=int, default=1)
+        per_page = request.args.get('per_page', type=int, default=50)
+        
+        # Get filter parameters
+        include_deleted = request.args.get('include_deleted', '').lower() == 'true'
+        form_id = request.args.get('form_id', type=int)
+        submitted_by = request.args.get('submitted_by')
+        
+        # Date range filters
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        date_range = None
+        if start_date and end_date:
+            date_range = {
+                'start': start_date,
+                'end': end_date
+            }
+        
+        # Apply role-based access control
+        current_user = get_jwt_identity()
+        user = AuthService.get_current_user(current_user)
+        
+        # Call controller method with pagination
+        total_count, form_submissions = FormSubmissionController.get_batch(
+            page=page,
+            per_page=per_page,
+            include_deleted=include_deleted,
+            form_id=form_id,
+            submitted_by=submitted_by,
+            date_range=date_range,
+            current_user=user
+        )
+        
+        # Calculate total pages
+        total_pages = (total_count + per_page - 1) // per_page if per_page > 0 else 0
+        
+        return jsonify({
+            "metadata": {
+                "total_items": total_count,
+                "total_pages": total_pages,
+                "current_page": page,
+                "per_page": per_page,
+                "filters_applied": {
+                    "form_id": form_id,
+                    "submitted_by": submitted_by,
+                    "start_date": start_date,
+                    "end_date": end_date
+                }
+            },
+            "items": form_submissions
+        }), 200
+    except Exception as e:
+        logger.error(f"Error getting batch of form submissions: {str(e)}")
+        return jsonify({
+            "error": "Internal server error",
+            "details": str(e)
+        }), 500
 
 @form_submission_bp.route('/<int:submission_id>', methods=['GET'])
 @jwt_required()
@@ -103,11 +217,17 @@ def get_submission(submission_id):
             return jsonify({"error": "Submission not found"}), 404
 
         # Access control
+        # 1. Technicians can only see their own submissions
+        # 2. Site managers and supervisors can see all submissions in their environment
+        # 3. Admin users can see all submissions
         if not user.role.is_super_user:
             if user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                if submission.form.creator.environment_id != user.environment_id:
+                # Site managers and supervisors can only see submissions from users in their environment
+                submitter = User.query.filter_by(username=submission.submitted_by).first()
+                if not submitter or submitter.environment_id != user.environment_id:
                     return jsonify({"error": "Unauthorized access"}), 403
             elif submission.submitted_by != current_user:
+                # Regular users can only see their own submissions
                 return jsonify({"error": "Unauthorized access"}), 403
 
         # Get answers with access control
@@ -154,6 +274,7 @@ def get_my_submissions():
         if form_id:
             filters['form_id'] = form_id
 
+        # This endpoint is for current user's submissions only
         submissions, error = FormSubmissionController.get_user_submissions(
             username=current_user,
             filters=filters
@@ -174,6 +295,94 @@ def get_my_submissions():
 
     except Exception as e:
         logger.error(f"Error getting user submissions: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
+
+@form_submission_bp.route('/<int:submission_id>/answers', methods=['GET'])
+@jwt_required()
+@PermissionManager.require_permission(action="view", entity_type=EntityType.SUBMISSIONS)
+def get_submission_answers(submission_id):
+    """Get all answers for a specific submission"""
+    try:
+        current_user = get_jwt_identity()
+        user = AuthService.get_current_user(current_user)
+
+        # First get the submission to perform access control
+        submission = FormSubmissionController.get_submission(submission_id)
+        if not submission:
+            return jsonify({"error": "Submission not found"}), 404
+            
+        # Access control
+        if not user.role.is_super_user:
+            if user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
+                # Site managers and supervisors can only see submissions from users in their environment
+                submitter = User.query.filter_by(username=submission.submitted_by).first()
+                if not submitter or submitter.environment_id != user.environment_id:
+                    return jsonify({"error": "Unauthorized access"}), 403
+            elif submission.submitted_by != current_user:
+                # Regular users can only see their own submissions
+                return jsonify({"error": "Unauthorized access"}), 403
+
+        answers, error = FormSubmissionController.get_submission_answers(
+            submission_id=submission_id,
+            current_user=current_user,
+            user_role=user.role.name
+        )
+
+        if error:
+            return jsonify({"error": error}), 400
+
+        return jsonify({
+            'submission_id': submission_id,
+            'total_answers': len(answers),
+            'answers': answers
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error getting submission answers: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
+    
+@form_submission_bp.route('/<int:submission_id>', methods=['PUT'])
+@jwt_required()
+@PermissionManager.require_permission(action="update", entity_type=EntityType.SUBMISSIONS)
+def update_submission(submission_id):
+    """Update an existing form submission"""
+    try:
+        current_user = get_jwt_identity()
+        user = AuthService.get_current_user(current_user)
+
+        # Handle multipart/form-data for signatures
+        data = request.form.to_dict() if request.form else request.get_json()
+        files = request.files.to_dict()
+
+        if not data:
+            return jsonify({"error": "No update data provided"}), 400
+
+        # Process answers data
+        answers_data = data.get('answers', [])
+        for answer in answers_data:
+            if answer.get('is_signature'):
+                file_key = f"signature_{answer.get('question_id')}"
+                if file_key in files:
+                    answer['signature_file'] = files[file_key]
+
+        submission, error = FormSubmissionController.update_submission(
+            submission_id=submission_id,
+            current_user=current_user,
+            user_role=user.role.name,
+            update_data=data,
+            answers_data=answers_data
+        )
+
+        if error:
+            return jsonify({"error": error}), 400
+
+        return jsonify({
+            "message": "Form submission updated successfully",
+            "submission": submission.to_dict()
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error updating submission {submission_id}: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
 
 @form_submission_bp.route('/<int:submission_id>', methods=['DELETE'])
@@ -201,32 +410,4 @@ def delete_submission(submission_id):
 
     except Exception as e:
         logger.error(f"Error deleting submission {submission_id}: {str(e)}")
-        return jsonify({"error": "Internal server error"}), 500
-
-@form_submission_bp.route('/<int:submission_id>/answers', methods=['GET'])
-@jwt_required()
-@PermissionManager.require_permission(action="view", entity_type=EntityType.SUBMISSIONS)
-def get_submission_answers(submission_id):
-    """Get all answers for a specific submission"""
-    try:
-        current_user = get_jwt_identity()
-        user = AuthService.get_current_user(current_user)
-
-        answers, error = FormSubmissionController.get_submission_answers(
-            submission_id=submission_id,
-            current_user=current_user,
-            user_role=user.role.name
-        )
-
-        if error:
-            return jsonify({"error": error}), 400
-
-        return jsonify({
-            'submission_id': submission_id,
-            'total_answers': len(answers),
-            'answers': answers
-        }), 200
-
-    except Exception as e:
-        logger.error(f"Error getting submission answers: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500

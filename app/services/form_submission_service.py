@@ -156,9 +156,9 @@ class FormSubmissionService:
                 return 0, []
 
             query = FormSubmission.query.options(
-                joinedload(FormSubmission.form), 
-                selectinload(FormSubmission.answers_submitted), 
-                selectinload(FormSubmission.attachments)      
+                joinedload(FormSubmission.form),
+                selectinload(FormSubmission.answers_submitted),
+                selectinload(FormSubmission.attachments)
             ).join(Form, FormSubmission.form_id == Form.id).filter(Form.is_deleted == False)
 
 
@@ -176,14 +176,17 @@ class FormSubmissionService:
                 if current_user.role.name == RoleType.TECHNICIAN:
                     query = query.filter(FormSubmission.submitted_by == current_user.username)
                 elif current_user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                    if User not in [j.entity.class_ for j in query._legacy_setup_joins]: 
-                         query = query.join(User, User.username == FormSubmission.submitted_by)
+                    # --- FIX STARTS HERE ---
+                    # Remove the check for _legacy_setup_joins and perform the join.
+                    # SQLAlchemy can handle joins, and we need this join for the filter below.
+                    query = query.join(User, User.username == FormSubmission.submitted_by)
+                    # --- FIX ENDS HERE ---
                     query = query.filter(User.environment_id == current_user.environment_id, User.is_deleted == False)
-            
+
             form_id_filter = filters.get('form_id')
             if form_id_filter:
                 query = query.filter(FormSubmission.form_id == form_id_filter)
-            
+
             submitted_by_filter = filters.get('submitted_by')
             if submitted_by_filter:
                 query = query.filter(FormSubmission.submitted_by == submitted_by_filter)
@@ -193,13 +196,13 @@ class FormSubmissionService:
                 if date_range.get('start'): query = query.filter(FormSubmission.submitted_at >= date_range['start'])
                 if date_range.get('end'): query = query.filter(FormSubmission.submitted_at <= date_range['end'])
 
-            total_count = query.count() 
+            total_count = query.count()
             total_pages = (total_count + per_page - 1) // per_page if per_page > 0 else 0
             page = max(1, min(page, total_pages if total_pages > 0 else 1))
             offset = (page - 1) * per_page
 
             form_submissions = query.order_by(FormSubmission.submitted_at.desc()).offset(offset).limit(per_page).all()
-            
+
             compact_submissions = []
             for sub in form_submissions:
                 sub_dict = {
@@ -207,11 +210,10 @@ class FormSubmissionService:
                     'form': {'id': sub.form.id, 'title': sub.form.title} if sub.form else None,
                     'submitted_at': sub.submitted_at.isoformat() if sub.submitted_at else None,
                     'submitted_by': sub.submitted_by,
-                    # Corrected: Use getattr to safely access 'status' or provide a default
-                    'status': getattr(sub, 'status', 'N/A'), 
-                    'answers_count': sum(1 for ans in sub.answers_submitted if not ans.is_deleted), 
-                    'attachments_count': sum(1 for att in sub.attachments if not att.is_deleted), 
-                    'is_editable': False 
+                    'status': getattr(sub, 'status', 'N/A'),
+                    'answers_count': sum(1 for ans in sub.answers_submitted if not ans.is_deleted),
+                    'attachments_count': sum(1 for att in sub.attachments if not att.is_deleted),
+                    'is_editable': False
                 }
                 if current_user:
                     is_super = current_user.role and current_user.role.is_super_user
@@ -221,7 +223,7 @@ class FormSubmissionService:
                         submitter_obj = User.query.filter_by(username=sub.submitted_by, is_deleted=False).first()
                         if submitter_obj and submitter_obj.environment_id == current_user.environment_id:
                             can_edit_based_on_role_and_env = True
-                    
+
                     time_limit_passed = (datetime.utcnow() - sub.submitted_at).days > 7 if sub.submitted_at else True
 
                     if is_super or \
@@ -229,9 +231,9 @@ class FormSubmissionService:
                        (can_edit_based_on_role_and_env and not time_limit_passed) :
                         sub_dict['is_editable'] = True
                 compact_submissions.append(sub_dict)
-            
+
             return total_count, compact_submissions
-                
+
         except Exception as e:
             logger.error(f"Error in FormSubmissionService.get_batch: {str(e)}", exc_info=True) #
             return 0, []
@@ -244,9 +246,9 @@ class FormSubmissionService:
         """
         try:
             submission = FormSubmission.query.options(
-                joinedload(FormSubmission.form), 
-                selectinload(FormSubmission.answers_submitted), 
-                selectinload(FormSubmission.attachments)      
+                joinedload(FormSubmission.form),
+                selectinload(FormSubmission.answers_submitted),
+                selectinload(FormSubmission.attachments)
             ).filter_by(id=submission_id, is_deleted=False).first()
 
             if not submission:
@@ -255,7 +257,7 @@ class FormSubmissionService:
 
             if not FormAssignmentService.check_user_access_to_form(current_user.id, submission.form_id):
                 logger.warning(f"User {current_user.username} denied access to form {submission.form_id} for submission {submission_id}.")
-                return None 
+                return None
 
             if not (current_user.role and current_user.role.is_super_user):
                 if current_user.role.name == RoleType.TECHNICIAN and submission.submitted_by != current_user.username:
@@ -266,7 +268,7 @@ class FormSubmissionService:
                     if not submitter or submitter.environment_id != current_user.environment_id:
                         logger.warning(f"User {current_user.username} (SiteMgr/Supervisor) denied access to submission {submission_id} from different environment.")
                         return None
-            
+
             logger.info(f"Submission ID {submission_id} retrieved successfully by user {current_user.username}.") #
             return submission
         except Exception as e:
@@ -276,7 +278,7 @@ class FormSubmissionService:
     @staticmethod
     def update_submission(
         submission_id: int,
-        current_user: User, 
+        current_user: User,
         update_data: Dict,
         answers_data: Optional[List[Dict]] = None,
         upload_path: Optional[str] = None
@@ -300,7 +302,7 @@ class FormSubmissionService:
 
 
             if answers_data:
-                from app.services.answer_submitted_service import AnswerSubmittedService 
+                from app.services.answer_submitted_service import AnswerSubmittedService
                 processed_answer_ids = []
                 for answer_data in answers_data:
                     answer_id = answer_data.get('id')
@@ -313,12 +315,12 @@ class FormSubmissionService:
                         db.session.rollback()
                         return None, f"Missing question_text or question_type_text for an answer during update."
 
-                    if answer_id: 
+                    if answer_id:
                         existing_answer = AnswerSubmitted.query.filter_by(id=answer_id, form_submission_id=submission_id, is_deleted=False).first()
                         if existing_answer:
                             _, error = AnswerSubmittedService.update_answer_submitted(
                                 answer_submitted_id=existing_answer.id,
-                                answer_text=ans_text, 
+                                answer_text=ans_text,
                                 question_order=answer_data.get('question_order'),
                                 column=answer_data.get('column'),
                                 row=answer_data.get('row'),
@@ -326,7 +328,7 @@ class FormSubmissionService:
                             )
                             if error: raise ValueError(f"Error updating answer ID {answer_id}: {error}")
                             processed_answer_ids.append(existing_answer.id)
-                    else: 
+                    else:
                         new_ans, error = AnswerSubmittedService.create_answer_submitted(
                             form_submission_id=submission.id, question_text=q_text, question_type_text=q_type_text,
                             answer_text=ans_text, question_order=answer_data.get('question_order'),
@@ -336,7 +338,7 @@ class FormSubmissionService:
                         )
                         if error: raise ValueError(f"Error creating new answer: {error}")
                         if new_ans: processed_answer_ids.append(new_ans.id)
-                
+
                 if update_data.get('delete_unprocessed_answers'):
                     AnswerSubmitted.query.filter(
                         AnswerSubmitted.form_submission_id == submission_id,
@@ -375,11 +377,11 @@ class FormSubmissionService:
     @staticmethod
     def get_submission_answers(submission_id: int, current_user: User) -> Tuple[List[Dict[str, Any]], Optional[str]]:
         """Get all active answers for a specific submission, if user has access to the submission."""
-        submission = FormSubmissionService.get_submission(submission_id, current_user) 
+        submission = FormSubmissionService.get_submission(submission_id, current_user)
         if not submission:
             return [], "Submission not found or access denied."
-        
-        answers_data = [ans.to_dict() for ans in submission.answers_submitted if not ans.is_deleted] 
+
+        answers_data = [ans.to_dict() for ans in submission.answers_submitted if not ans.is_deleted]
         return answers_data, None
 
     @staticmethod
@@ -388,7 +390,7 @@ class FormSubmissionService:
         submission = FormSubmissionService.get_submission(submission_id, current_user)
         if not submission:
             return None, "Submission not found or access denied to update status."
-        
+
         # Safely update status only if 'status' field exists
         if hasattr(submission, 'status'):
             try:

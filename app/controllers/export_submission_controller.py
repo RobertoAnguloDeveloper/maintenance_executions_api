@@ -4,6 +4,8 @@ from typing import Dict, Optional, Tuple, Any
 from flask import current_app
 from app.services.export_submission_service import ExportSubmissionService
 from app.services.form_submission_service import FormSubmissionService
+# Import AuthService to resolve user identity to user object
+from app.services.auth_service import AuthService
 from werkzeug.datastructures import FileStorage
 import logging
 
@@ -13,8 +15,8 @@ class ExportSubmissionController:
     @staticmethod
     def generate_pdf_export(
         submission_id: int,
-        current_user: Optional[str] = None, # Made Optional for consistency
-        user_role: Optional[str] = None,   # Made Optional for consistency
+        current_user: Optional[str] = None, # Username string
+        user_role: Optional[str] = None,
         header_image: Optional[FileStorage] = None,
         header_opacity: float = 1.0,
         header_size: Optional[float] = None,
@@ -24,20 +26,35 @@ class ExportSubmissionController:
         signatures_size: float = 100,
         signatures_alignment: str = "vertical",
         pdf_style_options: Optional[Dict[str, Any]] = None,
-        include_signatures: bool = True # Added to allow control if needed, defaults to True
+        include_signatures: bool = True
     ) -> Tuple[Optional[bytes], Optional[Dict], Optional[str]]:
         """
         Generate a PDF export for a given submission, handling both default and custom options.
-        All PDF exports now use the structured PDF generation service method for consistency.
         """
         try:
-            submission = FormSubmissionService.get_submission(submission_id)
+            # --- FIX STARTS HERE ---
+            if not current_user:
+                return None, None, "User identity is required for export authorization."
+            # Resolve user string to User object
+            user_obj = AuthService.get_current_user(current_user)
+            if not user_obj:
+                return None, None, f"User '{current_user}' not found for export authorization."
+
+            # Call get_submission with the User object
+            submission = FormSubmissionService.get_submission(
+                submission_id=submission_id,
+                current_user=user_obj
+            )
+            # --- FIX ENDS HERE ---
+
             if not submission:
-                return None, None, "Submission not found"
+                return None, None, "Submission not found or access denied"
 
             upload_path = current_app.config['UPLOAD_FOLDER']
 
             logger.debug(f"Controller: Calling ExportSubmissionService.export_structured_submission_to_pdf for sub ID {submission_id}")
+            # NOTE: ExportSubmissionService.export_structured_submission_to_pdf currently refetches
+            # the submission *without* auth. This is a potential issue but not the cause of the current error.
             pdf_buffer, error = ExportSubmissionService.export_structured_submission_to_pdf(
                 submission_id=submission_id,
                 upload_path=upload_path,
@@ -59,13 +76,13 @@ class ExportSubmissionController:
 
             submission_date = submission.submitted_at.strftime("%Y%m%d")
             form_name_safe = "".join(c if c.isalnum() else "_" for c in submission.form.title) # Sanitize form name
-            
+
             filename_parts = [form_name_safe, "submission", str(submission_id), submission_date]
             if pdf_style_options or header_image: # Add 'custom' if any customization is applied
                 filename_parts.append("custom")
-            
+
             filename = f"{'_'.join(filename_parts)}.pdf"
-            
+
             metadata = {
                 "filename": filename,
                 "mimetype": "application/pdf",
@@ -76,7 +93,6 @@ class ExportSubmissionController:
                 "options_applied": {
                     "custom_styles_provided": bool(pdf_style_options),
                     "header_image_provided": bool(header_image),
-                    # Add other relevant options if needed for metadata
                 }
             }
 
@@ -89,29 +105,45 @@ class ExportSubmissionController:
     @staticmethod
     def generate_docx_export(
         submission_id: int,
-        current_user: Optional[str] = None, # Made Optional
-        user_role: Optional[str] = None,   # Made Optional
+        current_user: Optional[str] = None, # Username string
+        user_role: Optional[str] = None,
         header_image: Optional[FileStorage] = None,
-        header_size: Optional[float] = None, 
-        header_width: Optional[float] = None, 
-        header_height: Optional[float] = None, 
+        header_size: Optional[float] = None,
+        header_width: Optional[float] = None,
+        header_height: Optional[float] = None,
         header_alignment: str = "center",
-        signatures_size: float = 100, 
+        signatures_size: float = 100,
         signatures_alignment: str = "vertical",
         style_options: Optional[Dict[str, Any]] = None,
-        include_signatures: bool = True # Added to allow control
+        include_signatures: bool = True
     ) -> Tuple[Optional[bytes], Optional[Dict], Optional[str]]:
         """
         Generate a DOCX export for a given submission, handling both default and custom options.
         """
         try:
-            submission = FormSubmissionService.get_submission(submission_id)
+            # --- FIX STARTS HERE ---
+            if not current_user:
+                return None, None, "User identity is required for export authorization."
+            # Resolve user string to User object
+            user_obj = AuthService.get_current_user(current_user)
+            if not user_obj:
+                return None, None, f"User '{current_user}' not found for export authorization."
+
+            # Call get_submission with the User object
+            submission = FormSubmissionService.get_submission(
+                submission_id=submission_id,
+                current_user=user_obj
+            )
+            # --- FIX ENDS HERE ---
+
             if not submission:
-                return None, None, "Submission not found"
+                return None, None, "Submission not found or access denied"
 
             upload_path = current_app.config['UPLOAD_FOLDER']
-            
+
             logger.debug(f"Controller: Calling ExportSubmissionService.export_submission_to_docx for sub ID {submission_id}")
+            # NOTE: ExportSubmissionService.export_submission_to_docx currently refetches
+            # the submission *without* auth. This is a potential issue but not the cause of the current error.
             docx_buffer, error = ExportSubmissionService.export_submission_to_docx(
                 submission_id=submission_id,
                 upload_path=upload_path,

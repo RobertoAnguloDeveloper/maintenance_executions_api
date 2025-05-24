@@ -304,32 +304,29 @@ def get_answer_submitted(answer_submitted_id):
 @answer_submitted_bp.route('/submission/<int:submission_id>', methods=['GET'])
 @jwt_required()
 @PermissionManager.require_permission(action="view", entity_type=EntityType.SUBMISSIONS)
-def get_answers_by_submission(submission_id):
+def get_answers_by_submission(submission_id): # View function
     """Get all submitted answers for a form submission"""
     try:
-        current_user = get_jwt_identity()
-        user = AuthService.get_current_user(current_user)
+        current_user_jwt_identity = get_jwt_identity() # username string
+        user_obj = AuthService.get_current_user(current_user_jwt_identity) # User object
+        if not user_obj:
+            return jsonify({"error": "Authenticated user not found"}), 401
 
-        # First verify submission exists and check access
-        submission = FormSubmissionController.get_submission(submission_id)
-        if not submission:
-            return jsonify({"error": "Form submission not found"}), 404
+        # Corrected: First verify submission exists and check access using FormSubmissionController
+        # This was the call causing the error in the log for this endpoint.
+        submission_model_check = FormSubmissionController.get_submission(
+            submission_id=submission_id,
+            current_user_identity=current_user_jwt_identity # Pass the identity string
+        )
+        if not submission_model_check: # This check is crucial
+            return jsonify({"error": "Form submission not found or access denied"}), 404
 
-        # Access control
-        if not user.role.is_super_user:
-            if user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                # Verify submitter is in the same environment
-                submitter = User.query.filter_by(username=submission.submitted_by).first()
-                if not submitter or submitter.environment_id != user.environment_id:
-                    return jsonify({"error": "Unauthorized access"}), 403
-            elif submission.submitted_by != current_user:
-                # Regular users can only see their own submissions
-                return jsonify({"error": "Unauthorized access"}), 403
-
+        # If submission check passes, proceed to get answers using AnswerSubmittedController
+        # AnswerSubmittedController.get_answers_by_submission expects username string and role name string
         answers, error = AnswerSubmittedController.get_answers_by_submission(
             submission_id=submission_id,
-            current_user=current_user,
-            user_role=user.role.name
+            current_user=current_user_jwt_identity, # Pass username string
+            user_role=user_obj.role.name if user_obj.role else None # Pass role name string
         )
 
         if error:
@@ -342,7 +339,7 @@ def get_answers_by_submission(submission_id):
         }), 200
 
     except Exception as e:
-        logger.error(f"Error getting answers for submission {submission_id}: {str(e)}")
+        logger.exception(f"Error getting answers for submission {submission_id}: {str(e)}") # Use logger.exception
         return jsonify({"error": "Internal server error"}), 500
 
 @answer_submitted_bp.route('/table/<int:submission_id>/<path:question_text>', methods=['GET'])

@@ -88,8 +88,8 @@ class ReportService:
 
         try:
             output_format = final_report_params.get("output_format", "xlsx").lower()
-            if output_format not in SUPPORTED_FORMATS:
-                 return None, None, None, f"Unsupported format: {output_format}. Supported formats: {', '.join(SUPPORTED_FORMATS)}"
+            if output_format not in SUPPORTED_FORMATS: #
+                 return None, None, None, f"Unsupported format: {output_format}. Supported formats: {', '.join(SUPPORTED_FORMATS)}" #
 
             base_filename = final_report_params.get("filename")
             processed_data = ReportService._generate_report_data(final_report_params, user)
@@ -142,7 +142,7 @@ class ReportService:
                         isinstance(report_type_req, list) and
                         len(report_type_req) > 1 and
                         not final_report_params.get('separate_files', False)):
-                         final_filename = f"{base_filename}.zip"
+                         final_filename = f"{base_filename}.zip" # This logic seems more appropriate for CSV if it also zips multi-entity.
                          mime_type = 'application/zip'
 
                 except Exception as format_err:
@@ -178,7 +178,7 @@ class ReportService:
             return processed_data
 
         if report_type_req == "all":
-            report_types_to_process = list(ENTITY_CONFIG.keys())
+            report_types_to_process = list(ENTITY_CONFIG.keys()) #
         elif isinstance(report_type_req, list):
             report_types_to_process = report_type_req
         elif isinstance(report_type_req, str):
@@ -202,12 +202,12 @@ class ReportService:
                 logger.error(f"Could not pre-fetch question info for form_submissions: {q_err}")
 
         for report_type in report_types_to_process:
-            if report_type not in ENTITY_CONFIG:
+            if report_type not in ENTITY_CONFIG: #
                 logger.warning(f"Configuration for report type '{report_type}' not found in ENTITY_CONFIG. Skipping.")
                 processed_data[report_type] = {'error': f"Unsupported report type: {report_type}"}
                 continue
 
-            config = ENTITY_CONFIG[report_type]
+            config = ENTITY_CONFIG[report_type] #
             model_cls = config.get('model')
             permission_entity_type = config.get('view_permission_entity')
 
@@ -247,15 +247,13 @@ class ReportService:
                 continue
 
             is_admin_user = user.role and user.role.is_super_user
-            final_columns = ReportDataFetcher.sanitize_columns(list(columns), report_type, is_admin_user)
+            final_columns = ReportDataFetcher.sanitize_columns(list(columns), report_type, is_admin_user) #
 
             # Ensure 'assigned_entity_identifier' is in final_columns if it's a default for form_assignments
             if report_type == 'form_assignments' and \
                'assigned_entity_identifier' in config.get('default_columns', []) and \
                'assigned_entity_identifier' not in final_columns:
-                # This check ensures that if 'assigned_entity_identifier' is a default column,
-                # it gets included even if it was somehow missed by sanitize_columns (which it shouldn't be if config is correct).
-                if 'assigned_entity_identifier' in ENTITY_CONFIG.get('form_assignments', {}).get('available_columns', []):
+                if 'assigned_entity_identifier' in ENTITY_CONFIG.get('form_assignments', {}).get('available_columns', []): #
                     final_columns.append('assigned_entity_identifier')
                     logger.debug(f"Safeguard: Added 'assigned_entity_identifier' to final_columns for {report_type}")
 
@@ -267,7 +265,7 @@ class ReportService:
             current_processing_params = {
                 "columns": final_columns, "filters": filters, "sort_by": sort_by,
                 "report_type": report_type,
-                "report_title": report_params.get("report_title", DEFAULT_REPORT_TITLE),
+                "report_title": report_params.get("report_title", DEFAULT_REPORT_TITLE), #
                 "output_format": report_params.get("output_format", "xlsx").lower(),
                 "_internal_question_info": question_info_map if report_type == 'form_submissions' else {},
                 "_internal_config": config,
@@ -279,30 +277,39 @@ class ReportService:
 
             try:
                 logger.info(f"Fetching data for report type '{report_type}' for user '{user.username}' with columns: {final_columns}")
-                fetched_objects = ReportDataFetcher.fetch_data(model_cls, filters, sort_by, user, final_columns)
-                data = ReportDataFetcher.flatten_data(fetched_objects, final_columns, report_type)
+                fetched_objects = ReportDataFetcher.fetch_data(model_cls, filters, sort_by, user, final_columns) #
+                data = ReportDataFetcher.flatten_data(fetched_objects, final_columns, report_type) #
 
                 if report_type == 'form_assignments':
                     enriched_data = []
                     for row_dict in data:
                         enriched_row = row_dict.copy()
-                        entity_name = enriched_row.get('entity_name')
+                        entity_name = enriched_row.get('entity_name') # This is singular from FormAssignment model
                         entity_id = enriched_row.get('entity_id')
-                        identifier_value = "N/A" # Default for the main identifier column
+                        identifier_value = "N/A"
 
-                        if entity_name and entity_id is not None and entity_name in ENTITY_TO_MODEL:
-                            target_model_cls = ENTITY_TO_MODEL[entity_name]
+                        # Construct the plural key for ENTITY_TO_MODEL lookup if entity_name is one of the standard assignable types
+                        # This handles 'user' -> 'users', 'role' -> 'roles', 'environment' -> 'environments'
+                        # For other entity_name values (if any), it uses entity_name directly.
+                        model_lookup_key = entity_name
+                        if entity_name in ['user', 'role', 'environment']:
+                            model_lookup_key = entity_name + 's'
+
+
+                        if entity_name and entity_id is not None and model_lookup_key in ENTITY_TO_MODEL: #
+                            target_model_cls = ENTITY_TO_MODEL[model_lookup_key] #
                             target_entity_obj = db.session.query(target_model_cls).filter_by(id=entity_id, is_deleted=False).first()
 
                             if target_entity_obj:
-                                if entity_name == 'users':
+                                # Use the original singular entity_name for these comparisons
+                                if entity_name == 'user':
                                     identifier_value = getattr(target_entity_obj, 'username', 'N/A')
                                     if 'assigned_user_email' in final_columns: enriched_row['assigned_user_email'] = getattr(target_entity_obj, 'email', None)
                                     if 'assigned_user_fullname' in final_columns: enriched_row['assigned_user_fullname'] = f"{getattr(target_entity_obj, 'first_name','')} {getattr(target_entity_obj, 'last_name','')}".strip()
-                                elif entity_name == 'roles':
+                                elif entity_name == 'role':
                                     identifier_value = getattr(target_entity_obj, 'name', 'N/A')
                                     if 'assigned_role_description' in final_columns: enriched_row['assigned_role_description'] = getattr(target_entity_obj, 'description', None)
-                                elif entity_name == 'environments':
+                                elif entity_name == 'environment':
                                     identifier_value = getattr(target_entity_obj, 'name', 'N/A')
                                     if 'assigned_environment_description' in final_columns: enriched_row['assigned_environment_description'] = getattr(target_entity_obj, 'description', None)
                         
@@ -319,7 +326,7 @@ class ReportService:
                 except Exception as df_err:
                     logger.error(f"Error creating DataFrame for {report_type}: {df_err}", exc_info=True)
                 
-                analysis_results = ReportAnalyzer.analyze_data(data, current_processing_params, report_type)
+                analysis_results = ReportAnalyzer.analyze_data(data, current_processing_params, report_type) #
                 
                 processed_data[report_type] = {
                     'error': None, 'data': data, 'objects': fetched_objects,
@@ -336,10 +343,10 @@ class ReportService:
         
         if 'cross_entity_charts' in report_params and isinstance(report_params['cross_entity_charts'], list):
             try:
-                from .report.report_formatters.cross_entity_chart_generator import CrossEntityChartGenerator
+                from .report.report_formatters.cross_entity_chart_generator import CrossEntityChartGenerator #
                 for chart_config in report_params['cross_entity_charts']:
                     try:
-                        chart_bytes = CrossEntityChartGenerator.generate_comparison_chart(
+                        chart_bytes = CrossEntityChartGenerator.generate_comparison_chart( #
                             all_entity_dataframes, chart_config
                         )
                         if chart_bytes:
@@ -427,7 +434,7 @@ class ReportService:
 
             model_mapping = {
                 cfg['model'].__tablename__: entity_name
-                for entity_name, cfg in ENTITY_CONFIG.items()
+                for entity_name, cfg in ENTITY_CONFIG.items() #
                 if cfg.get('model') and hasattr(cfg['model'], '__tablename__')
             }
 
@@ -451,4 +458,3 @@ class ReportService:
         Delegates to ReportDataFetcher to get all available columns for an entity type.
         """
         return ReportDataFetcher.get_available_columns(entity_type)
-

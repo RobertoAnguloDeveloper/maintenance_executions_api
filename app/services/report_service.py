@@ -3,12 +3,13 @@ from typing import Dict, List, Any, Optional, Tuple, BinaryIO
 from io import BytesIO
 import logging
 from datetime import datetime
-from app import db
-from app.models import User, ReportTemplate
-from app.utils.permission_manager import PermissionManager
-from sqlalchemy import inspect, text
+from app import db # Assuming db is initialized in app
+from app.models import User, ReportTemplate, Role, Environment # Ensure all necessary models are imported
+from app.utils.permission_manager import PermissionManager # Assuming PermissionManager is correctly set up
+from sqlalchemy import inspect, text # For database schema and direct queries
 
-from app.services.report.report_config import SUPPORTED_FORMATS, ENTITY_CONFIG, ENTITY_TO_MODEL
+# Import configurations and helper classes from the report service package
+from app.services.report.report_config import SUPPORTED_FORMATS, ENTITY_CONFIG, ENTITY_TO_MODEL, MODEL_TO_ENTITY, DEFAULT_REPORT_TITLE
 from .report.report_data_fetcher import ReportDataFetcher
 from .report.report_analyzer import ReportAnalyzer
 from .report.report_formatters import (
@@ -23,53 +24,56 @@ logger = logging.getLogger(__name__)
 
 class ReportService:
     """
-    Main service for report generation
+    Main service for orchestrating report generation.
+    Handles parameter processing, data fetching, analysis, and formatting.
     """
-    
+
     @staticmethod
     def generate_report(report_params: dict, user: User) -> Tuple[Optional[BytesIO], Optional[str], Optional[str], Optional[str]]:
         """
-        Generates a report based on parameters, handling permissions and multiple formats.
-        Can load configuration from a saved ReportTemplate if 'template_id' is provided.
+        Generates a report based on provided parameters and user permissions.
+        It can load configurations from a saved ReportTemplate if 'template_id' is given.
+        Direct parameters in the request will override those from the template.
 
         Args:
-            report_params (dict): Parameters defining the report. Can include 'template_id'.
-                                  Direct parameters override template configuration.
+            report_params (dict): Parameters defining the report.
+                                  Must include 'report_type'. Can include 'template_id'.
             user (User): The user requesting the report.
 
         Returns:
             Tuple containing (BytesIO buffer | None, filename | None, mime_type | None, error_message | None)
         """
-        final_report_params = {}
+        final_report_params = {} # Merged parameters from template and request
         template_id = report_params.get('template_id')
-        request_params = report_params.copy()  # Keep original request params separate
+        request_params = report_params.copy() # Keep original request params separate
 
-        # 1. Load Template Configuration (if template_id provided)
+        # 1. Load Template Configuration (if template_id is provided)
         if template_id:
             logger.info(f"Report request includes template_id: {template_id}. Loading template...")
             try:
-                template_id = int(template_id)
+                template_id = int(template_id) # Ensure template_id is an integer
+                # Query for non-deleted template
                 template = ReportTemplate.query.filter_by(id=template_id, is_deleted=False).first()
 
                 if not template:
                     logger.warning(f"Template ID {template_id} not found for report generation.")
                     return None, None, None, f"Report template with ID {template_id} not found."
 
-                # Check permissions for the template
-                is_owner = template.user_id == user.id
-                is_admin = user.role and user.role.name == 'admin'
-                if not is_owner and not template.is_public and not is_admin:
+                # Permission check for the template
+                is_form_owner = template.form and template.form.user_id == user.id
+                is_admin_user = user.role and user.role.is_super_user
+
+                if not is_form_owner and not template.is_public and not is_admin_user:
                     logger.warning(f"User '{user.username}' permission denied for template ID {template_id}.")
                     return None, None, None, f"Permission denied to use report template ID {template_id}."
 
-                # Load configuration from the template
                 template_config = template.configuration
                 if not isinstance(template_config, dict):
                      logger.error(f"Template ID {template_id} has invalid configuration (not a dict).")
                      return None, None, None, f"Report template {template_id} has invalid configuration."
 
                 logger.info(f"Successfully loaded configuration from template '{template.name}' (ID: {template_id}).")
-                final_report_params = template_config.copy()  # Start with template config
+                final_report_params = template_config.copy()
 
             except ValueError:
                  logger.warning(f"Invalid template_id format: {template_id}")
@@ -79,119 +83,94 @@ class ReportService:
                  return None, None, None, f"An internal error occurred while loading the report template: {str(e)}"
 
         # 2. Merge/Override with Request Parameters
-        # Parameters directly in the request override those from the template
-        # Remove 'template_id' from request_params before merging if it exists
         request_params.pop('template_id', None)
-        final_report_params.update(request_params)  # Direct request params take precedence
+        final_report_params.update(request_params)
 
-        # --- Proceed with existing report generation logic using final_report_params ---
         try:
-            # 3. Initial setup (format, filename base from final params)
             output_format = final_report_params.get("output_format", "xlsx").lower()
             if output_format not in SUPPORTED_FORMATS:
                  return None, None, None, f"Unsupported format: {output_format}. Supported formats: {', '.join(SUPPORTED_FORMATS)}"
 
-            base_filename = final_report_params.get("filename")  # Filename can come from template or request
-
-            # 4. Process data for requested entities using final_report_params
-            # The _generate_report_data method now receives the potentially merged params
+            base_filename = final_report_params.get("filename")
             processed_data = ReportService._generate_report_data(final_report_params, user)
 
-            # 5. Handle errors from data processing
             if '_error' in processed_data:
                 return None, None, None, processed_data['_error']['error']
-            if not any(not res.get('error') for res in processed_data.values()):
-                all_errors = "; ".join([f"{rt}: {res['error']}" for rt, res in processed_data.items() if res.get('error')])
+            if not any(not result.get('error') for result in processed_data.values() if isinstance(result, dict)):
+                all_errors = "; ".join([f"{rt}: {res['error']}" for rt, res in processed_data.items() if isinstance(res, dict) and res.get('error')])
                 error_msg = f"No data generated. Errors: {all_errors}" if all_errors else "No data found for the specified parameters."
                 return None, None, None, error_msg
 
-            # 6. Determine final filename (if not provided in params)
-            report_type_req = final_report_params.get("report_type")  # Get report type from final params
+            report_type_req = final_report_params.get("report_type")
             if not base_filename:
-                ts = datetime.now().strftime('%Y%m%d_%H%M')
+                ts = datetime.now().strftime('%Y%m%d_%H%M%S')
                 name_part = "custom_report"
-                if report_type_req == "all":
-                    name_part = "full_report"
-                elif isinstance(report_type_req, list):
-                    name_part = "multi_report"
-                elif isinstance(report_type_req, str):
-                    name_part = f"report_{report_type_req}"
-                    
-                # If loaded from template, maybe use template name?
+                if report_type_req == "all": name_part = "full_report"
+                elif isinstance(report_type_req, list): name_part = "multi_report"
+                elif isinstance(report_type_req, str): name_part = f"report_{report_type_req.replace(' ','_')}"
+
                 if template_id and 'template' in locals() and template:
                     safe_template_name = "".join(c if c.isalnum() else "_" for c in template.name)
                     base_filename = f"template_{safe_template_name}_{ts}"
                 else:
                      base_filename = f"{name_part}_{ts}"
 
-            # 7. Prepare for format generation
             final_buffer: Optional[BytesIO] = None
             final_filename: str = f"{base_filename}.{output_format}"
             mime_type: Optional[str] = None
-            
-            # Define format-specific formatters
+
             formatter_map = {
-                "xlsx": ReportXlsxFormatter,
-                "csv": ReportCsvFormatter,
-                "pdf": ReportPdfFormatter,
-                "docx": ReportDocxFormatter,
-                "pptx": ReportPptxFormatter,
+                "xlsx": ReportXlsxFormatter, "csv": ReportCsvFormatter, "pdf": ReportPdfFormatter,
+                "docx": ReportDocxFormatter, "pptx": ReportPptxFormatter,
             }
-            
-            # Define MIME types
             mime_map = {
                 "xlsx": 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                "csv": 'application/zip' if isinstance(report_type_req, list) and len(report_type_req) > 1 else 'text/csv',
+                "csv": 'application/zip' if isinstance(report_type_req, list) and len(report_type_req) > 1 and output_format == 'csv' and not final_report_params.get('separate_files', False) else 'text/csv',
                 "pdf": 'application/pdf',
                 "docx": 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
                 "pptx": 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
             }
 
-            # 8. Generate the report file using the appropriate formatter
             if output_format in formatter_map:
                 try:
                     formatter_class = formatter_map[output_format]
                     formatter = formatter_class(processed_data, final_report_params)
                     final_buffer = formatter.generate()
                     mime_type = mime_map[output_format]
-                    
-                    # Adjust filename for multi-CSV zip
+
                     if (output_format == 'csv' and
                         isinstance(report_type_req, list) and
-                        len(report_type_req) > 1):
+                        len(report_type_req) > 1 and
+                        not final_report_params.get('separate_files', False)):
                          final_filename = f"{base_filename}.zip"
-                         mime_type = 'application/zip'  # Ensure mime type is zip for multi-csv
-                         
+                         mime_type = 'application/zip'
+
                 except Exception as format_err:
-                    # Handle errors during format generation
-                    logger.error(f"Error generating {output_format}: {format_err}", exc_info=True)
+                    logger.error(f"Error generating {output_format} report: {format_err}", exc_info=True)
                     return None, None, None, f"Error during {output_format} generation: {format_err}"
             else:
-                # This case should be caught earlier by the format check
                  return None, None, None, f"Unsupported format: {output_format}"
 
-            # 9. Return result or handle buffer failure
             if final_buffer and isinstance(final_buffer, BytesIO):
                 logger.info(f"{output_format.upper()} report '{final_filename}' generated successfully for user '{user.username}'. Template ID used: {template_id if template_id else 'None'}.")
                 return final_buffer, final_filename, mime_type, None
             else:
-                # This case means the generator function ran without error but didn't return a valid BytesIO buffer
-                error_msg = f"Failed to generate buffer for {output_format}."
+                error_msg = f"Failed to generate a valid report buffer for {output_format}."
                 logger.error(error_msg)
                 return None, None, None, error_msg
 
-        # Handle any unexpected errors during the whole process
         except Exception as e:
             logger.exception(f"Unexpected error in report generation for user '{user.username}', params: {final_report_params}: {e}")
             return None, None, None, f"An unexpected error occurred during report generation."
 
+
     @staticmethod
     def _generate_report_data(report_params: dict, user: User) -> Dict[str, Dict[str, Any]]:
-        """Fetches, flattens, and analyzes data for requested report types based on merged params."""
+        """
+        Fetches, flattens, enriches (for form_assignments), and analyzes data for requested report types.
+        """
         report_type_req = report_params.get("report_type")
         processed_data: Dict[str, Dict[str, Any]] = {}
-        
-        # Initialize a dictionary to track all entity dataframes for cross-entity charts
         all_entity_dataframes = {}
 
         if not report_type_req:
@@ -205,332 +184,271 @@ class ReportService:
         elif isinstance(report_type_req, str):
             report_types_to_process = [report_type_req]
         else:
-            processed_data['_error'] = {'error': "Invalid report_type parameter."}
+            processed_data['_error'] = {'error': "Invalid report_type parameter format."}
             return processed_data
 
-        # Determine if detailed parameters (columns, filters, sort) are present
         has_detailed_params = any(k in report_params for k in ['columns', 'filters', 'sort_by'])
         is_single_entity_request = len(report_types_to_process) == 1
 
-        # Pre-fetch question info for form submissions if needed
         question_info_map = {}
         if 'form_submissions' in report_types_to_process:
             try:
-                from app.models import Question, QuestionType
+                from app.models import Question, QuestionType # Local import
                 questions_from_db = db.session.query(Question.text, QuestionType.type).join(
                     QuestionType, Question.question_type_id == QuestionType.id
                 ).filter(Question.is_deleted == False).all()
                 question_info_map = {q_text: q_type for q_text, q_type in questions_from_db}
             except Exception as q_err:
-                logger.error(f"Could not pre-fetch question info: {q_err}")
+                logger.error(f"Could not pre-fetch question info for form_submissions: {q_err}")
 
-        # Process each report type
         for report_type in report_types_to_process:
             if report_type not in ENTITY_CONFIG:
+                logger.warning(f"Configuration for report type '{report_type}' not found in ENTITY_CONFIG. Skipping.")
                 processed_data[report_type] = {'error': f"Unsupported report type: {report_type}"}
                 continue
-                
+
             config = ENTITY_CONFIG[report_type]
             model_cls = config.get('model')
-            permission_entity = config.get('view_permission_entity')
-            
-            if not model_cls or not permission_entity:
-                processed_data[report_type] = {'error': f"Configuration incomplete for: {report_type}"}
+            permission_entity_type = config.get('view_permission_entity')
+
+            if not model_cls or not permission_entity_type:
+                processed_data[report_type] = {'error': f"Core configuration (model or permission) missing for: {report_type}"}
                 continue
 
-            # Check user permission
-            if not PermissionManager.has_permission(user, "view", permission_entity):
+            if not PermissionManager.has_permission(user, "view", permission_entity_type):
                 processed_data[report_type] = {'error': f"Permission denied for {report_type} report."}
-                logger.warning(f"User '{user.username}' permission denied for viewing entity '{permission_entity.value}'.")
+                logger.warning(f"User '{user.username}' permission denied for viewing entity type '{permission_entity_type.value}'.")
                 continue
 
-            # Determine whether to use detailed parameters or defaults
-            use_detailed_params = is_single_entity_request and has_detailed_params
+            current_entity_specific_params = report_params.get(report_type, {}) if isinstance(report_params.get(report_type), dict) else {}
+            use_detailed_params_for_entity = (is_single_entity_request and has_detailed_params) or bool(current_entity_specific_params)
 
-            # Initialize parameters
-            columns = None
-            filters = []
-            sort_by = config.get('default_sort', [])
+            columns = current_entity_specific_params.get("columns", report_params.get("columns") if is_single_entity_request else None)
+            filters = current_entity_specific_params.get("filters", report_params.get("filters", []) if is_single_entity_request else [])
+            sort_by = current_entity_specific_params.get("sort_by", report_params.get("sort_by", config.get('default_sort', [])) if is_single_entity_request else config.get('default_sort', []))
 
-            if use_detailed_params:
-                # Use parameters from the final merged dictionary
-                columns = report_params.get("columns")  # Use user's columns if provided
-                filters = report_params.get("filters", [])
-                sort_by = report_params.get("sort_by", config.get('default_sort', []))
-                logger.debug(f"Using detailed params for {report_type}: cols={len(columns) if columns else 'None'}, filters={len(filters)}, sort={len(sort_by)}")
-            else:
-                # Use default column logic
+            if not use_detailed_params_for_entity or not columns:
                 logger.debug(f"Using default column logic for {report_type}")
-                try:
-                    # Inspect model columns
-                    columns = list(inspect(model_cls).columns.keys())
-                    logger.debug(f"Using default all direct columns for {report_type}: {len(columns)} columns")
-                except Exception as inspect_err:
-                    logger.error(f"Could not inspect columns for {model_cls.__name__}: {inspect_err}")
-                    columns = config.get('default_columns', [])  # Fallback to config default
-                    if not columns:
-                        processed_data[report_type] = {'error': f"Could not determine default columns for {report_type}."}
+                columns = list(config.get('default_columns', []))
+                if not columns: # Fallback if default_columns is empty
+                    try:
+                        columns = list(inspect(model_cls).columns.keys()) # Get direct model columns
+                    except Exception as inspect_err:
+                        logger.error(f"Could not inspect columns for {model_cls.__name__}: {inspect_err}")
+                        processed_data[report_type] = {'error': f"Could not determine any columns for {report_type}."}
                         continue
-                        
-                # Add default related columns if defined in config
-                default_related_cols = config.get('default_columns', [])
-                if default_related_cols:
-                    inspected_cols_set = set(columns)
-                    for d_col in default_related_cols:
-                        if '.' in d_col and d_col not in inspected_cols_set:
-                            columns.append(d_col)
-                
-                # Reset filters and sort to defaults
-                filters = []
+                filters = [] # Reset to default
                 sort_by = config.get('default_sort', [])
 
-            # Validate columns
+
             if not columns or not isinstance(columns, list):
-                logger.error(f"Column list for {report_type} ended up invalid: {columns}")
-                processed_data[report_type] = {'error': f"Could not determine columns for {report_type}."}
+                logger.error(f"Column list for {report_type} is invalid or empty: {columns}")
+                processed_data[report_type] = {'error': f"No columns determined for {report_type}."}
                 continue
 
-            # Filter sensitive columns for non-admin users
-            is_admin = user.role and user.role.is_super_user
-            columns = ReportDataFetcher.sanitize_columns(columns, report_type, is_admin)
+            is_admin_user = user.role and user.role.is_super_user
+            final_columns = ReportDataFetcher.sanitize_columns(list(columns), report_type, is_admin_user)
 
-            if not columns:
-                processed_data[report_type] = {'error': f"No accessible columns for {report_type}."}
+            # Ensure 'assigned_entity_identifier' is in final_columns if it's a default for form_assignments
+            if report_type == 'form_assignments' and \
+               'assigned_entity_identifier' in config.get('default_columns', []) and \
+               'assigned_entity_identifier' not in final_columns:
+                # This check ensures that if 'assigned_entity_identifier' is a default column,
+                # it gets included even if it was somehow missed by sanitize_columns (which it shouldn't be if config is correct).
+                if 'assigned_entity_identifier' in ENTITY_CONFIG.get('form_assignments', {}).get('available_columns', []):
+                    final_columns.append('assigned_entity_identifier')
+                    logger.debug(f"Safeguard: Added 'assigned_entity_identifier' to final_columns for {report_type}")
+
+
+            if not final_columns:
+                processed_data[report_type] = {'error': f"No accessible columns found for {report_type} after sanitization."}
                 continue
 
-            # Construct entity-specific parameters
-            current_entity_params = {
-                "columns": columns,
-                "filters": filters,
-                "sort_by": sort_by,
+            current_processing_params = {
+                "columns": final_columns, "filters": filters, "sort_by": sort_by,
                 "report_type": report_type,
-                "report_title": report_params.get("report_title", "Data Analysis Report"),
+                "report_title": report_params.get("report_title", DEFAULT_REPORT_TITLE),
                 "output_format": report_params.get("output_format", "xlsx").lower(),
                 "_internal_question_info": question_info_map if report_type == 'form_submissions' else {},
                 "_internal_config": config,
                 "sheet_name": report_params.get(f"{report_type}_sheet_name", report_type.replace("_", " ").title()),
                 "table_options": report_params.get(f"{report_type}_table_options", report_params.get("table_options", {})),
                 "include_data_table_in_ppt": report_params.get("include_data_table_in_ppt", False),
-                "charts": report_params.get("charts", []),
+                "charts": current_entity_specific_params.get("charts", report_params.get("charts", []) if is_single_entity_request else []),
             }
-            
-            # Process entity data
+
             try:
-                logger.info(f"Processing report type '{report_type}' for user '{user.username}'...")
+                logger.info(f"Fetching data for report type '{report_type}' for user '{user.username}' with columns: {final_columns}")
+                fetched_objects = ReportDataFetcher.fetch_data(model_cls, filters, sort_by, user, final_columns)
+                data = ReportDataFetcher.flatten_data(fetched_objects, final_columns, report_type)
+
+                if report_type == 'form_assignments':
+                    enriched_data = []
+                    for row_dict in data:
+                        enriched_row = row_dict.copy()
+                        entity_name = enriched_row.get('entity_name')
+                        entity_id = enriched_row.get('entity_id')
+                        identifier_value = "N/A" # Default for the main identifier column
+
+                        if entity_name and entity_id is not None and entity_name in ENTITY_TO_MODEL:
+                            target_model_cls = ENTITY_TO_MODEL[entity_name]
+                            target_entity_obj = db.session.query(target_model_cls).filter_by(id=entity_id, is_deleted=False).first()
+
+                            if target_entity_obj:
+                                if entity_name == 'users':
+                                    identifier_value = getattr(target_entity_obj, 'username', 'N/A')
+                                    if 'assigned_user_email' in final_columns: enriched_row['assigned_user_email'] = getattr(target_entity_obj, 'email', None)
+                                    if 'assigned_user_fullname' in final_columns: enriched_row['assigned_user_fullname'] = f"{getattr(target_entity_obj, 'first_name','')} {getattr(target_entity_obj, 'last_name','')}".strip()
+                                elif entity_name == 'roles':
+                                    identifier_value = getattr(target_entity_obj, 'name', 'N/A')
+                                    if 'assigned_role_description' in final_columns: enriched_row['assigned_role_description'] = getattr(target_entity_obj, 'description', None)
+                                elif entity_name == 'environments':
+                                    identifier_value = getattr(target_entity_obj, 'name', 'N/A')
+                                    if 'assigned_environment_description' in final_columns: enriched_row['assigned_environment_description'] = getattr(target_entity_obj, 'description', None)
+                        
+                        enriched_row['assigned_entity_identifier'] = identifier_value
+                        enriched_data.append(enriched_row)
+                    data = enriched_data
                 
-                # Fetch raw data objects
-                fetched_objects = ReportDataFetcher.fetch_data(model_cls, filters, sort_by, user, columns)
-                
-                # Flatten to dictionaries
-                data = ReportDataFetcher.flatten_data(fetched_objects, columns, report_type)
-                
-                # Store the data as a DataFrame for cross-entity charts
                 try:
                     import pandas as pd
                     df = pd.DataFrame(data)
-                    # Store the DataFrame in our tracking dictionary
                     all_entity_dataframes[report_type] = df
                 except ImportError:
-                    logger.warning("Pandas not available; cross-entity charts will be limited")
+                    logger.warning("Pandas library not found. Cross-entity charts will be limited.")
                 except Exception as df_err:
                     logger.error(f"Error creating DataFrame for {report_type}: {df_err}", exc_info=True)
                 
-                # Analyze data
-                analysis_results = ReportAnalyzer.analyze_data(data, current_entity_params, report_type)
+                analysis_results = ReportAnalyzer.analyze_data(data, current_processing_params, report_type)
                 
-                # Store results in processed_data
                 processed_data[report_type] = {
-                    'error': None,
-                    'data': data,
-                    'objects': fetched_objects,
-                    'params': current_entity_params,
-                    'analysis': analysis_results
+                    'error': None, 'data': data, 'objects': fetched_objects,
+                    'params': current_processing_params, 'analysis': analysis_results
                 }
-                
                 logger.info(f"Successfully processed '{report_type}' ({len(data)} records) for user '{user.username}'.")
-                
+
             except Exception as proc_err:
                 logger.error(f"Error processing data for {report_type} for user '{user.username}': {proc_err}", exc_info=True)
                 processed_data[report_type] = {
-                    'error': f"Error processing data: {proc_err}",
-                    'params': current_entity_params,
-                    'analysis': {},
-                    'data': [],
-                    'objects': []
+                    'error': f"Error processing data for {report_type}: {str(proc_err)}",
+                    'params': current_processing_params, 'analysis': {}, 'data': [], 'objects': []
                 }
         
-        # After ALL entities are processed, handle cross-entity charts
         if 'cross_entity_charts' in report_params and isinstance(report_params['cross_entity_charts'], list):
             try:
-                # Import the CrossEntityChartGenerator
                 from .report.report_formatters.cross_entity_chart_generator import CrossEntityChartGenerator
-                
-                # Process each cross-entity chart configuration
                 for chart_config in report_params['cross_entity_charts']:
                     try:
-                        # Get required parameters
-                        x_entity = chart_config.get('x_entity')
-                        x_column = chart_config.get('x_column')
-                        y_entity = chart_config.get('y_entity', x_entity)
-                        y_column = chart_config.get('y_column')
-                        chart_type = chart_config.get('chart_type', 'scatter')
-                        
-                        # Skip invalid configurations
-                        if not all([x_entity, x_column, y_entity, y_column]):
-                            logger.warning(f"Incomplete cross-entity chart configuration: {chart_config}")
-                            continue
-                        
-                        # Generate the chart
                         chart_bytes = CrossEntityChartGenerator.generate_comparison_chart(
                             all_entity_dataframes, chart_config
                         )
-                        
                         if chart_bytes:
-                            # Create a unique key for this chart
-                            chart_key = f"cross_{chart_type}_{x_entity}_{x_column}_vs_{y_entity}_{y_column}"
-                            
-                            # Add this chart to both entities involved
-                            for entity_name in [x_entity, y_entity]:
-                                if entity_name in processed_data:
-                                    entity_result = processed_data[entity_name]
-                                    
-                                    # Ensure analysis and charts dictionaries exist
-                                    if 'analysis' not in entity_result:
-                                        entity_result['analysis'] = {}
-                                    if 'charts' not in entity_result['analysis']:
-                                        entity_result['analysis']['charts'] = {}
-                                    
-                                    # Add the chart
+                            x_entity = chart_config.get('x_entity')
+                            y_entity = chart_config.get('y_entity', x_entity)
+                            chart_key = f"cross_{chart_config.get('chart_type','scatter')}_{x_entity}_{chart_config.get('x_column')}_vs_{y_entity}_{chart_config.get('y_column')}"
+                            for entity_name_for_chart in {x_entity, y_entity}:
+                                if entity_name_for_chart in processed_data and not processed_data[entity_name_for_chart].get('error'):
+                                    entity_result = processed_data[entity_name_for_chart]
+                                    if 'analysis' not in entity_result: entity_result['analysis'] = {}
+                                    if 'charts' not in entity_result['analysis']: entity_result['analysis']['charts'] = {}
                                     entity_result['analysis']['charts'][chart_key] = chart_bytes
+                                    logger.debug(f"Added cross-entity chart '{chart_key}' to '{entity_name_for_chart}' analysis.")
                     except Exception as chart_err:
-                        logger.error(f"Error generating cross-entity chart: {chart_err}", exc_info=True)
+                        logger.error(f"Error generating a specific cross-entity chart: {chart_err}", exc_info=True)
             except ImportError:
-                logger.warning("CrossEntityChartGenerator not available, skipping cross-entity charts")
+                logger.warning("CrossEntityChartGenerator not available. Cross-entity charts will be skipped.")
             except Exception as e:
-                logger.error(f"Error processing cross-entity charts: {e}", exc_info=True)
-                
-        # Store all entity dataframes for potential use by formatters
+                logger.error(f"General error processing cross-entity charts: {e}", exc_info=True)
+
         processed_data['_all_entity_dataframes'] = all_entity_dataframes
-            
         return processed_data
 
     @staticmethod
     def get_database_schema() -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         """
-        Retrieves database schema and table row counts
-        
-        Returns:
-            Tuple containing (schema_data, error_message)
+        Retrieves database schema information including tables, columns, keys, and row counts.
         """
         try:
             inspector = inspect(db.engine)
-            schema_data = {}
+            schema_data: Dict[str, Any] = {}
             table_names = inspector.get_table_names()
-            
+
             for table_name in table_names:
                 try:
-                    # Get columns, primary keys, and foreign keys
                     cols = inspector.get_columns(table_name)
                     pk_constraint = inspector.get_pk_constraint(table_name)
                     pk_cols = pk_constraint.get('constrained_columns', []) if pk_constraint else []
                     fks = inspector.get_foreign_keys(table_name)
-                    
-                    # Format column info
+
                     columns_info = [
-                        {
-                            "name": c['name'],
-                            "type": str(c['type']),
-                            "nullable": c.get('nullable', True),
-                            "default": str(c.get('default')),
-                            "primary_key": c['name'] in pk_cols
-                        }
+                        {"name": c['name'], "type": str(c['type']), "nullable": c.get('nullable', True),
+                         "default": str(c.get('default')), "primary_key": c['name'] in pk_cols}
                         for c in cols
                     ]
-                    
-                    # Format foreign key info
                     foreign_keys_info = [
-                        {
-                            "constrained_columns": fk['constrained_columns'],
-                            "referred_table": fk['referred_table'],
-                            "referred_columns": fk['referred_columns']
-                        }
+                        {"constrained_columns": fk['constrained_columns'], "referred_table": fk['referred_table'],
+                         "referred_columns": fk['referred_columns']}
                         for fk in fks
                     ]
-                    
-                    # Get row counts
+
                     total_rows = db.session.execute(text(f"SELECT COUNT(*) FROM {table_name}")).scalar()
                     active_rows = None
-                    
                     if any(c['name'] == 'is_deleted' for c in cols):
                         try:
                             active_rows = db.session.execute(text(f"SELECT COUNT(*) FROM {table_name} WHERE is_deleted = FALSE")).scalar()
                         except Exception as count_err:
-                            logger.warning(f"Could not get active count for {table_name}: {count_err}")
-                    
-                    # Create table info
-                    table_info = {
-                        "columns": columns_info,
-                        "primary_keys": pk_cols,
-                        "foreign_keys": foreign_keys_info,
-                        "total_rows": total_rows
+                            logger.warning(f"Could not get active row count for table {table_name}: {count_err}")
+
+                    table_info: Dict[str, Any] = {
+                        "columns": columns_info, "primary_keys": pk_cols,
+                        "foreign_keys": foreign_keys_info, "total_rows": total_rows
                     }
-                    
                     if active_rows is not None:
                         table_info["active_rows"] = active_rows
                         table_info["deleted_rows"] = total_rows - active_rows
-                        
                     schema_data[table_name] = table_info
-                    
+
                 except Exception as table_err:
-                    logger.error(f"Error fetching schema for table {table_name}: {table_err}")
-                    schema_data[table_name] = {"error": f"Failed schema: {table_err}"}
-            
-            # Get database info
+                    logger.error(f"Error fetching schema details for table {table_name}: {table_err}")
+                    schema_data[table_name] = {"error": f"Failed to retrieve schema for {table_name}: {str(table_err)}"}
+
             db_name = db.engine.url.database
+            db_dialect_name = db.engine.dialect.name
             db_version = "N/A"
-            
             try:
-                if db.engine.dialect.name == 'postgresql':
+                if db_dialect_name == 'postgresql':
                     db_version = db.session.execute(text("SELECT version()")).scalar()
-                elif db.engine.dialect.name == 'mysql':
+                elif db_dialect_name == 'mysql':
                     db_version = db.session.execute(text("SELECT VERSION()")).scalar()
+                elif db_dialect_name == 'sqlite':
+                    db_version = db.session.execute(text("SELECT sqlite_version()")).scalar()
             except Exception as db_info_err:
-                logger.warning(f"Could not retrieve DB version: {db_info_err}")
-            
-            # Create model mapping
+                logger.warning(f"Could not retrieve database version for {db_dialect_name}: {db_info_err}")
+
             model_mapping = {
-                m_cfg['model'].__tablename__: m_name
-                for m_name, m_cfg in ENTITY_CONFIG.items()
-                if m_cfg.get('model')
+                cfg['model'].__tablename__: entity_name
+                for entity_name, cfg in ENTITY_CONFIG.items()
+                if cfg.get('model') and hasattr(cfg['model'], '__tablename__')
             }
-            
-            # Build response
+
             response_data = {
                 "database_info": {
-                    "name": db_name,
-                    "version": db_version,
+                    "name": db_name, "dialect": db_dialect_name, "version": db_version,
                     "total_tables": len(table_names),
-                    "application_models": len(model_mapping)
+                    "application_models_mapped": len(model_mapping)
                 },
-                "model_mapping": model_mapping,
+                "model_to_table_mapping": model_mapping,
                 "tables": schema_data
             }
-            
             return response_data, None
-            
         except Exception as e:
-            logger.exception(f"Failed to retrieve DB schema: {e}")
-            return None, f"Error retrieving schema: {e}"
+            logger.exception(f"Failed to retrieve database schema: {e}")
+            return None, f"An unexpected error occurred while retrieving database schema: {str(e)}"
 
     @staticmethod
     def get_available_columns(entity_type: str) -> List[str]:
         """
-        Get all available columns for a given entity type
-        
-        Args:
-            entity_type: The entity type (e.g., 'users', 'forms')
-            
-        Returns:
-            List of available column names
+        Delegates to ReportDataFetcher to get all available columns for an entity type.
         """
         return ReportDataFetcher.get_available_columns(entity_type)
+

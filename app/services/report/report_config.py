@@ -4,9 +4,40 @@ from datetime import datetime, date
 from app.models import (
     User, FormSubmission, AnswerSubmitted, Form, Role, Environment,
     Question, Answer, QuestionType, Permission, RolePermission,
-    FormQuestion, FormAnswer, Attachment, TokenBlocklist
+    FormQuestion, FormAnswer, Attachment, TokenBlocklist,
+    FormAssignment # Ensure FormAssignment is imported
 )
-from app.utils.permission_manager import EntityType, RoleType
+import logging
+
+# Configure logger
+logger = logging.getLogger(__name__)
+# Ensure EntityType and RoleType are correctly imported or defined
+# from app.utils.permission_manager import EntityType, RoleType
+# For standalone execution, we'll define placeholders if not available
+try:
+    from app.utils.permission_manager import EntityType, RoleType
+except ImportError:
+    logger.warning("EntityType or RoleType not found from app.utils.permission_manager. Using placeholder enums.")
+    from enum import Enum
+    class EntityType(Enum): # Placeholder
+        USERS = "users"
+        ROLES = "roles"
+        FORMS = "forms"
+        SUBMISSIONS = "submissions"
+        ENVIRONMENTS = "environments"
+        QUESTION_TYPES = "question_types"
+        QUESTIONS = "questions"
+        ANSWERS = "answers"
+        ATTACHMENTS = "attachments"
+        # Add other entity types as needed
+    class RoleType(Enum): # Placeholder
+        ADMIN = "admin"
+        # Add other role types
+        SITE_MANAGER = "site_manager"
+        SUPERVISOR = "supervisor"
+        TECHNICIAN = "technician"
+
+
 import logging
 
 logger = logging.getLogger(__name__)
@@ -19,8 +50,9 @@ DEFAULT_REPORT_TITLE = "Data Analysis Report"
 MAX_XLSX_SHEET_NAME_LEN = 31
 ANSWERS_PREFIX = "answers."
 GENERIC_CATEGORICAL_COLS = [
-    'type', 'name', 'status', 'action', 'role', 'environment', 'is_public', 
-    'is_deleted', 'is_super_user', 'is_signature', 'file_type', 'question_type'
+    'type', 'name', 'status', 'action', 'role', 'environment', 'is_public',
+    'is_deleted', 'is_super_user', 'is_signature', 'file_type', 'question_type',
+    'entity_name' # Added
 ]
 MAX_UNIQUE_GENERIC_CHART = 15
 DEFAULT_CHART_TYPES = ["bar", "pie", "line", "scatter", "area", "histogram"]
@@ -38,6 +70,7 @@ MODEL_TO_ENTITY = {
     Form: 'forms',
     FormQuestion: 'form_questions',
     FormAnswer: 'form_answers',
+    FormAssignment: 'form_assignments', # Added
     FormSubmission: 'form_submissions',
     AnswerSubmitted: 'answers_submitted',
     Attachment: 'attachments',
@@ -50,15 +83,15 @@ ENTITY_TO_MODEL = {v: k for k, v in MODEL_TO_ENTITY.items()}
 # Entity configuration
 ENTITY_CONFIG = {
     'users': {
-        'model': User, 
+        'model': User,
         'view_permission_entity': EntityType.USERS,
         'default_columns': [
-            "id", "username", "first_name", "last_name", "email", 
+            "id", "username", "first_name", "last_name", "email",
             "contact_number", "role.name", "environment.name", "created_at"
         ],
         'available_columns': [
             "id", "username", "first_name", "last_name", "email",
-            "contact_number", "role_id", "environment_id", 
+            "contact_number", "role_id", "environment_id",
             "role.name", "role.description", "role.is_super_user",
             "environment.name", "environment.description",
             "created_at", "updated_at", "is_deleted", "deleted_at"
@@ -68,7 +101,7 @@ ENTITY_CONFIG = {
         'analysis_hints': {
             'date_columns': ['created_at', 'updated_at', 'deleted_at'],
             'categorical_columns': [
-                'role.name', 'environment.name', 'is_deleted', 
+                'role.name', 'environment.name', 'is_deleted',
                 'username', 'email', 'first_name', 'last_name'
             ],
             'numerical_columns': ['id', 'role_id', 'environment_id'],
@@ -85,11 +118,11 @@ ENTITY_CONFIG = {
         'format_generators': {'pptx': '_generate_user_pptx'}
     },
     'roles': {
-        'model': Role, 
+        'model': Role,
         'view_permission_entity': EntityType.ROLES,
         'default_columns': ["id", "name", "description", "is_super_user", "created_at"],
         'available_columns': [
-            "id", "name", "description", "is_super_user", 
+            "id", "name", "description", "is_super_user",
             "created_at", "updated_at", "is_deleted", "deleted_at"
         ],
         'analysis_hints': {
@@ -108,11 +141,11 @@ ENTITY_CONFIG = {
         'format_generators': {}
     },
     'permissions': {
-        'model': Permission, 
+        'model': Permission,
         'view_permission_entity': EntityType.ROLES,
         'default_columns': ["id", "name", "action", "entity", "description"],
         'available_columns': [
-            "id", "name", "action", "entity", "description", 
+            "id", "name", "action", "entity", "description",
             "created_at", "updated_at", "is_deleted", "deleted_at"
         ],
         'analysis_hints': {
@@ -131,14 +164,14 @@ ENTITY_CONFIG = {
         'format_generators': {}
     },
     'role_permissions': {
-        'model': RolePermission, 
+        'model': RolePermission,
         'view_permission_entity': EntityType.ROLES,
         'default_columns': [
-            "id", "role_id", "permission_id", "role.name", 
+            "id", "role_id", "permission_id", "role.name",
             "permission.name", "permission.action", "permission.entity"
         ],
         'available_columns': [
-            "id", "role_id", "permission_id", 
+            "id", "role_id", "permission_id",
             "role.name", "role.description", "role.is_super_user",
             "permission.name", "permission.action", "permission.entity", "permission.description",
             "created_at", "updated_at", "is_deleted", "deleted_at"
@@ -146,7 +179,7 @@ ENTITY_CONFIG = {
         'analysis_hints': {
             'date_columns': ['created_at', 'updated_at', 'deleted_at'],
             'categorical_columns': [
-                'role.name', 'permission.name', 'permission.action', 
+                'role.name', 'permission.name', 'permission.action',
                 'permission.entity', 'is_deleted'
             ],
             'numerical_columns': ['id', 'role_id', 'permission_id'],
@@ -156,7 +189,7 @@ ENTITY_CONFIG = {
             'pie_charts': ['role.name', 'permission.action', 'permission.entity'],
         },
         'default_sort': [
-            {"field": "role_id", "direction": "asc"}, 
+            {"field": "role_id", "direction": "asc"},
             {"field": "permission_id", "direction": "asc"}
         ],
         'stats_generators': ['generate_role_permission_stats', '_generate_generic_stats'],
@@ -165,11 +198,11 @@ ENTITY_CONFIG = {
         'format_generators': {}
     },
     'environments': {
-        'model': Environment, 
+        'model': Environment,
         'view_permission_entity': EntityType.ENVIRONMENTS,
         'default_columns': ["id", "name", "description", "created_at"],
         'available_columns': [
-            "id", "name", "description", 
+            "id", "name", "description",
             "created_at", "updated_at", "is_deleted", "deleted_at"
         ],
         'analysis_hints': {
@@ -188,11 +221,11 @@ ENTITY_CONFIG = {
         'format_generators': {}
     },
     'question_types': {
-        'model': QuestionType, 
+        'model': QuestionType,
         'view_permission_entity': EntityType.QUESTION_TYPES,
         'default_columns': ["id", "type", "created_at"],
         'available_columns': [
-            "id", "type", 
+            "id", "type",
             "created_at", "updated_at", "is_deleted", "deleted_at"
         ],
         'analysis_hints': {
@@ -211,15 +244,15 @@ ENTITY_CONFIG = {
         'format_generators': {}
     },
     'questions': {
-        'model': Question, 
+        'model': Question,
         'view_permission_entity': EntityType.QUESTIONS,
         'default_columns': [
-            "id", "text", "question_type.type", "is_signature", 
+            "id", "text", "question_type.type", "is_signature",
             "remarks", "created_at"
         ],
         'available_columns': [
             "id", "text", "question_type_id", "is_signature", "remarks",
-            "question_type.type", 
+            "question_type.type",
             "created_at", "updated_at", "is_deleted", "deleted_at"
         ],
         'analysis_hints': {
@@ -241,11 +274,11 @@ ENTITY_CONFIG = {
         'format_generators': {}
     },
     'answers': {
-        'model': Answer, 
+        'model': Answer,
         'view_permission_entity': EntityType.ANSWERS,
         'default_columns': ["id", "value", "remarks", "created_at"],
         'available_columns': [
-            "id", "value", "remarks", 
+            "id", "value", "remarks",
             "created_at", "updated_at", "is_deleted", "deleted_at"
         ],
         'analysis_hints': {
@@ -254,9 +287,7 @@ ENTITY_CONFIG = {
             'numerical_columns': ['id'],
             'text_columns': ['value', 'remarks'],
         },
-        'chart_hints': {
-            'bar_charts': ['created_at'],
-        },
+        'chart_hints': {},
         'default_sort': [{"field": "value", "direction": "asc"}],
         'stats_generators': ['_generate_generic_stats'],
         'chart_generators': ['_generate_generic_charts'],
@@ -264,30 +295,34 @@ ENTITY_CONFIG = {
         'format_generators': {}
     },
     'forms': {
-        'model': Form, 
+        'model': Form,
         'view_permission_entity': EntityType.FORMS,
         'default_columns': [
-            "id", "title", "description", "creator.username", 
-            "creator.environment.name", "is_public", "created_at"
+            "id", "title", "description", "creator.username",
+            "creator.environment.name", "is_public",
+            "attachments_required", # Updated
+            "created_at"
         ],
         'available_columns': [
-            "id", "title", "description", "user_id", "is_public", 
-            "creator.username", "creator.email", "creator.first_name", "creator.last_name", 
+            "id", "title", "description", "user_id", "is_public",
+            "attachments_required", # Updated
+            "creator.username", "creator.email", "creator.first_name", "creator.last_name",
             "creator.environment.name", "creator.environment.description",
             "created_at", "updated_at", "is_deleted", "deleted_at"
         ],
         'analysis_hints': {
             'date_columns': ['created_at', 'updated_at', 'deleted_at'],
             'categorical_columns': [
-                'creator.username', 'creator.environment.name', 
-                'is_public', 'is_deleted', 'title'
+                'creator.username', 'creator.environment.name',
+                'is_public', 'is_deleted', 'title',
+                'attachments_required' # Updated
             ],
             'numerical_columns': ['id', 'user_id'],
             'text_columns': ['title', 'description'],
         },
         'chart_hints': {
-            'bar_charts': ['creator.username', 'is_public', 'creator.environment.name'],
-            'pie_charts': ['is_public', 'creator.environment.name'],
+            'bar_charts': ['creator.username', 'is_public', 'creator.environment.name', 'attachments_required'],
+            'pie_charts': ['is_public', 'creator.environment.name', 'attachments_required'],
         },
         'default_sort': [{"field": "title", "direction": "asc"}],
         'stats_generators': ['generate_form_stats', '_generate_generic_stats'],
@@ -296,14 +331,14 @@ ENTITY_CONFIG = {
         'format_generators': {}
     },
     'form_questions': {
-        'model': FormQuestion, 
+        'model': FormQuestion,
         'view_permission_entity': EntityType.FORMS,
         'default_columns': [
-            "id", "form_id", "question_id", "order_number", 
+            "id", "form_id", "question_id", "order_number",
             "form.title", "question.text", "question.question_type.type"
         ],
         'available_columns': [
-            "id", "form_id", "question_id", "order_number", 
+            "id", "form_id", "question_id", "order_number",
             "form.title", "form.description", "form.is_public",
             "question.text", "question.is_signature", "question.question_type.type",
             "created_at", "updated_at", "is_deleted", "deleted_at"
@@ -321,7 +356,7 @@ ENTITY_CONFIG = {
             'pie_charts': ['question.question_type.type'],
         },
         'default_sort': [
-            {"field": "form_id", "direction": "asc"}, 
+            {"field": "form_id", "direction": "asc"},
             {"field": "order_number", "direction": "asc"}
         ],
         'stats_generators': ['generate_form_question_stats', '_generate_generic_stats'],
@@ -330,15 +365,15 @@ ENTITY_CONFIG = {
         'format_generators': {}
     },
     'form_answers': {
-        'model': FormAnswer, 
+        'model': FormAnswer,
         'view_permission_entity': EntityType.FORMS,
         'default_columns': [
-            "id", "form_question_id", "answer_id", 
+            "id", "form_question_id", "answer_id",
             "form_question.question.text", "answer.value", "remarks"
         ],
         'available_columns': [
             "id", "form_question_id", "answer_id", "remarks",
-            "form_question.form.title", "form_question.form.description", 
+            "form_question.form.title", "form_question.form.description",
             "form_question.question.text", "form_question.question.question_type.type",
             "form_question.order_number", "answer.value", "answer.remarks",
             "created_at", "updated_at", "is_deleted", "deleted_at"
@@ -346,8 +381,8 @@ ENTITY_CONFIG = {
         'analysis_hints': {
             'date_columns': ['created_at', 'updated_at', 'deleted_at'],
             'categorical_columns': [
-                'form_question.question.text', 
-                'form_question.question.question_type.type', 
+                'form_question.question.text',
+                'form_question.question.question_type.type',
                 'answer.value', 'is_deleted'
             ],
             'numerical_columns': ['id', 'form_question_id', 'answer_id'],
@@ -363,11 +398,54 @@ ENTITY_CONFIG = {
         'insight_generators': ['_generate_generic_insights'],
         'format_generators': {}
     },
+    'form_assignments': {
+        'model': FormAssignment,
+        'view_permission_entity': EntityType.FORMS,
+        'default_columns': [
+            "id",
+            "form_id",
+            "form.title",
+            "entity_name",
+            "entity_id",
+            "assigned_entity_identifier", # Will hold username for users, name for roles/environments
+            "created_at"
+        ],
+        'available_columns': [
+            "id", "form_id", "entity_name", "entity_id",
+            "form.title", "form.description", "form.is_public",
+            "form.creator.username", # From related Form's creator
+            "created_at", "updated_at", "is_deleted", "deleted_at",
+            "assigned_entity_identifier", # Populated by ReportService with main identifier
+            # Optional specific fields from assigned entities (ReportService would populate if requested)
+            "assigned_user_username", "assigned_user_email", "assigned_user_fullname",
+            "assigned_role_name", "assigned_role_description",
+            "assigned_environment_name", "assigned_environment_description",
+        ],
+        'analysis_hints': {
+            'date_columns': ['created_at', 'updated_at', 'deleted_at'],
+            'categorical_columns': [
+                'entity_name', 'form.title', 'is_deleted', 'assigned_entity_identifier'
+            ],
+            'numerical_columns': ['id', 'form_id', 'entity_id'],
+        },
+        'chart_hints': {
+            'bar_charts': ['entity_name', 'form.title', 'assigned_entity_identifier'],
+            'pie_charts': ['entity_name'],
+        },
+        'default_sort': [
+            {"field": "form_id", "direction": "asc"},
+            {"field": "entity_name", "direction": "asc"}
+        ],
+        'stats_generators': ['_generate_generic_stats'],
+        'chart_generators': ['_generate_generic_charts'],
+        'insight_generators': ['_generate_generic_insights'],
+        'format_generators': {}
+    },
     'form_submissions': {
-        'model': FormSubmission, 
+        'model': FormSubmission,
         'view_permission_entity': EntityType.SUBMISSIONS,
         'default_columns': [
-            "id", "form_id", "form.title", "submitted_by", 
+            "id", "form_id", "form.title", "submitted_by",
             "submitted_at", "created_at"
         ],
         'available_columns': [
@@ -376,6 +454,7 @@ ENTITY_CONFIG = {
             "form.creator.username", "form.creator.email",
             "form.creator.environment.name",
             "created_at", "updated_at", "is_deleted", "deleted_at"
+            # Dynamic answer columns (e.g., "answers.What is your name?") are added by ReportDataFetcher
         ],
         'analysis_hints': {
             'date_columns': ['submitted_at', 'created_at', 'updated_at', 'deleted_at'],
@@ -398,10 +477,10 @@ ENTITY_CONFIG = {
         'format_generators': {'pptx': '_generate_submission_pptx'}
     },
     'answers_submitted': {
-        'model': AnswerSubmitted, 
+        'model': AnswerSubmitted,
         'view_permission_entity': EntityType.SUBMISSIONS,
         'default_columns': [
-            "id", "form_submission_id", "form_submission.form.title", 
+            "id", "form_submission_id", "form_submission.form.title",
             "question", "question_type", "answer", "created_at"
         ],
         'available_columns': [
@@ -431,15 +510,15 @@ ENTITY_CONFIG = {
         'format_generators': {}
     },
     'attachments': {
-        'model': Attachment, 
+        'model': Attachment,
         'view_permission_entity': EntityType.ATTACHMENTS,
         'default_columns': [
-            "id", "form_submission_id", "form_submission.form.title", 
-            "file_path", "file_type", "is_signature", 
+            "id", "form_submission_id", "form_submission.form.title",
+            "file_path", "file_type", "is_signature",
             "signature_author", "created_at"
         ],
         'available_columns': [
-            "id", "form_submission_id", "file_type", "file_path", 
+            "id", "form_submission_id", "file_type", "file_path",
             "is_signature", "signature_position", "signature_author",
             "form_submission.submitted_by", "form_submission.submitted_at",
             "form_submission.form.title", "form_submission.form.description",
@@ -448,7 +527,7 @@ ENTITY_CONFIG = {
         'analysis_hints': {
             'date_columns': ['created_at', 'updated_at', 'deleted_at', 'form_submission.submitted_at'],
             'categorical_columns': [
-                'file_type', 'is_signature', 'signature_author', 
+                'file_type', 'is_signature', 'signature_author',
                 'form_submission.form.title', 'form_submission.submitted_by', 'is_deleted'
             ],
             'numerical_columns': ['id', 'form_submission_id'],
@@ -467,7 +546,7 @@ ENTITY_CONFIG = {
     },
     'token_blocklist': {
         'model': TokenBlocklist,
-        'view_permission_entity': EntityType.USERS,  # Only users with user management should see this
+        'view_permission_entity': EntityType.USERS, # Admin/security relevant
         'default_columns': ["id", "jti", "created_at"],
         'available_columns': ["id", "jti", "created_at"],
         'analysis_hints': {
@@ -488,12 +567,12 @@ ENTITY_CONFIG = {
 }
 
 # PDF/Document constants
-DEFAULT_CHART_WIDTH = 6.5  # in inches (for PDF)
-DEFAULT_CHART_HEIGHT = 3.5  # in inches (for PDF)
+DEFAULT_CHART_WIDTH = 6.5  # in inches
+DEFAULT_CHART_HEIGHT = 3.5 # in inches
 
 # PPTX constants
-DEFAULT_PPTX_CHART_WIDTH = 8  # in inches
-DEFAULT_PPTX_CHART_HEIGHT = 4.5  # in inches
-DEFAULT_PPTX_CHART_TOP = 1.5  # in inches
-DEFAULT_PPTX_CHART_LEFT = 1  # in inches
-DEFAULT_PPTX_TABLE_ROWS = 10  # maximum number of rows in PPTX tables
+DEFAULT_PPTX_CHART_WIDTH = 8    # in inches
+DEFAULT_PPTX_CHART_HEIGHT = 4.5 # in inches
+DEFAULT_PPTX_CHART_TOP = 1.5    # in inches from top of slide
+DEFAULT_PPTX_CHART_LEFT = 1     # in inches from left of slide
+DEFAULT_PPTX_TABLE_ROWS = 10    # Default max rows for tables in PPTX

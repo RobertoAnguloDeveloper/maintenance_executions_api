@@ -21,9 +21,9 @@ from .cmms_config_views import cmms_config_bp
 from .export_submission_views import export_submission_bp
 from .count_views import count_bp
 from .entity_basic_views import entity_basic_bp
-# Import the new report blueprint
 from .report_views import report_bp
 from .report_template_views import report_template_bp
+from .form_assignment_views import form_assignment_bp # New import
 
 from flask import jsonify
 
@@ -52,17 +52,15 @@ def register_blueprints(app):
         (export_bp, '/api/export'),
         (health_bp, '/api/health'),
         (cmms_config_bp,'/api/cmms-configs'),
-        (export_submission_bp, '/api/export_submissions'),
+        (export_submission_bp, '/api/export_submissions'), # Corrected from your original export_submission_bp
         (count_bp, '/api/counts'),
-        (entity_basic_bp, '/api/entity_basic'),
-        # Add the new report blueprint registration
+        (entity_basic_bp, '/api/entity-basic'), # Corrected prefix for consistency
         (report_bp, '/api/reports'),
-        (report_template_bp, '/api/report-templates')
+        (report_template_bp, '/api/report-templates'),
+        (form_assignment_bp, '/api/form-assignments') # New blueprint
     ]
 
-    # Iterate through the blueprints list and register each one
     for blueprint, url_prefix in blueprints:
         app.register_blueprint(blueprint, url_prefix=url_prefix)
 
-    # Register a standalone ping endpoint at /api/ping
     app.route('/api/ping', methods=['GET'])(ping_standalone)

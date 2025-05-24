@@ -1,16 +1,18 @@
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from app import db
 from app.models.form_submission import FormSubmission
 from app.models.answer_submitted import AnswerSubmitted
 from app.utils.permission_manager import RoleType
 from app.models.attachment import Attachment
 from app.models.form import Form
-from sqlalchemy.orm import joinedload
+from app.models.user import User
+from sqlalchemy.orm import joinedload, selectinload
 from datetime import datetime
 import logging
 import os
 
-from app.models.user import User
+# Import FormAssignmentService to use its access checking logic
+from app.services.form_assignment_service import FormAssignmentService
 
 logger = logging.getLogger(__name__)
 
@@ -18,635 +20,411 @@ class FormSubmissionService:
     @staticmethod
     def create_submission(
         form_id: int,
-        username: str,
-        answers_data: List[Dict] = None,
+        username: str, # Username of the submitter
+        answers_data: Optional[List[Dict]] = None, # Using Optional for clarity
         upload_path: Optional[str] = None,
         submitted_at: Optional[datetime] = None
     ) -> Tuple[Optional[FormSubmission], Optional[str]]:
         """
-        Create a new form submission with answers and handle signatures
-        
-        Args:
-            form_id: ID of the form being submitted
-            username: Username of the submitter
-            answers_data: List of answer data dictionaries
-            upload_path: Base path for file uploads
-            submitted_at: Optional timestamp for when the form was submitted
-            
-        Returns:
-            tuple: (Created FormSubmission object or None, Error message or None)
+        Create a new form submission with answers and handle signatures.
+        Access control (can user submit to this form?) should be handled by the caller (Controller/View)
+        using FormAssignmentService.check_user_access_to_form().
         """
         try:
-            # Verify form exists and is active
             form = Form.query.filter_by(id=form_id, is_deleted=False).first()
             if not form:
-                return None, "Form not found or inactive"
+                return None, "Form not found or is inactive."
 
-            # Create submission
+            # User performing the submission must exist
+            submitter_user = User.query.filter_by(username=username, is_deleted=False).first()
+            if not submitter_user:
+                return None, f"User '{username}' not found or is inactive."
+
             submission = FormSubmission(
                 form_id=form_id,
-                submitted_by=username,
-                submitted_at=submitted_at or datetime.utcnow()
+                submitted_by=username, # Storing username
+                submitted_at=submitted_at or datetime.utcnow() # Use provided or current time
             )
             db.session.add(submission)
-            db.session.flush()
+            db.session.flush() # To get submission.id for answers and attachments
 
-            # Process answers if provided
             if answers_data:
+                from app.services.answer_submitted_service import AnswerSubmittedService # Local import
                 for answer_data in answers_data:
-                    # Create answer submission
-                    answer = AnswerSubmitted(
+                    signature_file = answer_data.pop('signature_file', None) # Extract FileStorage if present
+                    
+                    # Ensure all required fields for AnswerSubmittedService are present
+                    q_text = answer_data.get('question_text')
+                    q_type_text = answer_data.get('question_type_text')
+                    ans_text = answer_data.get('answer_text')
+
+                    if not all([q_text, q_type_text]): # ans_text can be None for some types
+                        db.session.rollback() # Rollback the whole submission
+                        return None, f"Missing question_text or question_type_text for an answer."
+
+                    _, error = AnswerSubmittedService.create_answer_submitted(
                         form_submission_id=submission.id,
-                        question=answer_data['question_text'],
-                        answer=answer_data['answer_text']
+                        question_text=q_text,
+                        question_type_text=q_type_text,
+                        answer_text=ans_text,
+                        question_order=answer_data.get('question_order'),
+                        is_signature=answer_data.get('is_signature', False),
+                        signature_file=signature_file,
+                        upload_path=upload_path,
+                        column=answer_data.get('column'),
+                        row=answer_data.get('row'),
+                        cell_content=answer_data.get('cell_content')
                     )
-                    db.session.add(answer)
-
-                    # Handle signature if required
-                    if answer_data.get('is_signature') and answer_data.get('signature_file'):
-                        if not upload_path:
-                            return None, "Upload path not provided for signature file"
-
-                        # Create signature directory
-                        signature_dir = os.path.join(upload_path, 'signatures', str(submission.id))
-                        os.makedirs(signature_dir, exist_ok=True)
-
-                        # Save signature file
-                        signature_file = answer_data['signature_file']
-                        filename = f"signature_{datetime.now().strftime('%Y%m%d_%H%M%S')}{os.path.splitext(signature_file.filename)[1]}"
-                        file_path = os.path.join('signatures', str(submission.id), filename)
-                        signature_file.save(os.path.join(upload_path, file_path))
-
-                        # Create attachment record
-                        attachment = Attachment(
-                            form_submission_id=submission.id,
-                            file_type=signature_file.content_type,
-                            file_path=file_path,
-                            is_signature=True
-                        )
-                        db.session.add(attachment)
-
+                    if error:
+                        db.session.rollback() # Rollback the whole submission if any answer fails
+                        return None, f"Error creating submitted answer: {error}"
+            
             db.session.commit()
+            logger.info(f"Form submission ID {submission.id} created successfully for form {form_id} by user {username}.")
             return submission, None
 
         except Exception as e:
             db.session.rollback()
-            logger.error(f"Error creating form submission: {str(e)}")
-            return None, str(e)
-        
+            logger.error(f"Error creating form submission for form {form_id} by {username}: {str(e)}", exc_info=True)
+            return None, "An unexpected error occurred while creating the submission."
+
     @staticmethod
     def get_all_submissions(user: User, filters: Optional[Dict] = None) -> List[FormSubmission]:
         """
-        Get all form submissions with role-based filtering and access control.
-        
-        Args:
-            user: Current user object for role-based access
-            filters: Optional dictionary containing filters:
-                - form_id: Filter by specific form
-                - date_range: Dict with 'start' and 'end' dates
-                - environment_id: Filter by environment
-                - submitted_by: Filter by submitter username
-                
-        Returns:
-            List[FormSubmission]: List of form submissions matching criteria
+        Get all form submissions, considering form access based on assignments
+        and then applying role-based filters on submissions.
         """
         try:
-            # Base query with proper joins and filters
-            query = (FormSubmission.query
-                .join(Form)
-                .filter(
-                    FormSubmission.is_deleted == False
-                ))
+            filters = filters or {}
             
-            # Apply role-based filtering based on environments
-            if not user.role.is_super_user:
-                if user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                    # Join with submitters to filter by environment
-                    query = (query
-                        .join(User, User.username == FormSubmission.submitted_by)
-                        .filter(User.environment_id == user.environment_id))
-                else:
-                    # Regular users can only see their own submissions
+            # Start with a base query for non-deleted submissions and non-deleted parent forms
+            query = FormSubmission.query.join(Form, FormSubmission.form_id == Form.id)\
+                                       .filter(FormSubmission.is_deleted == False, Form.is_deleted == False)
+
+            # 1. Filter by forms accessible to the current user
+            if not (user.role and user.role.is_super_user):
+                accessible_form_ids = [form.id for form in FormAssignmentService.get_accessible_forms_for_user(user.id)]
+                if not accessible_form_ids:
+                    logger.debug(f"User {user.username} has no access to any forms. Returning no submissions.")
+                    return [] # User has no access to any forms, thus no submissions
+                query = query.filter(FormSubmission.form_id.in_(accessible_form_ids))
+            
+            # 2. Apply additional role-based filtering on the submissions themselves
+            if not (user.role and user.role.is_super_user):
+                if user.role.name == RoleType.TECHNICIAN:
+                    # Technicians can only see their own submissions (within the forms they can access)
                     query = query.filter(FormSubmission.submitted_by == user.username)
-
-            # Apply optional filters
-            if filters:
-                if 'form_id' in filters:
-                    query = query.filter(FormSubmission.form_id == filters['form_id'])
-                        
-                if 'submitted_by' in filters:
-                    query = query.filter(
-                        FormSubmission.submitted_by == filters['submitted_by']
-                    )
-                    
-                if 'date_range' in filters:
-                    date_range = filters['date_range']
-                    if date_range.get('start'):
-                        query = query.filter(
-                            FormSubmission.submitted_at >= date_range['start']
-                        )
-                    if date_range.get('end'):
-                        query = query.filter(
-                            FormSubmission.submitted_at <= date_range['end']
-                        )
-
-            # Add eager loading for related data
-            query = (query.options(
-                joinedload(FormSubmission.form),
-                joinedload(FormSubmission.answers_submitted),
-                joinedload(FormSubmission.attachments)
-            ))
-
-            # Order by submission date, most recent first
-            submissions = query.order_by(FormSubmission.submitted_at.desc()).all()
+                elif user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
+                    # Site managers/supervisors see submissions from their environment
+                    # (within the forms they can access)
+                    query = query.join(User, User.username == FormSubmission.submitted_by)\
+                                 .filter(User.environment_id == user.environment_id, User.is_deleted == False)
             
+            # Apply optional filters from the request
+            if 'form_id' in filters: # This can further narrow down from accessible forms
+                query = query.filter(FormSubmission.form_id == filters['form_id'])
+            
+            if 'submitted_by' in filters: # Filter by specific submitter
+                query = query.filter(FormSubmission.submitted_by == filters['submitted_by'])
+            
+            if 'date_range' in filters:
+                date_range = filters['date_range']
+                if date_range.get('start'): query = query.filter(FormSubmission.submitted_at >= date_range['start'])
+                if date_range.get('end'): query = query.filter(FormSubmission.submitted_at <= date_range['end'])
+            
+            # Eager load related data for efficiency
+            query = query.options(
+                joinedload(FormSubmission.form), # Form details are often needed
+                selectinload(FormSubmission.answers_submitted).filter_by(is_deleted=False), # Only active answers
+                selectinload(FormSubmission.attachments).filter_by(is_deleted=False) # Only active attachments
+            )
+            
+            submissions = query.order_by(FormSubmission.submitted_at.desc()).all()
+            logger.info(f"Retrieved {len(submissions)} submissions for user {user.username} with filters: {filters}")
             return submissions
 
         except Exception as e:
-            logger.error(f"Error getting submissions: {str(e)}")
+            logger.error(f"Error in FormSubmissionService.get_all_submissions for user {user.username}: {str(e)}", exc_info=True)
             return []
-        
+
+
     @staticmethod
-    def get_all_submissions_compact(user: User, filters: Optional[Dict] = None) -> List[Dict]:
+    def get_batch(page: int = 1, per_page: int = 50, **filters: Any) -> Tuple[int, List[Dict[str, Any]]]:
         """
-        Get all form submissions in a compact format with minimal information.
-        
-        Args:
-            user: Current user object for role-based access
-            filters: Optional dictionary containing filters:
-                - form_id: Filter by specific form
-                - date_range: Dict with 'start' and 'end' dates
-                - environment_id: Filter by environment
-                - submitted_by: Filter by submitter username
-                
-        Returns:
-            List[Dict]: List of compact form submissions with specific field order
+        Get batch of form submissions with pagination, respecting new form access rules.
+        Filters include: include_deleted (submissions), form_id, submitted_by, date_range, current_user.
         """
         try:
-            # Base query with proper joins and filters
-            query = (FormSubmission.query
-                .join(Form)
-                .filter(
-                    FormSubmission.is_deleted == False
-                ))
-            
-            # Apply role-based filtering based on environments
-            if not user.role.is_super_user:
-                if user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                    # Join with submitters to filter by environment
-                    query = (query
-                        .join(User, User.username == FormSubmission.submitted_by)
-                        .filter(User.environment_id == user.environment_id))
-                else:
-                    # Regular users can only see their own submissions
-                    query = query.filter(FormSubmission.submitted_by == user.username)
-            
-            # Apply optional filters
-            if filters:
-                if 'form_id' in filters:
-                    query = query.filter(FormSubmission.form_id == filters['form_id'])
-                        
-                if 'submitted_by' in filters:
-                    query = query.filter(
-                        FormSubmission.submitted_by == filters['submitted_by']
-                    )
-                    
-                if 'date_range' in filters:
-                    date_range = filters['date_range']
-                    if date_range.get('start'):
-                        query = query.filter(
-                            FormSubmission.submitted_at >= date_range['start']
-                        )
-                    if date_range.get('end'):
-                        query = query.filter(
-                            FormSubmission.submitted_at <= date_range['end']
-                        )
+            current_user: Optional[User] = filters.get('current_user')
+            if not current_user:
+                logger.error("FormSubmissionService.get_batch called without 'current_user' in filters.")
+                return 0, []
 
-            # Add eager loading for related data
-            query = (query.options(
-                joinedload(FormSubmission.form),
-                joinedload(FormSubmission.answers_submitted),
-                joinedload(FormSubmission.attachments)
-            ))
-
-            # Order by submission date, most recent first
-            submissions = query.order_by(FormSubmission.submitted_at.desc()).all()
-            
-            # Transform to compact format with fields in exact order specified
-            compact_submissions = []
-            for submission in submissions:
-                # Create dict with keys in the exact order required
-                submission_dict = {
-                    'id': submission.id,
-                    'form_id': submission.form_id,
-                    'form': {
-                        'id': submission.form.id,
-                        'title': submission.form.title
-                    } if submission.form else None,
-                    'submitted_at': submission.submitted_at.isoformat() if submission.submitted_at else None,
-                    'submitted_by': submission.submitted_by,
-                    'answers_count': len([answer for answer in submission.answers_submitted if not answer.is_deleted]),
-                    'attachments_count': len([attachment for attachment in submission.attachments if not attachment.is_deleted])
-                }
-                compact_submissions.append(submission_dict)
-                
-            return compact_submissions
-
-        except Exception as e:
-            logger.error(f"Error getting compact submissions: {str(e)}")
-            return []
-        
-    @staticmethod
-    def get_batch(page=1, per_page=50, **filters):
-        """
-        Get batch of form submissions with pagination in compact format
-        
-        Args:
-            page: Page number (starts from 1)
-            per_page: Number of items per page
-            **filters: Optional filters
-                
-        Returns:
-            tuple: (total_count, form_submissions)
-        """
-        try:
-            # Build base query with joins for efficiency
             query = FormSubmission.query.options(
-                joinedload(FormSubmission.form),
-                joinedload(FormSubmission.answers_submitted),
-                joinedload(FormSubmission.attachments)
-            )
-            
-            # Apply filters
-            include_deleted = filters.get('include_deleted', False)
-            if not include_deleted:
+                joinedload(FormSubmission.form), # Eager load form for title, etc.
+                selectinload(FormSubmission.answers_submitted).filter_by(is_deleted=False),
+                selectinload(FormSubmission.attachments).filter_by(is_deleted=False)
+            ).join(Form, FormSubmission.form_id == Form.id).filter(Form.is_deleted == False)
+
+
+            include_deleted_submissions = filters.get('include_deleted', False)
+            if not include_deleted_submissions:
                 query = query.filter(FormSubmission.is_deleted == False)
+            # Note: if include_deleted_submissions is True, admins might see submissions for deleted forms if not filtered by Form.is_deleted
+
+            # 1. Filter by forms accessible to the user
+            if not (current_user.role and current_user.role.is_super_user):
+                accessible_form_ids = [form.id for form in FormAssignmentService.get_accessible_forms_for_user(current_user.id)]
+                if not accessible_form_ids:
+                    return 0, []
+                query = query.filter(FormSubmission.form_id.in_(accessible_form_ids))
+
+            # 2. Apply other role-based filtering on submissions
+            if not (current_user.role and current_user.role.is_super_user):
+                if current_user.role.name == RoleType.TECHNICIAN:
+                    query = query.filter(FormSubmission.submitted_by == current_user.username)
+                elif current_user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
+                    # Ensure User join is present if not already from other filters
+                    if User not in [j.entity.class_ for j in query._legacy_setup_joins]: # Check if User is already joined
+                         query = query.join(User, User.username == FormSubmission.submitted_by)
+                    query = query.filter(User.environment_id == current_user.environment_id, User.is_deleted == False)
             
-            form_id = filters.get('form_id')
-            if form_id:
-                query = query.filter(FormSubmission.form_id == form_id)
-                
-            submitted_by = filters.get('submitted_by')
-            if submitted_by:
-                query = query.filter(FormSubmission.submitted_by == submitted_by)
-                
+            # Apply other specific filters from request
+            form_id_filter = filters.get('form_id')
+            if form_id_filter:
+                query = query.filter(FormSubmission.form_id == form_id_filter)
+            
+            submitted_by_filter = filters.get('submitted_by')
+            if submitted_by_filter:
+                query = query.filter(FormSubmission.submitted_by == submitted_by_filter)
+
             date_range = filters.get('date_range')
             if date_range:
-                if date_range.get('start'):
-                    query = query.filter(FormSubmission.submitted_at >= date_range['start'])
-                if date_range.get('end'):
-                    query = query.filter(FormSubmission.submitted_at <= date_range['end'])
-            
-            # Apply role-based access control
-            current_user = filters.get('current_user')
-            if current_user:
-                # Normal role-based filtering for viewing submissions
-                if not current_user.role.is_super_user:
-                    if current_user.role.name == RoleType.TECHNICIAN:
-                        # Technicians can only see their own submissions
-                        query = query.filter(FormSubmission.submitted_by == current_user.username)
-                    elif current_user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                        # Site managers and supervisors can see submissions from users in their environment
-                        query = query.join(
-                            User,
-                            User.username == FormSubmission.submitted_by
-                        ).filter(
-                            User.environment_id == current_user.environment_id
-                        )
-            
-            # Get total count
-            total_count = query.count()
-            
-            # Calculate total pages
+                if date_range.get('start'): query = query.filter(FormSubmission.submitted_at >= date_range['start'])
+                if date_range.get('end'): query = query.filter(FormSubmission.submitted_at <= date_range['end'])
+
+            total_count = query.count() # Count after all filters
             total_pages = (total_count + per_page - 1) // per_page if per_page > 0 else 0
-            
-            # Ensure requested page is valid
-            if page > total_pages and total_pages > 0:
-                # If requested page exceeds total pages, use the last page
-                page = total_pages
-            elif page < 1:
-                # If page is less than 1, use the first page
-                page = 1
-                
-            # Calculate offset based on adjusted page number
+            page = max(1, min(page, total_pages if total_pages > 0 else 1))
             offset = (page - 1) * per_page
+
+            form_submissions = query.order_by(FormSubmission.submitted_at.desc()).offset(offset).limit(per_page).all()
             
-            # Apply pagination with adjusted page
-            form_submissions = query.order_by(
-                FormSubmission.submitted_at.desc()
-            ).offset(offset).limit(per_page).all()
-            
-            # Transform to compact format with fields in exact order specified
             compact_submissions = []
-            for submission in form_submissions:
-                # Create dict with keys in the exact order required
-                submission_dict = {
-                    'id': submission.id,
-                    'form_id': submission.form_id,
-                    'form': {
-                        'id': submission.form.id,
-                        'title': submission.form.title
-                    } if submission.form else None,
-                    'submitted_at': submission.submitted_at.isoformat() if submission.submitted_at else None,
-                    'submitted_by': submission.submitted_by,
-                    'answers_count': len([answer for answer in submission.answers_submitted if not answer.is_deleted]),
-                    'attachments_count': len([attachment for attachment in submission.attachments if not attachment.is_deleted]),
-                    'is_editable': False  # Default value, will be updated below
+            for sub in form_submissions:
+                sub_dict = {
+                    'id': sub.id, 'form_id': sub.form_id,
+                    'form': {'id': sub.form.id, 'title': sub.form.title} if sub.form else None,
+                    'submitted_at': sub.submitted_at.isoformat() if sub.submitted_at else None,
+                    'submitted_by': sub.submitted_by,
+                    'status': sub.status, # Include status
+                    'answers_count': len(sub.answers_submitted), # Eager loaded, so this is efficient
+                    'attachments_count': len(sub.attachments), # Eager loaded
+                    'is_editable': False # Default
                 }
-                
-                # Add "is_editable" flag based on role and age
+                # is_editable logic (can be complex, depends on business rules)
                 if current_user:
-                    submitted_at = submission.submitted_at
-                    if current_user.role.is_super_user:
-                        # Admins can edit all submissions
-                        submission_dict['is_editable'] = True
-                    elif current_user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                        # Site managers and supervisors can edit submissions in their environment
-                        # that are less than 7 days old
-                        if submitted_at and (datetime.utcnow() - submitted_at).days <= 7:
-                            submitter = User.query.filter_by(username=submission.submitted_by).first()
-                            if submitter and submitter.environment_id == current_user.environment_id:
-                                submission_dict['is_editable'] = True
-                    elif submission.submitted_by == current_user.username:
-                        # Regular users can edit their own submissions that are less than 7 days old
-                        if submitted_at and (datetime.utcnow() - submitted_at).days <= 7:
-                            submission_dict['is_editable'] = True
-                
-                compact_submissions.append(submission_dict)
+                    is_super = current_user.role and current_user.role.is_super_user
+                    is_submitter = sub.submitted_by == current_user.username
+                    # Example: editable if superuser, or submitter within 7 days
+                    can_edit_based_on_role_and_env = False
+                    if not is_super and not is_submitter and current_user.role and current_user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
+                        submitter_obj = User.query.filter_by(username=sub.submitted_by, is_deleted=False).first()
+                        if submitter_obj and submitter_obj.environment_id == current_user.environment_id:
+                            can_edit_based_on_role_and_env = True
+                    
+                    time_limit_passed = (datetime.utcnow() - sub.submitted_at).days > 7 if sub.submitted_at else True
+
+                    if is_super or \
+                       (is_submitter and not time_limit_passed) or \
+                       (can_edit_based_on_role_and_env and not time_limit_passed) :
+                        sub_dict['is_editable'] = True
+                compact_submissions.append(sub_dict)
             
             return total_count, compact_submissions
                 
         except Exception as e:
-            logger.error(f"Error in form submission batch pagination service: {str(e)}")
+            logger.error(f"Error in FormSubmissionService.get_batch: {str(e)}", exc_info=True)
             return 0, []
-        
+
     @staticmethod
-    def get_user_environment_id(username: str) -> Optional[int]:
-        """Get the environment ID for a user"""
-        try:
-            user = User.query.filter_by(username=username).first()
-            return user.environment_id if user else None
-        except Exception as e:
-            logger.error(f"Error getting user environment ID: {str(e)}")
-            return None
-        
-    @staticmethod
-    def get_submission(submission_id: int) -> Optional[FormSubmission]:
+    def get_submission(submission_id: int, current_user: User) -> Optional[FormSubmission]:
         """
-        Get a specific form submission with all related data
-        
-        Args:
-            submission_id: ID of the submission
+        Get a specific form submission if the user has access to its parent form.
+        Additional submission-level RBAC can be applied here if needed.
+        """
+        try:
+            submission = FormSubmission.query.options(
+                joinedload(FormSubmission.form), # Eager load form to check access
+                selectinload(FormSubmission.answers_submitted).filter_by(is_deleted=False),
+                selectinload(FormSubmission.attachments).filter_by(is_deleted=False)
+            ).filter_by(id=submission_id, is_deleted=False).first()
+
+            if not submission:
+                logger.warning(f"Submission ID {submission_id} not found or deleted.")
+                return None
+
+            # Check access to the parent form
+            if not FormAssignmentService.check_user_access_to_form(current_user.id, submission.form_id):
+                logger.warning(f"User {current_user.username} denied access to form {submission.form_id} for submission {submission_id}.")
+                return None # User cannot access the form this submission belongs to
+
+            # Apply further submission-specific RBAC if necessary
+            if not (current_user.role and current_user.role.is_super_user):
+                if current_user.role.name == RoleType.TECHNICIAN and submission.submitted_by != current_user.username:
+                    logger.warning(f"Technician {current_user.username} denied access to submission {submission_id} by {submission.submitted_by}.")
+                    return None
+                elif current_user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
+                    submitter = User.query.filter_by(username=submission.submitted_by, is_deleted=False).first()
+                    if not submitter or submitter.environment_id != current_user.environment_id:
+                        logger.warning(f"User {current_user.username} (SiteMgr/Supervisor) denied access to submission {submission_id} from different environment.")
+                        return None
             
-        Returns:
-            Optional[FormSubmission]: FormSubmission object if found, None otherwise
-        """
-        try:
-            return (FormSubmission.query
-                .filter_by(
-                    id=submission_id,
-                    is_deleted=False
-                )
-                .options(
-                    joinedload(FormSubmission.form),
-                    joinedload(FormSubmission.answers_submitted),
-                    joinedload(FormSubmission.attachments)
-                )
-                .first())
+            logger.info(f"Submission ID {submission_id} retrieved successfully by user {current_user.username}.")
+            return submission
         except Exception as e:
-            logger.error(f"Error retrieving submission {submission_id}: {str(e)}")
+            logger.error(f"Error retrieving submission {submission_id} for user {current_user.username}: {str(e)}", exc_info=True)
             return None
-        
-    @staticmethod
-    def get_submissions_by_user(username: str, filters: Dict = None) -> List[FormSubmission]:
-        """
-        Get all submissions for a specific user with optional filtering.
-        Args:
-            username: Username of the submitter
-            filters: Optional dictionary containing filters
-                - start_date: Start date for filtering
-                - end_date: End date for filtering
-                - form_id: Filter by specific form
-                
-        Returns:
-            List[FormSubmission]: List of form submissions
-        """
-        try:
-            query = FormSubmission.query.filter_by(
-                submitted_by=username,
-                is_deleted=False
-            )
 
-            if filters:
-                if 'start_date' in filters:
-                    query = query.filter(FormSubmission.submitted_at >= filters['start_date'])
-                if 'end_date' in filters:
-                    query = query.filter(FormSubmission.submitted_at <= filters['end_date'])
-                if 'form_id' in filters:
-                    query = query.filter_by(form_id=filters['form_id'])
-
-            return query.order_by(FormSubmission.submitted_at.desc()).all()
-
-        except Exception as e:
-            logger.error(f"Error getting submissions for user {username}: {str(e)}")
-            return []
-        
     @staticmethod
     def update_submission(
         submission_id: int,
+        current_user: User, # Pass the User object
         update_data: Dict,
-        answers_data: List[Dict] = None,
+        answers_data: Optional[List[Dict]] = None,
         upload_path: Optional[str] = None
     ) -> Tuple[Optional[FormSubmission], Optional[str]]:
         """
-        Update an existing form submission with answers and handle signatures
-        
-        Args:
-            submission_id: ID of the submission to update
-            update_data: Dictionary of fields to update
-            answers_data: List of answer data dictionaries
-            upload_path: Base path for file uploads
-            
-        Returns:
-            tuple: (Updated FormSubmission object or None, Error message or None)
+        Update an existing form submission.
+        Access control (can user update THIS submission?) should be handled by the caller (Controller/View)
+        based on form access, submission ownership, role, and time limits.
         """
         try:
-            # Retrieve the submission
             submission = FormSubmission.query.filter_by(id=submission_id, is_deleted=False).first()
             if not submission:
-                return None, "Submission not found"
+                return None, "Submission not found or has been deleted."
 
-            # Update submission timestamp
+            # Authorization should be performed by the controller before calling this.
+            # Example checks that would be in controller:
+            # if not FormAssignmentService.check_user_access_to_form(current_user.id, submission.form_id): return None, "Access Denied"
+            # if not (current_user.role.is_super_user or (submission.submitted_by == current_user.username and not time_limit_exceeded)): return None, "Update conditions not met"
+
             submission.updated_at = datetime.utcnow()
-            
-            # Process status update if provided
             if 'status' in update_data:
                 submission.status = update_data['status']
 
-            # Update answers if provided
             if answers_data:
-                # Keep track of processed answer IDs
+                from app.services.answer_submitted_service import AnswerSubmittedService # Local import
                 processed_answer_ids = []
-                
                 for answer_data in answers_data:
                     answer_id = answer_data.get('id')
-                    
-                    if answer_id:
-                        # Update existing answer
-                        answer = AnswerSubmitted.query.filter_by(
-                            id=answer_id,
-                            form_submission_id=submission_id,
-                            is_deleted=False
-                        ).first()
-                        
-                        if answer:
-                            answer.answer = answer_data.get('answer_text', answer.answer)
-                            answer.updated_at = datetime.utcnow()
-                            processed_answer_ids.append(answer_id)
-                    else:
-                        # Create new answer
-                        answer = AnswerSubmitted(
-                            form_submission_id=submission_id,
-                            question=answer_data['question_text'],
-                            answer=answer_data['answer_text']
+                    signature_file = answer_data.pop('signature_file', None)
+                    q_text = answer_data.get('question_text')
+                    q_type_text = answer_data.get('question_type_text')
+                    ans_text = answer_data.get('answer_text')
+
+                    if not all([q_text, q_type_text]):
+                        db.session.rollback()
+                        return None, f"Missing question_text or question_type_text for an answer during update."
+
+                    if answer_id: # Update existing answer
+                        existing_answer = AnswerSubmitted.query.filter_by(id=answer_id, form_submission_id=submission_id, is_deleted=False).first()
+                        if existing_answer:
+                            _, error = AnswerSubmittedService.update_answer_submitted(
+                                answer_submitted_id=existing_answer.id,
+                                answer_text=ans_text, # Pass only relevant fields
+                                question_order=answer_data.get('question_order'),
+                                column=answer_data.get('column'),
+                                row=answer_data.get('row'),
+                                cell_content=answer_data.get('cell_content')
+                            )
+                            if error: raise ValueError(f"Error updating answer ID {answer_id}: {error}")
+                            processed_answer_ids.append(existing_answer.id)
+                    else: # Create new answer
+                        new_ans, error = AnswerSubmittedService.create_answer_submitted(
+                            form_submission_id=submission.id, question_text=q_text, question_type_text=q_type_text,
+                            answer_text=ans_text, question_order=answer_data.get('question_order'),
+                            is_signature=answer_data.get('is_signature', False), signature_file=signature_file,
+                            upload_path=upload_path, column=answer_data.get('column'), row=answer_data.get('row'),
+                            cell_content=answer_data.get('cell_content')
                         )
-                        db.session.add(answer)
-                        db.session.flush()
-                        processed_answer_ids.append(answer.id)
-                    
-                    # Handle signature if required
-                    if answer_data.get('is_signature') and answer_data.get('signature_file'):
-                        if not upload_path:
-                            return None, "Upload path not provided for signature file"
-
-                        # Create signature directory
-                        signature_dir = os.path.join(upload_path, 'signatures', str(submission_id))
-                        os.makedirs(signature_dir, exist_ok=True)
-
-                        # Save signature file
-                        signature_file = answer_data['signature_file']
-                        filename = f"signature_{datetime.now().strftime('%Y%m%d_%H%M%S')}{os.path.splitext(signature_file.filename)[1]}"
-                        file_path = os.path.join('signatures', str(submission_id), filename)
-                        signature_file.save(os.path.join(upload_path, file_path))
-
-                        # Check if there's an existing signature attachment
-                        existing_signature = Attachment.query.filter_by(
-                            form_submission_id=submission_id,
-                            is_signature=True,
-                            is_deleted=False
-                        ).first()
-                        
-                        if existing_signature:
-                            # Soft delete the old signature
-                            existing_signature.soft_delete()
-                        
-                        # Create new attachment record
-                        attachment = Attachment(
-                            form_submission_id=submission_id,
-                            file_type=signature_file.content_type,
-                            file_path=file_path,
-                            is_signature=True
-                        )
-                        db.session.add(attachment)
+                        if error: raise ValueError(f"Error creating new answer: {error}")
+                        if new_ans: processed_answer_ids.append(new_ans.id)
                 
-                # If deletion flag is provided in update_data, handle removal of unprocessed answers
                 if update_data.get('delete_unprocessed_answers'):
-                    unprocessed_answers = AnswerSubmitted.query.filter(
+                    AnswerSubmitted.query.filter(
                         AnswerSubmitted.form_submission_id == submission_id,
                         AnswerSubmitted.is_deleted == False,
                         ~AnswerSubmitted.id.in_(processed_answer_ids)
-                    ).all()
-                    
-                    for answer in unprocessed_answers:
-                        answer.soft_delete()
+                    ).update({"is_deleted": True, "deleted_at": datetime.utcnow()}, synchronize_session=False)
 
             db.session.commit()
+            logger.info(f"Submission ID {submission_id} updated by user {current_user.username}.")
             return submission, None
-
         except Exception as e:
             db.session.rollback()
-            logger.error(f"Error updating form submission: {str(e)}")
-            return None, str(e)
+            logger.error(f"Error updating form submission ID {submission_id}: {str(e)}", exc_info=True)
+            return None, "An unexpected error occurred while updating the submission."
 
     @staticmethod
-    def delete_submission(submission_id: int) -> Tuple[bool, Optional[str]]:
+    def delete_submission(submission_id: int, current_user: User) -> Tuple[bool, Optional[str]]:
         """
-        Delete a submission while preserving related answer and attachment data.
+        Soft delete a submission.
+        Access control should be handled by the caller.
         """
         try:
-            submission = FormSubmission.query.filter_by(
-                id=submission_id,
-                is_deleted=False
-            ).first()
-            
+            submission = FormSubmission.query.filter_by(id=submission_id, is_deleted=False).first()
             if not submission:
-                return False, "Submission not found"
+                return False, "Submission not found or already deleted."
 
-            # Only soft delete the submission itself
-            # without touching related answers or attachments
+            # Authorization should be done by the controller.
+            # Example: if not (current_user.role.is_super_user or (submission.submitted_by == current_user.username and not time_limit_exceeded)): return False, "Permission denied"
+
+            # Soft delete the submission itself. Associated answers/attachments are not deleted here by default.
+            # If cascading soft delete of answers/attachments is needed, that logic would be added.
             submission.soft_delete()
             db.session.commit()
-            
-            logger.info(f"Submission {submission_id} marked as deleted while preserving related data")
+            logger.info(f"Submission ID {submission_id} soft-deleted by user {current_user.username}.")
             return True, None
-
         except Exception as e:
             db.session.rollback()
-            logger.error(f"Error deleting submission: {str(e)}")
-            return False, str(e)
+            logger.error(f"Error deleting submission ID {submission_id}: {str(e)}", exc_info=True)
+            return False, "An unexpected error occurred while deleting the submission."
+
+    # get_submission_answers and update_submission_status remain largely the same,
+    # assuming access to the parent submission is checked by the controller.
+    @staticmethod
+    def get_submission_answers(submission_id: int, current_user: User) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+        """Get all active answers for a specific submission, if user has access to the submission."""
+        submission = FormSubmissionService.get_submission(submission_id, current_user) # This now checks form access
+        if not submission:
+            return [], "Submission not found or access denied."
+        
+        # answers_submitted relationship is already filtered for is_deleted=False by eager loading options
+        answers_data = [ans.to_dict() for ans in submission.answers_submitted]
+        return answers_data, None
 
     @staticmethod
-    def get_submission_answers(submission_id: int) -> Tuple[List[Dict], Optional[str]]:
-        """Get all answers for a specific submission"""
+    def update_submission_status(submission_id: int, status: str, current_user: User) -> Tuple[Optional[FormSubmission], Optional[str]]:
+        """Update submission status, if user has access."""
+        # Access control for updating status should be in the controller.
+        # Typically, more roles than just the submitter might be able to change status.
+        submission = FormSubmissionService.get_submission(submission_id, current_user)
+        if not submission:
+            return None, "Submission not found or access denied to update status."
+        
+        # Add specific role checks here if only certain roles can update status
+        # e.g., if not current_user.role.is_super_user and current_user.role.name not in [RoleType.SITE_MANAGER]:
+        #    return None, "Permission denied to update submission status."
+
         try:
-            submission = FormSubmission.query.filter_by(
-                id=submission_id,
-                is_deleted=False
-            ).first()
-            
-            if not submission:
-                return [], "Submission not found"
-
-            answers = []
-            for answer in submission.answers_submitted:
-                if not answer.is_deleted:
-                    answer_dict = answer.to_dict()
-                    # Add signature info if available
-                    signature = next((att for att in submission.attachments 
-                                   if att.is_signature and not att.is_deleted), None)
-                    if signature:
-                        answer_dict['signature'] = signature.to_dict()
-                    answers.append(answer_dict)
-
-            return answers, None
-
-        except Exception as e:
-            logger.error(f"Error getting submission answers: {str(e)}")
-            return [], str(e)
-
-    @staticmethod
-    def update_submission_status(
-        submission_id: int,
-        status: str
-    ) -> Tuple[Optional[FormSubmission], Optional[str]]:
-        """Update submission status"""
-        try:
-            submission = FormSubmission.query.filter_by(
-                id=submission_id,
-                is_deleted=False
-            ).first()
-            
-            if not submission:
-                return None, "Submission not found"
-
-            # Update status and timestamps
             submission.status = status
             submission.updated_at = datetime.utcnow()
-            
             db.session.commit()
+            logger.info(f"Status of submission ID {submission_id} updated to '{status}' by user {current_user.username}.")
             return submission, None
-
         except Exception as e:
             db.session.rollback()
-            logger.error(f"Error updating submission status: {str(e)}")
-            return None, str(e)
+            logger.error(f"Error updating status for submission {submission_id}: {str(e)}", exc_info=True)
+            return None, "Failed to update submission status."
+

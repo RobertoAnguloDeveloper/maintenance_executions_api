@@ -1,3 +1,5 @@
+# app/models/__init__.py
+
 from .user import User
 from .role import Role
 from .permission import Permission
@@ -14,6 +16,7 @@ from .answer_submitted import AnswerSubmitted
 from .attachment import Attachment
 from .token_blocklist import TokenBlocklist
 from .report_template import ReportTemplate
+from .form_assignment import FormAssignment # New import
 
 __all__ = [
     'User',
@@ -31,5 +34,6 @@ __all__ = [
     'AnswerSubmitted',
     'Attachment',
     'TokenBlocklist',
-    'ReportTemplate'
+    'ReportTemplate',
+    'FormAssignment' # New model added
 ]

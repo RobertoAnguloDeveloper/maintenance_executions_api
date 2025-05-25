@@ -7,6 +7,7 @@ from app.models.attachment import Attachment
 from app.models.environment import Environment
 from app.models.form import Form
 from app.models.form_answer import FormAnswer
+from app.models.form_assignment import FormAssignment
 from app.models.form_question import FormQuestion
 from app.models.form_submission import FormSubmission
 from app.models.permission import Permission
@@ -31,6 +32,7 @@ class EntityBasicService(BaseService):
         'attachments': Attachment,
         'environments': Environment,
         'forms': Form,
+        'form_assignments': FormAssignment,
         'form_answers': FormAnswer,
         'form_questions': FormQuestion,
         'form_submissions': FormSubmission,

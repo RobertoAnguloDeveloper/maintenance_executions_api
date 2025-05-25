@@ -86,17 +86,46 @@ class FormService(BaseService):
                 # For non-admins, use FormAssignmentService to get all accessible forms
                 # This list already respects all assignment rules, creator access, and admin override (though admin handled above).
                 accessible_forms = FormAssignmentService.get_accessible_forms_for_user(user.id)
-                
+
                 # Further filter this list if is_public parameter is provided
                 if is_public is not None:
                     accessible_forms = [form for form in accessible_forms if form.is_public == is_public]
-                
+
                 # Sort the final list (get_accessible_forms_for_user might already sort, but good to be explicit)
                 return sorted(accessible_forms, key=lambda f: f.created_at, reverse=True)
 
         except Exception as e:
             logger.error(f"Error in FormService.get_all_forms for user {user.id if user else 'Unknown'}: {str(e)}", exc_info=True)
             raise # Or return [] depending on desired error handling for controllers
+
+    @staticmethod
+    def get_all_forms_basic_info(current_user: User) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+        """
+        Get basic information (id, title, description, user_id, is_public, attachments_required)
+        for all forms accessible to the current_user.
+        """
+        try:
+            accessible_forms = FormAssignmentService.get_accessible_forms_for_user(current_user.id)
+            if accessible_forms is None: # Should not happen if service returns [] on error
+                return [], "Error retrieving accessible forms."
+
+            # Using to_dict_basic which includes the required fields.
+            # If a more stripped-down version is needed, a new method in Form model could be created.
+            basic_forms_info = [form.to_dict_basic() for form in accessible_forms]
+            
+            # If you strictly want ONLY the specified fields and nothing else from to_dict_basic:
+            # required_keys = ['id', 'title', 'description', 'user_id', 'is_public', 'attachments_required']
+            # filtered_basic_forms_info = []
+            # for form_dict in basic_forms_info:
+            #     filtered_dict = {key: form_dict.get(key) for key in required_keys}
+            #     filtered_basic_forms_info.append(filtered_dict)
+            # return filtered_basic_forms_info, None
+            
+            return basic_forms_info, None
+            
+        except Exception as e:
+            logger.error(f"Error in FormService.get_all_forms_basic_info for user {current_user.id}: {str(e)}", exc_info=True)
+            return [], "An unexpected error occurred while retrieving basic form information."
 
 
     @staticmethod
@@ -149,7 +178,7 @@ class FormService(BaseService):
             environment_id_filter = filters.get('environment_id') # Filter by creator's environment
             if environment_id_filter:
                 query = query.join(User, User.id == Form.user_id).filter(User.environment_id == environment_id_filter)
-            
+
             only_editable = filters.get('only_editable', False)
             if only_editable and not (current_user.role and current_user.role.is_super_user):
                 # Non-admins can only edit their own forms from the set they can access
@@ -168,9 +197,9 @@ class FormService(BaseService):
                 is_super = current_user.role and current_user.role.is_super_user
                 is_creator = form_dict.get('created_by', {}).get('id') == current_user.id
                 form_dict['is_editable'] = is_super or is_creator
-            
+
             return total_count, forms_data
-                
+
         except Exception as e:
             logger.error(f"Error in FormService.get_batch: {str(e)}", exc_info=True)
             return 0, []
@@ -208,9 +237,9 @@ class FormService(BaseService):
             # First, get all forms created by users in the target environment
             env_forms_query = FormService._get_base_query().join(User, Form.user_id == User.id)\
                                                     .filter(User.environment_id == environment_id)
-            
+
             env_forms = env_forms_query.all()
-            
+
             # Then, filter this list by what the current_user can actually access
             accessible_env_forms = []
             if current_user.role and current_user.role.is_super_user:
@@ -219,7 +248,7 @@ class FormService(BaseService):
                 for form in env_forms:
                     if FormAssignmentService.check_user_access_to_form(current_user.id, form.id):
                         accessible_env_forms.append(form)
-            
+
             return sorted(accessible_env_forms, key=lambda f: f.created_at, reverse=True)
         except Exception as e:
             logger.error(f"Error in get_forms_by_environment for env {environment_id}: {str(e)}", exc_info=True)
@@ -238,7 +267,7 @@ class FormService(BaseService):
             for form in all_public_forms:
                 if FormAssignmentService.check_user_access_to_form(current_user.id, form.id):
                     accessible_public_forms.append(form)
-            
+
             return sorted(accessible_public_forms, key=lambda f: f.created_at, reverse=True)
         except Exception as e:
             logger.error(f"Error in get_public_forms: {str(e)}", exc_info=True)
@@ -267,7 +296,7 @@ class FormService(BaseService):
                 for form in all_creator_forms:
                     if FormAssignmentService.check_user_access_to_form(current_user.id, form.id):
                         accessible_creator_forms.append(form)
-            
+
             return sorted(accessible_creator_forms, key=lambda f: f.created_at, reverse=True)
         except Exception as e:
             logger.error(f"Error in get_forms_by_creator for '{username}': {str(e)}", exc_info=True)
@@ -315,14 +344,14 @@ class FormService(BaseService):
                         return None, "Form title cannot be empty."
                     setattr(form, key, value.strip() if isinstance(value, str) else value)
                     updated_fields_count += 1
-            
+
             if updated_fields_count == 0:
                 return form, "No valid fields provided for update." # Or None, "..." if no change isn't an error
 
             form.updated_at = datetime.utcnow()
             db.session.commit()
             return form, None
-            
+
         except IntegrityError as e: # Catch specific IntegrityError for unique title constraint
             db.session.rollback()
             logger.error(f"Database integrity error during form update ID {form_id}: {str(e.orig)}")
@@ -373,14 +402,14 @@ class FormService(BaseService):
                 )
                 db.session.add(form_question)
                 new_form_questions.append(form_question)
-            
+
             if not new_form_questions and questions_data: # If data was provided but all were skipped
                  logger.info(f"No new questions were added to form {form_id} as they might already exist.")
                  # return form, "No new questions added; they may already exist or data was empty." # Optionally return a message
 
             # form.updated_at = datetime.utcnow() # Handled by TimestampMixin potentially, or explicitly set if needed
             return form # Return the form instance
-        
+
         return cls._handle_transaction(_add_questions_op)
 
 
@@ -396,7 +425,7 @@ class FormService(BaseService):
                 raise ValueError("Form not found or has been deleted.")
 
             form_question_ids_in_request = {fq_id for fq_id, _ in question_order}
-            
+
             # Fetch existing, non-deleted FormQuestion objects for this form
             form_questions_map = {
                 fq.id: fq for fq in FormQuestion.query.filter(
@@ -415,7 +444,7 @@ class FormService(BaseService):
                 if form_question_to_update: # Should always be true due to check above
                     form_question_to_update.order_number = new_order
                     # form_question_to_update.updated_at = datetime.utcnow() # Handled by TimestampMixin
-            
+
             # form.updated_at = datetime.utcnow() # Handled by TimestampMixin
             return form
         return cls._handle_transaction(_reorder_op)
@@ -455,7 +484,7 @@ class FormService(BaseService):
                 # For now, assuming a bulk create that can handle the structure in 'answers'.
                 # If AnswerSubmittedService.bulk_create_answers_submitted expects specific file handling,
                 # that logic would need to be here or refactored.
-                
+
                 # We'll iterate and call the single create method for clarity on file handling needs.
                 upload_path = db.get_app().config.get('UPLOAD_FOLDER') # Get app config for upload path
 
@@ -519,7 +548,7 @@ class FormService(BaseService):
 
 
             submissions_q = FormSubmission.query.filter_by(form_id=form.id, is_deleted=False)
-            
+
             # Apply submission-level RBAC before calculating stats if necessary.
             # For example, if stats should only reflect submissions visible to the current user.
             # This depends on requirements. For now, stats are on ALL submissions of an accessible form.
@@ -555,7 +584,7 @@ class FormService(BaseService):
                 for fq_obj in active_form_questions:
                     q_text = fq_obj.question.text
                     q_type = fq_obj.question.question_type.type if fq_obj.question.question_type else "N/A"
-                    
+
                     # Count answers submitted for this specific question text within this form's submissions.
                     # This query could be slow if done per question. Consider alternatives for many questions.
                     ans_for_q_count = db.session.query(AnswerSubmitted.id)\
@@ -563,13 +592,13 @@ class FormService(BaseService):
                         .filter(FormSubmission.form_id == form_id, FormSubmission.is_deleted == False,
                                 AnswerSubmitted.question == q_text, AnswerSubmitted.is_deleted == False)\
                         .count()
-                    
+
                     stats['questions_stats'][str(fq_obj.question_id)] = {
                         'question_text': q_text, 'question_type': q_type,
                         'total_responses': ans_for_q_count,
                         # Add more stats per question if needed (e.g., distinct answers for choice questions)
                     }
-                
+
                 if total_questions_in_form > 0 and len(submissions) > 0:
                     completed_submissions_count = 0
                     for sub in submissions:
@@ -612,7 +641,7 @@ class FormService(BaseService):
                     deletion_stats['form_answers'] += 1
                 fq.soft_delete()
                 deletion_stats['form_questions'] += 1
-            
+
             # Soft delete FormAssignment entries associated with this form
             for fa_assign in FormAssignment.query.filter_by(form_id=form.id, is_deleted=False).all():
                 fa_assign.soft_delete()
@@ -647,7 +676,7 @@ class FormService(BaseService):
             accessible_forms = FormAssignmentService.get_accessible_forms_for_user(current_user.id)
             if not accessible_forms:
                 return []
-            
+
             accessible_form_ids = [form.id for form in accessible_forms]
 
             # Build query on top of accessible forms
@@ -672,8 +701,3 @@ class FormService(BaseService):
         except Exception as e:
             logger.error(f"Error in FormService.search_forms: {str(e)}", exc_info=True)
             return []
-
-    # _calculate_submission_trends and _calculate_question_statistics are internal helpers, no change for access rules here.
-    # get_user_submission_statistics: access to user's own data is generally fine, but if form_id is specified,
-    # the form itself should be checked for access. The FormSubmissionService will handle this.
-    # No direct changes needed here for FormAssignment logic, assuming FormSubmissionService handles it.

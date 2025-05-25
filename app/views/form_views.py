@@ -24,7 +24,7 @@ def create_form():
     try:
         data = request.get_json()
         current_user_identity = get_jwt_identity() # Get username from token
-        
+
         if not data:
             return jsonify({"error": "No data provided"}), 400
 
@@ -36,13 +36,13 @@ def create_form():
         if not current_user_obj:
             logger.error(f"Current user not found: {current_user_identity}")
             return jsonify({"error": "Authentication error"}), 401
-        
+
         user_id_for_form = current_user_obj.id # Default to current user
-        
+
         if 'user_id' in data and data['user_id'] != current_user_obj.id:
             if not current_user_obj.role.is_super_user:
                 return jsonify({"error": "Permission denied to create forms for other users"}), 403
-            
+
             target_user = UserController.get_user(data['user_id'])
             if not target_user:
                  return jsonify({"error": f"User with ID {data['user_id']} not found."}), 404
@@ -51,7 +51,7 @@ def create_form():
         new_form, error = FormController.create_form(
             title=data['title'],
             description=data.get('description'),
-            user_id=user_id_for_form, 
+            user_id=user_id_for_form,
             is_public=data.get('is_public', False),
             attachments_required=data.get('attachments_required', False) # Pass new field
         )
@@ -67,7 +67,7 @@ def create_form():
         # The controller returns the form model instance if successful
         return jsonify({
             "message": "Form created successfully",
-            "form": new_form.to_dict(), 
+            "form": new_form.to_dict(),
         }), 201
 
     except Exception as e:
@@ -79,9 +79,7 @@ def create_form():
 @PermissionManager.require_permission(action="view", entity_type=EntityType.FORMS)
 def get_all_forms():
     """
-    Get all forms accessible to the current user.
-    Admins see all forms. Other users see public forms and forms from their environment,
-    or forms assigned to them/their role/their environment.
+    Get all forms accessible to the current user (full details).
     Uses FormAssignmentService for comprehensive access check.
     """
     try:
@@ -89,19 +87,43 @@ def get_all_forms():
         user = AuthService.get_current_user(current_user_identity)
         if not user: return jsonify({"error": "User not found"}), 401
 
-        # Use FormAssignmentService to get all forms the user can access
-        # This service considers public forms, forms created by the user,
-        # and forms assigned via user, role, or environment.
-        accessible_forms = FormAssignmentService.get_accessible_forms_for_user(user.id)
-        
-        response_data = [form.to_dict() for form in accessible_forms]
+        # FormController.get_all_forms will internally use FormAssignmentService
+        accessible_forms = FormController.get_all_forms(user)
+
+        response_data = [form.to_dict() for form in accessible_forms] # Full dict
 
         return jsonify(response_data), 200
-        
+
     except Exception as e:
         logger.error(f"Error getting forms: {str(e)}", exc_info=True)
         return jsonify({"error": "Internal server error"}), 500
-    
+
+@form_bp.route('/compact', methods=['GET'])
+@jwt_required()
+@PermissionManager.require_permission(action="view", entity_type=EntityType.FORMS)
+def get_all_forms_basic():
+    """
+    Get basic information for all forms accessible to the current user.
+    Basic info includes: id, title, description, user_id, is_public, attachments_required.
+    """
+    try:
+        current_user_identity = get_jwt_identity()
+        user = AuthService.get_current_user(current_user_identity)
+        if not user:
+            return jsonify({"error": "User not found"}), 401
+
+        forms_basic_info, error = FormController.get_all_forms_basic_info_controller(user)
+        if error:
+            # The controller/service layer should log the specific error.
+            return jsonify({"error": error}), 500 # Or a more specific error code if available
+
+        return jsonify(forms_basic_info), 200
+
+    except Exception as e:
+        logger.error(f"Error in get_all_forms_basic view: {str(e)}", exc_info=True)
+        return jsonify({"error": "Internal server error"}), 500
+
+
 @form_bp.route('/batch', methods=['GET'])
 @jwt_required()
 @PermissionManager.require_permission(action="view", entity_type=EntityType.FORMS)
@@ -112,7 +134,7 @@ def get_batch_forms():
     try:
         page = request.args.get('page', type=int, default=1)
         per_page = request.args.get('per_page', type=int, default=50)
-        
+
         include_deleted_str = request.args.get('include_deleted', 'false').lower()
         include_deleted = include_deleted_str == 'true'
 
@@ -120,17 +142,17 @@ def get_batch_forms():
         is_public = None
         if is_public_str is not None:
             is_public = is_public_str.lower() == 'true'
-            
+
         user_id_filter = request.args.get('user_id', type=int)
         environment_id_filter = request.args.get('environment_id', type=int)
-        
+
         only_editable_str = request.args.get('only_editable', 'false').lower()
         only_editable = only_editable_str == 'true'
-        
+
         current_user_identity = get_jwt_identity()
         user = AuthService.get_current_user(current_user_identity)
         if not user: return jsonify({"error": "User not found"}), 401
-        
+
         filters = {
             'include_deleted': include_deleted,
             'is_public': is_public,
@@ -139,15 +161,15 @@ def get_batch_forms():
             'current_user': user, # Pass the user object for role-based filtering in service
             'only_editable': only_editable
         }
-        
+
         # Remove None filters to avoid passing them if not specified
         filters = {k: v for k, v in filters.items() if v is not None or k == 'is_public'}
 
 
         total_count, forms_data = FormController.get_batch(page=page, per_page=per_page, **filters)
-        
+
         total_pages = (total_count + per_page - 1) // per_page if per_page > 0 else 0
-        
+
         return jsonify({
             "metadata": {
                 "total_items": total_count,
@@ -171,7 +193,7 @@ def get_form(form_id):
         current_user_identity = get_jwt_identity()
         user = AuthService.get_current_user(current_user_identity)
         if not user: return jsonify({"error": "User not found"}), 401
-        
+
         # Check access using FormAssignmentService
         if not FormAssignmentService.check_user_access_to_form(user.id, form_id):
             return jsonify({"error": "Access to this form is denied"}), 403
@@ -181,11 +203,11 @@ def get_form(form_id):
             return jsonify({"error": "Form not found"}), 404
 
         return jsonify(form.to_dict()), 200
-        
+
     except Exception as e:
         logger.error(f"Error getting form {form_id}: {str(e)}", exc_info=True)
         return jsonify({"error": "Internal server error"}), 500
-    
+
 @form_bp.route('/environment/<int:environment_id>', methods=['GET'])
 @jwt_required()
 @PermissionManager.require_permission(action="view", entity_type=EntityType.FORMS)
@@ -196,37 +218,44 @@ def get_forms_by_environment(environment_id):
         user = AuthService.get_current_user(current_user_identity)
         if not user: return jsonify({"error": "User not found"}), 401
 
+        # Authorization check: User must be superuser OR belong to the requested environment.
+        # This check is now also implicitly handled by the service, but keeping it here provides
+        # an early exit and a specific error message.
         if not user.role.is_super_user and user.environment_id != environment_id:
             logger.warning(f"User {user.username} (env: {user.environment_id}) attempted to access forms for env {environment_id}.")
             return jsonify({"error": "Unauthorized to access forms for this environment"}), 403
 
-        forms = FormController.get_forms_by_environment(environment_id)
-        
+        forms = FormController.get_forms_by_environment(environment_id, user)
+
         forms_data = [form.to_dict() for form in forms if hasattr(form, 'to_dict')]
         logger.info(f"Found {len(forms_data)} forms for environment {environment_id}")
-        
+
         return jsonify({"forms": forms_data}), 200
 
     except Exception as e:
         logger.error(f"Error getting forms by environment {environment_id}: {str(e)}", exc_info=True)
         return jsonify({"error": "Internal server error"}), 500
-    
+
 @form_bp.route('/public', methods=['GET'])
 @jwt_required() # Still require auth to see public forms, as per original design
 def get_public_forms():
     """Get all public forms."""
     try:
-        forms = FormController.get_public_forms() # Controller returns list of Form objects
+        current_user_identity = get_jwt_identity()
+        user = AuthService.get_current_user(current_user_identity)
+        if not user: return jsonify({"error": "User not found"}), 401
+
+        forms = FormController.get_public_forms(user)
         if forms is None: # Should not happen if controller returns [] on error
-            return jsonify([]), 200 
-            
+            return jsonify([]), 200
+
         forms_data = [form.to_dict() for form in forms if hasattr(form, 'to_dict')]
         return jsonify(forms_data), 200
 
     except Exception as e:
         logger.error(f"Error getting public forms: {str(e)}", exc_info=True)
         return jsonify({"error": "Internal server error"}), 500
-    
+
 @form_bp.route('/creator/<string:username>', methods=['GET'])
 @jwt_required()
 @PermissionManager.require_permission(action="view", entity_type=EntityType.FORMS)
@@ -237,26 +266,14 @@ def get_forms_by_creator(username: str):
         requesting_user = AuthService.get_current_user(current_user_identity)
         if not requesting_user: return jsonify({"error": "User not found"}), 401
 
-        forms = FormController.get_forms_by_creator(username) # Returns list of Form objects or None
-        
+        forms = FormController.get_forms_by_creator(username, requesting_user)
+
         if forms is None: # Service/Controller might return None if creator not found
             return jsonify({"error": f"Creator '{username}' not found or error retrieving forms"}), 404
 
-        forms_data = []
-        for form_model in forms: # form_model is a Form instance
-            # Apply visibility check: user can see it if it's public, or if they are admin,
-            # or if it's in their environment (if they are Site Manager/Supervisor),
-            # or if they are the creator of the form they are requesting (if username == requesting_user.username)
-            can_view = False
-            if form_model.is_public or requesting_user.role.is_super_user or form_model.user_id == requesting_user.id:
-                can_view = True
-            elif requesting_user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                if form_model.creator and form_model.creator.environment_id == requesting_user.environment_id:
-                    can_view = True
-            
-            if can_view:
-                forms_data.append(form_model.to_dict())
-        
+        # The service layer now handles the access check, so we can directly convert.
+        forms_data = [form_model.to_dict() for form_model in forms]
+
         return jsonify(forms_data), 200
 
     except Exception as e:
@@ -273,11 +290,11 @@ def update_form(form_id):
         current_user_identity = get_jwt_identity()
         user = AuthService.get_current_user(current_user_identity)
         if not user: return jsonify({"error": "User not found"}), 401
-        
+
         form_to_update = FormController.get_form(form_id) # Returns a Form model instance
         if not form_to_update:
             return jsonify({"error": "Form not found"}), 404
-            
+
         # Authorization: Only form creator or admin can update
         if form_to_update.user_id != user.id and not user.role.is_super_user:
             return jsonify({"error": "Unauthorized to update this form"}), 403
@@ -288,28 +305,28 @@ def update_form(form_id):
 
         allowed_update_fields = ['title', 'description', 'is_public', 'attachments_required']
         update_payload = {k: v for k, v in data.items() if k in allowed_update_fields}
-        
+
         if not update_payload:
             return jsonify({"error": "No valid fields provided for update"}), 400
-        
+
         if 'is_public' in update_payload and update_payload['is_public'] and user.role.name == RoleType.SUPERVISOR:
              return jsonify({"error": "Supervisors cannot make forms public"}), 403
 
         result_dict = FormController.update_form(form_id, **update_payload) # Controller returns a dict
-        
+
         if "error" in result_dict:
             status_code = 400
             if "not found" in result_dict["error"].lower(): status_code = 404
             elif "already exists" in result_dict["error"].lower(): status_code = 409
             return jsonify({"error": result_dict["error"]}), status_code
-            
+
         logger.info(f"Form {form_id} updated successfully by user {user.username}")
         return jsonify(result_dict), 200
 
     except Exception as e:
         logger.error(f"Error updating form {form_id}: {str(e)}", exc_info=True)
         return jsonify({"error": "Internal server error"}), 500
-    
+
 @form_bp.route('/<int:form_id>', methods=['DELETE'])
 @jwt_required()
 @PermissionManager.require_permission(action="delete", entity_type=EntityType.FORMS)
@@ -319,7 +336,7 @@ def delete_form(form_id):
         current_user_identity = get_jwt_identity()
         user = AuthService.get_current_user(current_user_identity)
         if not user: return jsonify({"error": "User not found"}), 401
-        
+
         form_to_delete = FormController.get_form(form_id) # Returns a Form model instance
         if not form_to_delete:
             return jsonify({"error": "Form not found"}), 404
@@ -328,14 +345,15 @@ def delete_form(form_id):
         if form_to_delete.user_id != user.id and not user.role.is_super_user:
             return jsonify({"error": "Unauthorized to delete this form"}), 403
 
-        success, result_or_error = FormController.delete_form(form_id) # Controller returns (bool, dict/str)
+        success, result_or_error = FormController.delete_form(form_id, user)
+
         if success:
             logger.info(f"Form {form_id} and associated data deleted by {user.username}")
             return jsonify({
                 "message": "Form and associated data deleted successfully",
                 "deleted_items_summary": result_or_error # result_or_error is the stats dict here
             }), 200
-            
+
         return jsonify({"error": result_or_error}), 400 # result_or_error is the error string here
 
     except Exception as e:
@@ -352,11 +370,11 @@ def add_questions_to_form(form_id):
         current_user_identity = get_jwt_identity()
         user = AuthService.get_current_user(current_user_identity)
         if not user: return jsonify({"error": "User not found"}), 401
-        
+
         form_to_update = FormController.get_form(form_id)
         if not form_to_update:
             return jsonify({"error": "Form not found"}), 404
-            
+
         if form_to_update.user_id != user.id and not user.role.is_super_user:
             return jsonify({"error": "Unauthorized to add questions to this form"}), 403
 
@@ -399,20 +417,15 @@ def get_form_submissions(form_id):
         # Check if user can view the form itself first
         if not FormAssignmentService.check_user_access_to_form(user.id, form_id):
              return jsonify({"error": "Access to this form's submissions is denied"}), 403
-        
+
         form = FormController.get_form(form_id)
         if not form: # Should be caught by check_user_access_to_form if form doesn't exist
             return jsonify({"error": "Form not found"}), 404
 
-        submissions_list, error = FormController.get_form_submissions(form_id) # Controller returns list of dicts
+        submissions_list, error = FormController.get_form_submissions(form_id, user)
 
         if error: # Should not happen if controller handles it
             return jsonify({"error": error}), 500
-            
-        # Further filter submissions if needed based on user role for this specific form's submissions
-        # For example, a technician might only see their own submissions even if they can see the form.
-        # However, the FormController.get_form_submissions should ideally handle this.
-        # For now, assuming the controller returns appropriately filtered data.
 
         return jsonify(submissions_list), 200
 
@@ -430,7 +443,7 @@ def get_form_statistics(form_id):
         current_user_identity = get_jwt_identity()
         user = AuthService.get_current_user(current_user_identity)
         if not user: return jsonify({"error": "User not found"}), 401
-        
+
         # Check if user can view the form itself first
         if not FormAssignmentService.check_user_access_to_form(user.id, form_id):
              return jsonify({"error": "Access to this form's statistics is denied"}), 403
@@ -438,12 +451,12 @@ def get_form_statistics(form_id):
         form = FormController.get_form(form_id)
         if not form:
             return jsonify({"error": "Form not found"}), 404
-            
-        # Technicians typically shouldn't access aggregate statistics
+
+        # Technicians typically shouldn't access aggregate statistics (Handled in service, but early exit is fine)
         if user.role.name == RoleType.TECHNICIAN:
             return jsonify({"error": "Unauthorized to view form statistics"}), 403
-            
-        stats, error = FormController.get_form_statistics(form_id) # Controller returns (dict, error_str)
+
+        stats, error = FormController.get_form_statistics(form_id, user)
         if error:
             return jsonify({"error": error}), 400 # Or 500 depending on error nature
 

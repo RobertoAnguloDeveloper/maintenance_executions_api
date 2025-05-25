@@ -3,7 +3,7 @@
 from typing import Any, Dict, List, Optional, Tuple
 from app.models.form import Form
 from app.services.form_service import FormService
-# from app.utils.permission_manager import PermissionManager, EntityType, RoleType # Already imported in views usually
+from app.models.user import User # Import User for type hinting
 import logging
 
 logger = logging.getLogger(__name__)
@@ -28,12 +28,12 @@ class FormController:
     def get_form(form_id: int) -> Optional[Form]:
         """Get a specific form"""
         return FormService.get_form(form_id)
-    
+
     @staticmethod
-    def get_forms_by_environment(environment_id: int) -> list:
+    def get_forms_by_environment(environment_id: int, current_user: User) -> list:
         """Get forms by environment"""
         try:
-            return FormService.get_forms_by_environment(environment_id)
+            return FormService.get_forms_by_environment(environment_id, current_user)
         except Exception as e:
             logger.error(f"Error in get_forms_by_environment controller: {str(e)}")
             return []
@@ -50,19 +50,19 @@ class FormController:
             return []
 
     @staticmethod
-    def get_forms_by_creator(username: str) -> List[Form]: # Signature matches service
+    def get_forms_by_creator(username: str, current_user: User) -> List[Form]:
         """Get forms by creator username"""
         try:
-            return FormService.get_forms_by_creator(username)
+            return FormService.get_forms_by_creator(username, current_user)
         except Exception as e:
             logger.error(f"Error in get_forms_by_creator controller: {str(e)}")
             return [] # Return empty list on error
 
     @staticmethod
-    def get_public_forms() -> List[Form]: # Updated return type hint
+    def get_public_forms(current_user: User) -> List[Form]:
         """Get all public forms"""
         try:
-            forms = FormService.get_public_forms()
+            forms = FormService.get_public_forms(current_user)
             return forms if forms is not None else []
         except Exception as e:
             logger.error(f"Error in get_public_forms controller: {str(e)}")
@@ -76,7 +76,17 @@ class FormController:
         except Exception as e:
             logger.error(f"Error in get_all_forms controller: {str(e)}")
             return []
-        
+
+    @staticmethod
+    def get_all_forms_basic_info_controller(current_user: User) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+        """Controller method to get basic info for all accessible forms."""
+        try:
+            return FormService.get_all_forms_basic_info(current_user)
+        except Exception as e:
+            logger.error(f"Error in get_all_forms_basic_info_controller: {str(e)}")
+            return [], "Failed to retrieve basic form information."
+
+
     @staticmethod
     def get_batch(page=1, per_page=50, **filters):
         """
@@ -90,13 +100,13 @@ class FormController:
         try:
             # attachments_required can be in kwargs
             form, error = FormService.update_form(form_id, **kwargs)
-            
+
             if error:
                 return {"error": error}
-                
+
             if not form: # Should be covered by error but good practice
                 return {"error": "Form not found after update attempt"}
-                
+
             return {
                 "message": "Form updated successfully",
                 "form": form.to_dict()
@@ -107,10 +117,10 @@ class FormController:
             return {"error": str(e)}
 
     @staticmethod
-    def delete_form(form_id: int) -> tuple:
+    def delete_form(form_id: int, current_user: User) -> tuple:
         """Delete a form"""
         try:
-            return FormService.delete_form(form_id)
+            return FormService.delete_form(form_id, current_user)
         except Exception as e:
             logger.error(f"Error in delete_form controller: {str(e)}")
             return False, str(e)
@@ -132,12 +142,12 @@ class FormController:
             return None, str(e)
 
     @staticmethod
-    def get_form_submissions(form_id: int) -> Tuple[List[Dict], Optional[str]]:
+    def get_form_submissions(form_id: int, current_user: User) -> Tuple[List[Dict], Optional[str]]:
         """
         Get all submissions for a form with proper error handling
         """
         try:
-            submissions = FormService.get_form_submissions(form_id)
+            submissions = FormService.get_form_submissions(form_id, current_user)
             # Ensure submissions are converted to dicts if not already
             return [sub.to_dict() if hasattr(sub, 'to_dict') else sub for sub in submissions], None
         except Exception as e:
@@ -145,14 +155,17 @@ class FormController:
             return [], "Error retrieving submissions"
 
     @staticmethod
-    def get_form_statistics(form_id: int) -> Tuple[Optional[Dict], Optional[str]]:
+    def get_form_statistics(form_id: int, current_user: User) -> Tuple[Optional[Dict], Optional[str]]:
         """
         Get statistics for a form with proper error handling
         """
         try:
-            stats = FormService.get_form_statistics(form_id)
+            stats = FormService.get_form_statistics(form_id, current_user)
             if stats is None: # Service returns None on error or if form not found
                 return None, "Form not found or error generating statistics"
+            # Check if service returned an error dict
+            if isinstance(stats, dict) and "error" in stats:
+                return None, stats["error"]
             return stats, None
         except Exception as e:
             logger.error(f"Error getting form statistics: {str(e)}")

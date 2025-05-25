@@ -12,11 +12,9 @@ class FormAssignmentController:
     @staticmethod
     def create_form_assignment(form_id: int, entity_name: str, entity_id: int, current_user: User) -> Tuple[Optional[Dict], Optional[str]]:
         """Create a new form assignment. current_user is for authorization checks."""
-        # Authorization: Check if current_user owns the form or is an admin
-        form = FormService.get_form(form_id) # Use the correct method name from FormService
+        form = FormService.get_form(form_id) 
         if not form:
             return None, f"Form with ID {form_id} not found."
-        # Check if current_user has a role and if that role is super_user
         is_super_user = current_user.role and current_user.role.is_super_user
         if form.user_id != current_user.id and not is_super_user:
             logger.warning(f"User {current_user.id} unauthorized to assign form {form_id}.")
@@ -34,19 +32,17 @@ class FormAssignmentController:
         assignments_data: List of dicts, each with 'form_id', 'entity_name', 'entity_id'.
         current_user: For authorization checks.
         """
-        # Authorization: For bulk operations, typically stricter.
         is_super_user = current_user.role and current_user.role.is_super_user
         if not is_super_user:
             logger.warning(f"User {current_user.id} (role: {current_user.role.name if current_user.role else 'N/A'}) attempted bulk assignment without super_user privileges.")
             return None, "Unauthorized: Bulk assignment is restricted to administrators."
 
-        # Validate input structure
         if not isinstance(assignments_data, list):
             return None, "Invalid input: Expected a list of assignment objects."
-        if not all(isinstance(item, dict) for item in assignments_data): # Check if all items are dicts
+        if not all(isinstance(item, dict) for item in assignments_data): 
             return None, "Invalid input: Each item in the list must be an assignment object (dictionary)."
         
-        for item in assignments_data: # Individual item validation
+        for item in assignments_data: 
             if not all(key in item and isinstance(item.get('form_id'), int) and 
                        isinstance(item.get('entity_name'), str) and item.get('entity_name', '').strip() and
                        isinstance(item.get('entity_id'), int) 
@@ -61,7 +57,7 @@ class FormAssignmentController:
     @staticmethod
     def get_assignments_for_form(form_id: int, current_user: User) -> Tuple[Optional[List[Dict]], Optional[str]]:
         """Get all assignments for a specific form. current_user for auth."""
-        form = FormService.get_form(form_id) # Use the correct method name
+        form = FormService.get_form(form_id) 
         if not form:
             return None, f"Form with ID {form_id} not found."
         
@@ -77,20 +73,16 @@ class FormAssignmentController:
     def get_forms_for_entity(entity_name: str, entity_id: int, current_user: User) -> Tuple[Optional[List[Dict]], Optional[str]]:
         """Get all forms assigned to a specific entity. current_user for auth."""
         is_super_user = current_user.role and current_user.role.is_super_user
-        # Authorization: If entity is 'user', only that user or admin. Other entities might be admin-only.
         if entity_name == 'user' and entity_id != current_user.id and not is_super_user:
             return None, "Unauthorized to view forms for this user."
-        # Add more specific checks for 'role' or 'environment' if needed, e.g., admin only
         elif entity_name in ['role', 'environment'] and not is_super_user:
              return None, f"Unauthorized to view forms for {entity_name} entities."
 
-        # Validate entity_name format before calling service (service also validates)
         if entity_name not in FormAssignmentService.VALID_ENTITY_NAMES:
              return None, f"Invalid entity_name: {entity_name}. Must be one of {FormAssignmentService.VALID_ENTITY_NAMES}."
 
 
         forms = FormAssignmentService.get_forms_for_entity(entity_name, entity_id)
-        # Assuming forms returned by the service are Form model instances
         return [f.to_dict_basic() if hasattr(f, 'to_dict_basic') else f.to_dict() for f in forms], None
         
     @staticmethod
@@ -110,7 +102,7 @@ class FormAssignmentController:
         if not assignment:
             return False, "Form assignment not found or already deleted."
 
-        form = FormService.get_form(assignment.form_id) # Use the correct method name
+        form = FormService.get_form(assignment.form_id) 
         if not form: 
             logger.error(f"Consistency issue: Assignment {assignment_id} exists for non-existent/deleted form {assignment.form_id}")
             return False, "Associated form not found. Cannot determine authorization."
@@ -126,8 +118,6 @@ class FormAssignmentController:
     def check_user_access_to_form(user_id: int, form_id: int, current_user: User) -> Tuple[Optional[Dict[str, bool]], Optional[str]]:
         """Check if a user has access to a form. current_user for auth."""
         is_super_user = current_user.role and current_user.role.is_super_user
-        # Authorization for *checking* access:
-        # User can check their own access. Admin can check for any user.
         if user_id != current_user.id and not is_super_user:
              return None, "Unauthorized to check access for this user."
         
@@ -135,31 +125,40 @@ class FormAssignmentController:
         return {"user_id": user_id, "form_id": form_id, "has_access": has_access}, None
 
     @staticmethod
-    def get_all_assignments(page: int, per_page: int, current_user: User) -> Tuple[Optional[Tuple[int, List[Dict]]], Optional[str]]:
+    def get_assignments_batch(page: int, per_page: int, current_user: User) -> Tuple[Optional[Tuple[int, List[Dict]]], Optional[str]]:
         """
-        Get all form assignments with pagination. Restricted to administrators.
+        Get form assignments in a paginated batch. Restricted to administrators.
         """
-        # Authorization: Only super_user can view all assignments.
         is_super_user = current_user.role and current_user.role.is_super_user
         if not is_super_user:
-            logger.warning(f"User {current_user.id} attempted to get all assignments without super_user privileges.")
+            logger.warning(f"User {current_user.id} attempted to get assignments batch without super_user privileges.")
+            return None, "Unauthorized: Only administrators can view assignments batch."
+
+        total_count, assignments = FormAssignmentService.get_assignments_batch_paginated(page, per_page)
+        assignments_dict = [a.to_dict() for a in assignments] 
+        return (total_count, assignments_dict), None
+
+    @staticmethod
+    def get_all_assignments_unpaginated_controller(current_user: User) -> Tuple[Optional[List[Dict]], Optional[str]]:
+        """
+        Get ALL form assignments (unpaginated). Restricted to administrators.
+        """
+        is_super_user = current_user.role and current_user.role.is_super_user
+        if not is_super_user:
+            logger.warning(f"User {current_user.id} attempted to get all unpaginated assignments without super_user privileges.")
             return None, "Unauthorized: Only administrators can view all assignments."
 
-        total_count, assignments = FormAssignmentService.get_all_assignments_paginated(page, per_page)
-        
-        assignments_dict = [a.to_dict() for a in assignments] # Ensure Form model within assignment is also dict
-        
-        return (total_count, assignments_dict), None
+        assignments = FormAssignmentService.get_all_assignments_unpaginated()
+        assignments_dict = [a.to_dict() for a in assignments]
+        return assignments_dict, None
 
     @staticmethod
     def update_form_assignment(assignment_id: int, update_data: Dict[str, Any], current_user: User) -> Tuple[Optional[Dict], Optional[str]]:
         """Update an existing form assignment. current_user for authorization checks."""
-        # 1. Fetch the assignment first to check authorization
         assignment = FormAssignmentService.get_form_assignment_by_id(assignment_id)
         if not assignment:
             return None, "Form assignment not found or already deleted."
 
-        # 2. Authorization: Check if current_user owns the form or is an admin
         form = FormService.get_form(assignment.form_id)
         if not form:
             logger.error(f"Consistency issue: Assignment {assignment_id} exists for non-existent/deleted form {assignment.form_id}")
@@ -170,7 +169,6 @@ class FormAssignmentController:
             logger.warning(f"User {current_user.id} unauthorized to update assignment {assignment_id} for form {form.id}.")
             return None, "Unauthorized to update this form assignment. You must be the form owner or an administrator."
 
-        # 3. Call the service to perform the update
         updated_assignment, error = FormAssignmentService.update_form_assignment(assignment_id, update_data)
 
         if error:

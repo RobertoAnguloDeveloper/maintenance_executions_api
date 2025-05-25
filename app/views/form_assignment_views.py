@@ -182,7 +182,9 @@ def get_my_accessible_forms():
 # If you need an admin endpoint to get forms for ANY user:
 @form_assignment_bp.route('/user/<int:user_id>/accessible-forms', methods=['GET'])
 @jwt_required()
-@PermissionManager.require_permission(action=ActionType.VIEW_ALL, entity_type=EntityType.FORMS) # Example: Admin only
+# Changed ActionType.VIEW_ALL to ActionType.VIEW
+# Admin-specific access is handled within the controller/service layers.
+@PermissionManager.require_permission(action=ActionType.VIEW, entity_type=EntityType.FORMS) 
 def get_user_accessible_forms_admin(user_id):
     """(Admin) Get all forms accessible to a specific user."""
     try:

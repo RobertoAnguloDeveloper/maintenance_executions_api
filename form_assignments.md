@@ -2,7 +2,7 @@ This guide outlines how to make requests to the Form Assignments API endpoints u
 
 **Common Headers for all requests (unless specified):**
 * `Authorization`: `Bearer {{jwt_token}}`
-* `Content-Type`: `application/json` (for POST requests)
+* `Content-Type`: `application/json` (for POST/PUT requests)
 
 ---
 
@@ -30,16 +30,19 @@ This guide outlines how to make requests to the Form Assignments API endpoints u
             "created_at": "2023-10-27T10:00:00Z",
             "updated_at": "2023-10-27T10:00:00Z",
             "is_deleted": false,
-            "deleted_at": null
+            "deleted_at": null,
+            "form": { // Basic form info might be included if FormAssignment.to_dict() is comprehensive
+                "id": 1,
+                "title": "Sample Form Title"
+                // ... other basic form fields from form.to_dict_basic()
+            }
         }
     }
     ```
 * **Error Responses:**
     * `400 Bad Request`: Missing fields, invalid data types.
         ```json
-        { "error": "Missing required fields: form_id, entity_name, entity_id" }
-        ```json
-        { "error": "Invalid data types for form_id, entity_name, or entity_id" }
+        { "error": "Invalid data types or missing required fields: form_id (int), entity_name (non-empty str), entity_id (int)" }
         ```
     * `401 Unauthorized`: Authentication error (e.g., user not found for token).
         ```json
@@ -49,11 +52,13 @@ This guide outlines how to make requests to the Form Assignments API endpoints u
         ```json
         { "error": "Unauthorized to assign this form. You must be the form owner or an administrator." }
         ```
-    * `404 Not Found`: Form not found.
+    * `404 Not Found`: Form or entity not found.
         ```json
-        { "error": "Form with ID 1 not found." }
+        { "error": "Form with ID 1 not found or is deleted." }
+        ```json
+        { "error": "User with ID 101 not found or is deleted." }
         ```
-    * `409 Conflict`: Form already assigned to this entity.
+    * `409 Conflict`: Form already actively assigned to this entity.
         ```json
         { "error": "This form is already actively assigned to user ID 101." }
         ```
@@ -82,9 +87,9 @@ This guide outlines how to make requests to the Form Assignments API endpoints u
             "entity_id": 5
         },
         {
-            "form_id": 1, // This might fail if form 1 is already assigned to user 101
+            "form_id": 1, 
             "entity_name": "user",
-            "entity_id": 101
+            "entity_id": 101 // This might fail if already assigned
         },
         {
             "form_id": 999, // This will fail if form 999 doesn't exist
@@ -155,6 +160,8 @@ This guide outlines how to make requests to the Form Assignments API endpoints u
         ```json
         { "error": "Invalid payload: Expected a list of assignment objects." }
         ```json
+        { "error": "Invalid input: Each assignment object must contain 'form_id' (int), 'entity_name' (non-empty str), and 'entity_id' (int). Problematic item: {...}" }
+        ```json
         { 
             "message": "All assignments failed to process.",
             "details": {
@@ -172,7 +179,182 @@ This guide outlines how to make requests to the Form Assignments API endpoints u
 
 ---
 
-### 3. Get Assignments for a Specific Form
+### 3. Get All Form Assignments (Admin, Paginated)
+
+* **Request Type:** `GET`
+* **URL:** `{{base_url}}/form-assignments`
+* **Query Parameters (Optional):**
+    * `page` (integer, default: 1): The page number to retrieve.
+    * `per_page` (integer, default: 50): The number of items per page.
+    * Example: `{{base_url}}/form-assignments?page=2&per_page=10`
+* **Body:** None
+* **Success Response (200 OK):**
+    ```json
+    {
+        "metadata": {
+            "total_items": 150,
+            "total_pages": 15,
+            "current_page": 2,
+            "per_page": 10
+        },
+        "assignments": [
+            {
+                "id": 11,
+                "form_id": 5,
+                "entity_name": "role",
+                "entity_id": 2,
+                "created_at": "2023-10-28T10:00:00Z",
+                "updated_at": "2023-10-28T10:00:00Z",
+                "is_deleted": false,
+                "deleted_at": null,
+                "form": { // Basic form info included due to eager loading in service
+                    "id": 5,
+                    "title": "Role Specific Form",
+                    "user_id": 1, // Creator ID
+                    "is_public": false,
+                    "attachments_required": false,
+                    "created_at": "2023-10-01T00:00:00Z",
+                    "updated_at": "2023-10-01T00:00:00Z",
+                    "is_deleted": false,
+                    "deleted_at": null,
+                    "description": "A form for a specific role.",
+                    "creator": { // Basic creator info
+                        "id": 1,
+                        "username": "admin_user",
+                        "email": "admin@example.com"
+                    }
+                }
+            }
+            // ... other assignments ...
+        ]
+    }
+    ```
+* **Error Responses:**
+    * `401 Unauthorized`.
+    * `403 Forbidden`: User is not an administrator.
+        ```json
+        { "error": "Unauthorized: Only administrators can view all assignments." }
+        ```
+    * `500 Internal Server Error`.
+
+---
+
+### 4. Get Specific Form Assignment
+
+* **Request Type:** `GET`
+* **URL:** `{{base_url}}/form-assignments/<assignment_id>`
+    * Example: `{{base_url}}/form-assignments/1`
+* **Body:** None
+* **Success Response (200 OK):**
+    ```json
+    {
+        "id": 1,
+        "form_id": 1,
+        "entity_name": "user",
+        "entity_id": 101,
+        "created_at": "2023-10-27T10:00:00Z",
+        "updated_at": "2023-10-27T10:00:00Z",
+        "is_deleted": false,
+        "deleted_at": null,
+        "form": {
+            "id": 1,
+            "title": "Sample Form Title"
+            // ... other basic form fields ...
+        }
+    }
+    ```
+* **Error Responses:**
+    * `401 Unauthorized`.
+    * `403 Forbidden`: User not authorized to view this assignment.
+        ```json
+        { "error": "Access to this form assignment is denied" }
+        ```
+    * `404 Not Found`: Assignment not found.
+        ```json
+        { "error": "Form assignment not found" }
+        ```
+    * `500 Internal Server Error`.
+
+---
+
+### 5. Update Form Assignment
+
+* **Request Type:** `PUT`
+* **URL:** `{{base_url}}/form-assignments/<assignment_id>`
+    * Example: `{{base_url}}/form-assignments/1`
+* **Body (Raw JSON):**
+    * Provide at least one field to update (`entity_name` or `entity_id`).
+    ```json
+    {
+        "entity_name": "role", 
+        "entity_id": 3
+    }
+    ```
+    Or:
+    ```json
+    {
+        "entity_id": 105
+    }
+    ```
+* **Success Response (200 OK):**
+    ```json
+    {
+        "message": "Form assignment updated successfully",
+        "assignment": {
+            "id": 1,
+            "form_id": 1,
+            "entity_name": "role", // Updated value
+            "entity_id": 3,      // Updated value
+            "created_at": "2023-10-27T10:00:00Z", // Original creation time
+            "updated_at": "2023-10-28T12:00:00Z", // Time of this update
+            "is_deleted": false,
+            "deleted_at": null,
+            "form": {
+                "id": 1,
+                "title": "Sample Form Title"
+                // ... other basic form fields ...
+            }
+        }
+    }
+    ```
+    If no actual changes were made (e.g., provided values are same as current):
+    ```json
+    {
+        "message": "Form assignment updated successfully", // Or a specific "No changes detected" message
+        "assignment": { /* ... current assignment data ... */ }
+    }
+    ```
+* **Error Responses:**
+    * `400 Bad Request`: No update data, invalid field types, or no valid fields provided.
+        ```json
+        { "error": "No update data provided" }
+        ```json
+        { "error": "Invalid entity_name: Must be a non-empty string" }
+        ```json
+        { "error": "Invalid entity_id: Must be an integer" }
+        ```json
+        { "error": "No valid fields (entity_name, entity_id) provided for update." }
+        ```json
+        { "error": "Role with ID 3 not found or is deleted." } // If new entity is invalid
+        ```
+    * `401 Unauthorized`.
+    * `403 Forbidden`: User not authorized to update this assignment.
+        ```json
+        { "error": "Unauthorized to update this form assignment. You must be the form owner or an administrator." }
+        ```
+    * `404 Not Found`: Assignment ID not found.
+        ```json
+        { "error": "Form assignment not found or already deleted." }
+        ```
+    * `409 Conflict`: Update would result in a duplicate assignment.
+        ```json
+        { "error": "This form is already actively assigned to role ID 3." }
+        ```
+    * `500 Internal Server Error`.
+
+---
+
+### 6. Get Assignments for a Specific Form
 
 * **Request Type:** `GET`
 * **URL:** `{{base_url}}/form-assignments/form/<form_id>`
@@ -188,20 +370,14 @@ This guide outlines how to make requests to the Form Assignments API endpoints u
                 "form_id": 1,
                 "entity_name": "user",
                 "entity_id": 101,
-                "created_at": "2023-10-27T10:00:00Z",
-                "updated_at": "2023-10-27T10:00:00Z",
-                "is_deleted": false,
-                "deleted_at": null
+                // ... other assignment fields including 'form' object ...
             },
             {
                 "id": 2,
                 "form_id": 1,
                 "entity_name": "user",
                 "entity_id": 102,
-                "created_at": "2023-10-27T10:05:00Z",
-                "updated_at": "2023-10-27T10:05:00Z",
-                "is_deleted": false,
-                "deleted_at": null
+                // ... other assignment fields including 'form' object ...
             }
         ]
     }
@@ -221,7 +397,7 @@ This guide outlines how to make requests to the Form Assignments API endpoints u
 
 ---
 
-### 4. Get Forms Assigned to a Specific Entity
+### 7. Get Forms Assigned to a Specific Entity
 
 * **Request Type:** `GET`
 * **URL:** `{{base_url}}/form-assignments/entity/<entity_name>/<entity_id>`
@@ -239,16 +415,8 @@ This guide outlines how to make requests to the Form Assignments API endpoints u
                 "title": "User Onboarding Form",
                 "user_id": 10, // Creator ID
                 "is_public": false,
-                // ... other basic form fields ...
+                // ... other basic form fields from to_dict_basic() ...
                 "created_at": "2023-10-26T09:00:00Z"
-            },
-            {
-                "id": 3,
-                "title": "Feedback Form",
-                "user_id": 12,
-                "is_public": true,
-                // ... other basic form fields ...
-                "created_at": "2023-10-25T11:00:00Z"
             }
         ]
     }
@@ -264,7 +432,7 @@ This guide outlines how to make requests to the Form Assignments API endpoints u
 
 ---
 
-### 5. Get Accessible Forms for Current User
+### 8. Get Accessible Forms for Current User
 
 * **Request Type:** `GET`
 * **URL:** `{{base_url}}/form-assignments/user/accessible-forms`
@@ -273,15 +441,10 @@ This guide outlines how to make requests to the Form Assignments API endpoints u
     ```json
     {
         "user_id": 101, // ID of the authenticated user
-        "accessible_forms": [ // List of Form objects (basic dict)
+        "accessible_forms": [ // List of Form objects (basic dict from to_dict_basic())
             {
                 "id": 1,
                 "title": "User Onboarding Form",
-                // ... other basic form fields ...
-            },
-            {
-                "id": 5,
-                "title": "General Survey",
                 // ... other basic form fields ...
             }
         ]
@@ -293,7 +456,7 @@ This guide outlines how to make requests to the Form Assignments API endpoints u
 
 ---
 
-### 6. Get Accessible Forms for a Specific User (Admin)
+### 9. Get Accessible Forms for a Specific User (Admin)
 
 * **Request Type:** `GET`
 * **URL:** `{{base_url}}/form-assignments/user/<user_id>/accessible-forms`
@@ -303,7 +466,7 @@ This guide outlines how to make requests to the Form Assignments API endpoints u
     ```json
     {
         "user_id": 105, // ID of the target user
-        "accessible_forms": [ // List of Form objects (basic dict)
+        "accessible_forms": [ // List of Form objects (basic dict from to_dict_basic())
             {
                 "id": 2,
                 "title": "Department Specific Form",
@@ -314,12 +477,12 @@ This guide outlines how to make requests to the Form Assignments API endpoints u
     ```
 * **Error Responses:**
     * `401 Unauthorized`: Admin authentication error.
-    * `403 Forbidden`: Authenticated user is not an admin or lacks `VIEW_ALL` permission.
+    * `403 Forbidden`: Authenticated user is not an admin or lacks permission.
     * `500 Internal Server Error`.
 
 ---
 
-### 7. Delete Form Assignment
+### 10. Delete Form Assignment
 
 * **Request Type:** `DELETE`
 * **URL:** `{{base_url}}/form-assignments/<assignment_id>`

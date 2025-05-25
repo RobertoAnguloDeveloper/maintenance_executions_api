@@ -3,8 +3,9 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.controllers.form_assignment_controller import FormAssignmentController
-from app.services.auth_service import AuthService # Assuming AuthService.get_current_user exists
+from app.services.auth_service import AuthService # Assuming AuthService.get_user_by_id exists
 from app.models.user import User # For type hinting
+from app.services.form_assignment_service import FormAssignmentService
 from app.utils.permission_manager import PermissionManager, EntityType, ActionType 
 import logging
 
@@ -13,18 +14,17 @@ form_assignment_bp = Blueprint('form-assignments', __name__)
 
 # Helper to get current user object (ensure this aligns with your AuthService)
 def _get_auth_user() -> User:
-    user_identity = get_jwt_identity() # This is usually the user's ID or a unique identifier
-    # Assuming user_identity is the user_id directly or can be used to fetch the user
-    user = AuthService.get_user_by_id(user_identity) # Or get_current_user(user_identity)
+    user_identity = get_jwt_identity() 
+    # Assuming user_identity from JWT is the user's ID or a unique identifier like username
+    # Adjust if AuthService.get_user_by_id expects a different type for identity
+    user = AuthService.get_user_by_id(user_identity) if isinstance(user_identity, int) else AuthService.get_current_user(str(user_identity))
+
     if not user:
-        # This case should ideally be handled by jwt_required if token is invalid/expired
-        # If token is valid but user deleted, this is a valid scenario
         raise Exception("User not found for the provided token.") 
     return user
 
 @form_assignment_bp.route('', methods=['POST'])
 @jwt_required()
-# Assuming 'update' on FORMS covers assigning/unassigning. Or create a specific 'assign' action.
 @PermissionManager.require_permission(action=ActionType.UPDATE, entity_type=EntityType.FORMS)
 def create_assignment():
     """Assign a form to an entity (user, role, or environment)."""
@@ -38,12 +38,11 @@ def create_assignment():
         entity_name = data.get('entity_name')
         entity_id = data.get('entity_id')
 
-        if not all([form_id, entity_name, entity_id]):
-            return jsonify({"error": "Missing required fields: form_id, entity_name, entity_id"}), 400
-        
-        if not isinstance(form_id, int) or not isinstance(entity_id, int) or not isinstance(entity_name, str):
-            return jsonify({"error": "Invalid data types for form_id, entity_name, or entity_id"}), 400
-
+        # Validate presence and types
+        if not (isinstance(form_id, int) and 
+                isinstance(entity_name, str) and entity_name.strip() and # Ensure entity_name is a non-empty string
+                isinstance(entity_id, int)):
+            return jsonify({"error": "Invalid data types or missing required fields: form_id (int), entity_name (non-empty str), entity_id (int)"}), 400
 
         assignment_dict, error = FormAssignmentController.create_form_assignment(
             form_id, entity_name, entity_id, current_user
@@ -65,9 +64,7 @@ def create_assignment():
 
 @form_assignment_bp.route('/bulk', methods=['POST'])
 @jwt_required()
-# Bulk operations might have stricter permissions, e.g., only admin or specific bulk_assign permission.
-# For now, using the same as single assignment, but consider a more specific permission.
-@PermissionManager.require_permission(action=ActionType.UPDATE, entity_type=EntityType.FORMS) # Or a new ActionType.BULK_ASSIGN
+@PermissionManager.require_permission(action=ActionType.UPDATE, entity_type=EntityType.FORMS) 
 def create_bulk_assignments():
     """Bulk assign forms to entities."""
     try:
@@ -87,27 +84,165 @@ def create_bulk_assignments():
             if "unauthorized" in error.lower(): status_code = 403
             return jsonify({"error": error}), status_code
         
-        # `results` from controller will be a dict: {"successful_assignments": [], "failed_assignments": []}
-        # Determine appropriate status code based on results
-        status_code = 207 # Multi-Status: some may have succeeded, some failed
+        status_code = 207 
         if results and not results.get("failed_assignments") and results.get("successful_assignments"):
-            status_code = 201 # All created successfully
+            status_code = 201 
         elif results and not results.get("successful_assignments") and results.get("failed_assignments"):
-            status_code = 400 # All failed, treat as a single bad request with details
+            status_code = 400 
         
         response_message = "Bulk assignment processing complete."
         if status_code == 201: response_message = "All assignments created successfully."
-        elif status_code == 400 and results and not results.get("successful_assignments"):
+        elif status_code == 400 and results and not results.get("successful_assignments"): # All failed
             response_message = "All assignments failed to process."
 
 
         return jsonify({
             "message": response_message,
-            "details": results # Contains successful_assignments and failed_assignments
+            "details": results 
         }), status_code
 
     except Exception as e:
         logger.error(f"Error in bulk creating form assignments: {str(e)}", exc_info=True)
+        if "User not found" in str(e): return jsonify({"error": "Authentication error: User not found."}), 401
+        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
+
+@form_assignment_bp.route('', methods=['GET'])
+@jwt_required()
+@PermissionManager.require_permission(action=ActionType.VIEW, entity_type=EntityType.FORMS) 
+def get_all_assignments():
+    """
+    Get all form assignments (paginated). Admin-only.
+    """
+    try:
+        current_user = _get_auth_user()
+        
+        page = request.args.get('page', type=int, default=1)
+        per_page = request.args.get('per_page', type=int, default=50)
+
+        result, error = FormAssignmentController.get_all_assignments(page, per_page, current_user)
+
+        if error:
+            status_code = 403 if "unauthorized" in error.lower() else 500
+            return jsonify({"error": error}), status_code
+
+        total_count, assignments_list = result
+        total_pages = (total_count + per_page - 1) // per_page if per_page > 0 else 0
+        
+        current_page_display = page
+        if total_pages > 0 and page > total_pages: 
+            current_page_display = total_pages
+        elif page < 1 and total_pages > 0 : 
+            current_page_display = 1
+        elif total_pages == 0 and page >= 1: # No items, page should be 1
+             current_page_display = 1
+
+
+        return jsonify({
+            "metadata": {
+                "total_items": total_count,
+                "total_pages": total_pages,
+                "current_page": current_page_display,
+                "per_page": per_page,
+            },
+            "assignments": assignments_list
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error getting all form assignments: {str(e)}", exc_info=True)
+        if "User not found" in str(e): return jsonify({"error": "Authentication error: User not found."}), 401
+        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
+
+@form_assignment_bp.route('/<int:assignment_id>', methods=['GET'])
+@jwt_required()
+@PermissionManager.require_permission(action=ActionType.VIEW, entity_type=EntityType.FORMS)
+def get_assignment(assignment_id):
+    """Get a specific form assignment."""
+    try:
+        current_user = _get_auth_user()
+        
+        # We need to check if the user can view *this specific* assignment.
+        # This usually means checking if they can view the associated form.
+        assignment = FormAssignmentService.get_form_assignment_by_id(assignment_id)
+        if not assignment:
+            return jsonify({"error": "Form assignment not found"}), 404
+
+        # Check access based on the form associated with the assignment
+        if not FormAssignmentService.check_user_access_to_form(current_user.id, assignment.form_id):
+             return jsonify({"error": "Access to this form assignment is denied"}), 403
+
+        return jsonify(assignment.to_dict()), 200
+
+    except Exception as e:
+        logger.error(f"Error getting form assignment {assignment_id}: {str(e)}", exc_info=True)
+        if "User not found" in str(e): return jsonify({"error": "Authentication error: User not found."}), 401
+        return jsonify({"error": "Internal server error"}), 500
+
+@form_assignment_bp.route('/<int:assignment_id>', methods=['PUT'])
+@jwt_required()
+@PermissionManager.require_permission(action=ActionType.UPDATE, entity_type=EntityType.FORMS)
+def update_assignment(assignment_id):
+    """Update an existing form assignment (e.g., change entity_id)."""
+    try:
+        current_user = _get_auth_user()
+        data = request.get_json()
+
+        if not data:
+            return jsonify({"error": "No update data provided"}), 400
+
+        # Validate that we have at least one valid field to update
+        update_payload = {}
+        if 'entity_name' in data:
+            if not isinstance(data['entity_name'], str) or not data['entity_name'].strip():
+                return jsonify({"error": "Invalid entity_name: Must be a non-empty string"}), 400
+            update_payload['entity_name'] = data['entity_name']
+        
+        if 'entity_id' in data:
+            if not isinstance(data['entity_id'], int):
+                return jsonify({"error": "Invalid entity_id: Must be an integer"}), 400
+            update_payload['entity_id'] = data['entity_id']
+
+        if not update_payload:
+            return jsonify({"error": "No valid fields (entity_name, entity_id) provided for update."}), 400
+
+        updated_assignment_dict, error = FormAssignmentController.update_form_assignment(
+            assignment_id, update_payload, current_user
+        )
+
+        if error:
+            status_code = 400 
+            if "not found" in error.lower(): status_code = 404
+            elif "already assigned" in error.lower(): status_code = 409 
+            elif "unauthorized" in error.lower(): status_code = 403 
+            return jsonify({"error": error}), status_code
+
+        return jsonify({
+            "message": "Form assignment updated successfully",
+            "assignment": updated_assignment_dict
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error updating form assignment {assignment_id}: {str(e)}", exc_info=True)
+        if "User not found" in str(e): return jsonify({"error": "Authentication error: User not found."}), 401
+        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
+
+@form_assignment_bp.route('/<int:assignment_id>', methods=['DELETE'])
+@jwt_required()
+@PermissionManager.require_permission(action=ActionType.UPDATE, entity_type=EntityType.FORMS) 
+def delete_assignment(assignment_id):
+    """Delete a specific form assignment."""
+    try:
+        current_user = _get_auth_user()
+        success, error_or_message = FormAssignmentController.delete_form_assignment(assignment_id, current_user)
+        
+        if not success:
+            status_code = 400
+            if "not found" in str(error_or_message).lower(): status_code = 404
+            elif "unauthorized" in str(error_or_message).lower(): status_code = 403
+            return jsonify({"error": error_or_message}), status_code
+        
+        return jsonify({"message": error_or_message, "deleted_id": assignment_id}), 200 
+    except Exception as e:
+        logger.error(f"Error deleting form assignment {assignment_id}: {str(e)}", exc_info=True)
         if "User not found" in str(e): return jsonify({"error": "Authentication error: User not found."}), 401
         return jsonify({"error": f"Internal server error: {str(e)}"}), 500
 
@@ -146,8 +281,7 @@ def get_forms_for_an_entity(entity_name, entity_id):
         if error:
             status_code = 400
             if "unauthorized" in error.lower(): status_code = 403
-            # Add specific error for invalid entity_name if service/controller provides it
-            elif "invalid entity_name" in error.lower(): status_code = 400
+            elif "invalid entity_name" in error.lower(): status_code = 400 
             return jsonify({"error": error}), status_code
             
         return jsonify({"entity_name": entity_name, "entity_id": entity_id, "assigned_forms": forms_list}), 200
@@ -156,44 +290,34 @@ def get_forms_for_an_entity(entity_name, entity_id):
         if "User not found" in str(e): return jsonify({"error": "Authentication error: User not found."}), 401
         return jsonify({"error": f"Internal server error: {str(e)}"}), 500
 
-@form_assignment_bp.route('/user/accessible-forms', methods=['GET']) # Changed route for clarity
+@form_assignment_bp.route('/user/accessible-forms', methods=['GET']) 
 @jwt_required()
 @PermissionManager.require_permission(action=ActionType.VIEW, entity_type=EntityType.FORMS) 
 def get_my_accessible_forms():
     """Get all forms accessible to the currently authenticated user."""
     try:
         current_user = _get_auth_user()
-        # Controller method get_accessible_forms_for_user will handle if admin is trying to see for another user
-        # but this endpoint is specifically for the logged-in user's forms.
         forms_list, error = FormAssignmentController.get_accessible_forms_for_user(current_user.id, current_user)
         
-        if error: # Should be rare if current_user is always valid by this point
+        if error: 
             status_code = 400
-            if "unauthorized" in error.lower(): status_code = 403 # Should not happen for self
+            if "unauthorized" in error.lower(): status_code = 403 
             return jsonify({"error": error}), status_code
             
         return jsonify({"user_id": current_user.id, "accessible_forms": forms_list}), 200
     except Exception as e:
         logger.error(f"Error getting accessible forms for current user: {str(e)}", exc_info=True)
-        if "User not found" in str(e): return jsonify({"error": "Authentication error: User not found."}), 401 # Should be caught by _get_auth_user
+        if "User not found" in str(e): return jsonify({"error": "Authentication error: User not found."}), 401 
         return jsonify({"error": f"Internal server error: {str(e)}"}), 500
 
 
-# If you need an admin endpoint to get forms for ANY user:
 @form_assignment_bp.route('/user/<int:user_id>/accessible-forms', methods=['GET'])
 @jwt_required()
-# Changed ActionType.VIEW_ALL to ActionType.VIEW
-# Admin-specific access is handled within the controller/service layers.
 @PermissionManager.require_permission(action=ActionType.VIEW, entity_type=EntityType.FORMS) 
 def get_user_accessible_forms_admin(user_id):
     """(Admin) Get all forms accessible to a specific user."""
     try:
-        current_user = _get_auth_user() # current_user is the admin performing the action
-        
-        # Authorization is handled by @PermissionManager and controller logic
-        # The controller's get_accessible_forms_for_user already checks if current_user is admin
-        # when current_user.id != user_id.
-
+        current_user = _get_auth_user() 
         forms_list, error = FormAssignmentController.get_accessible_forms_for_user(user_id, current_user)
         if error:
             status_code = 400
@@ -204,26 +328,4 @@ def get_user_accessible_forms_admin(user_id):
     except Exception as e:
         logger.error(f"Error getting accessible forms for user {user_id} by admin: {str(e)}", exc_info=True)
         if "User not found" in str(e): return jsonify({"error": "Authentication error: Admin user not found."}), 401
-        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
-
-
-@form_assignment_bp.route('/<int:assignment_id>', methods=['DELETE'])
-@jwt_required()
-@PermissionManager.require_permission(action=ActionType.UPDATE, entity_type=EntityType.FORMS) 
-def delete_assignment(assignment_id):
-    """Delete a specific form assignment."""
-    try:
-        current_user = _get_auth_user()
-        success, error_or_message = FormAssignmentController.delete_form_assignment(assignment_id, current_user)
-        
-        if not success:
-            status_code = 400
-            if "not found" in str(error_or_message).lower(): status_code = 404
-            elif "unauthorized" in str(error_or_message).lower(): status_code = 403
-            return jsonify({"error": error_or_message}), status_code
-        
-        return jsonify({"message": error_or_message, "deleted_id": assignment_id}), 200 # message from service
-    except Exception as e:
-        logger.error(f"Error deleting form assignment {assignment_id}: {str(e)}", exc_info=True)
-        if "User not found" in str(e): return jsonify({"error": "Authentication error: User not found."}), 401
         return jsonify({"error": f"Internal server error: {str(e)}"}), 500

@@ -24,6 +24,7 @@ from .entity_basic_views import entity_basic_bp
 from .report_views import report_bp
 from .report_template_views import report_template_bp
 from .form_assignment_views import form_assignment_bp # New import
+from .endpoints_lister_views import endpoints_lister_bp
 
 from flask import jsonify
 
@@ -54,10 +55,11 @@ def register_blueprints(app):
         (cmms_config_bp,'/api/cmms-configs'),
         (export_submission_bp, '/api/export_submissions'), # Corrected from your original export_submission_bp
         (count_bp, '/api/counts'),
-        (entity_basic_bp, '/api/entity-basic'), # Corrected prefix for consistency
+        (entity_basic_bp, '/api/entity-basic'),
         (report_bp, '/api/reports'),
         (report_template_bp, '/api/report-templates'),
-        (form_assignment_bp, '/api/form-assignments') # New blueprint
+        (form_assignment_bp, '/api/form-assignments'),
+        (endpoints_lister_bp, '/api/service-discovery')
     ]
 
     for blueprint, url_prefix in blueprints:

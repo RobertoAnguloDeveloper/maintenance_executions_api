@@ -371,15 +371,15 @@ class FormAssignmentService:
 
     @staticmethod
     def delete_form_assignment(assignment_id: int) -> Tuple[bool, Optional[str]]:
-        """Soft delete a form assignment."""
+        """Hard delete a form assignment."""
         try:
             assignment = FormAssignment.query.filter_by(id=assignment_id, is_deleted=False).first()
             if not assignment:
                 return False, "Form assignment not found or already deleted."
 
-            assignment.soft_delete() 
+            db.session.delete(assignment)
             db.session.commit()
-            logger.info(f"Form assignment ID {assignment_id} soft-deleted.")
+            logger.info(f"Form assignment ID {assignment_id} hard-deleted.")
             return True, "Form assignment deleted successfully." 
         except Exception as e:
             db.session.rollback()

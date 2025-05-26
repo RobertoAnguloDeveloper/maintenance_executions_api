@@ -273,6 +273,12 @@ class DatabaseInitializer:
                     # User Management - Limited to viewing within environment
                     permissions['view_users'],
                     
+                    # Role Views
+                    permissions['view_roles'],
+                    
+                    # Environment Views
+                    permissions['view_environments'],
+                    
                     # Form Management - Full access within environment
                     permissions['view_forms'],
                     permissions['create_forms'],

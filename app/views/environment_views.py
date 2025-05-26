@@ -52,11 +52,7 @@ def get_all_environments():
                          request.args.get('include_deleted', '').lower() == 'true')
 
         try:
-            if current_user_obj.role.is_super_user:
-                environments = EnvironmentController.get_all_environments(include_deleted=include_deleted)
-            else:
-                # Non-admin users only see their own active environment
-                environments = [EnvironmentController.get_environment(current_user_obj.environment_id)] if current_user_obj.environment_id else []
+            environments = EnvironmentController.get_all_environments(include_deleted=include_deleted)
 
             return jsonify([
                 env.to_dict(

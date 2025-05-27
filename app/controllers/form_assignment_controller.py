@@ -1,7 +1,7 @@
 # app/controllers/form_assignment_controller.py
 
 from typing import List, Optional, Tuple, Dict, Any
-from app.controllers.user_controller import UserController # Assuming still needed for other logic if any
+from app.controllers.user_controller import UserController
 from app.services.form_assignment_service import FormAssignmentService
 from app.models.user import User
 from app.services.form_service import FormService
@@ -19,11 +19,9 @@ class FormAssignmentController:
             return None, f"Form with ID {form_id} not found."
 
         is_super_user = current_user.role and current_user.role.is_super_user
-        # --- CHECK: Ensure user is owner or admin ---
         if form.user_id != current_user.id and not is_super_user:
             logger.warning(f"User {current_user.id} unauthorized to assign form {form_id}.")
             return None, "Unauthorized to assign this form. You must be the form owner or an administrator."
-        # ---------------------------------------------
 
         assignment, error = FormAssignmentService.create_form_assignment(form_id, entity_name, entity_id)
         if error:
@@ -36,13 +34,6 @@ class FormAssignmentController:
         Create multiple form assignments in bulk.
         Non-admins can only assign forms they own.
         """
-        # --- MODIFICATION START: Removed explicit admin-only check ---
-        # is_super_user = current_user.role and current_user.role.is_super_user
-        # if not is_super_user:
-        #     logger.warning(f"User {current_user.id} (role: {current_user.role.name if current_user.role else 'N/A'}) attempted bulk assignment without super_user privileges.")
-        #     return None, "Unauthorized: Bulk assignment is restricted to administrators."
-        # --- MODIFICATION END ---
-
         if not isinstance(assignments_data, list):
             return None, "Invalid input: Expected a list of assignment objects."
         if not all(isinstance(item, dict) for item in assignments_data):
@@ -55,7 +46,6 @@ class FormAssignmentController:
                        for key in ['form_id', 'entity_name', 'entity_id']):
                  return None, f"Invalid input: Each assignment object must contain 'form_id' (int), 'entity_name' (non-empty str), and 'entity_id' (int). Problematic item: {item}"
 
-        # Pass current_user to the service method for ownership checks for each item if user is not admin
         results = FormAssignmentService.create_bulk_form_assignments(assignments_data, current_user=current_user)
         return results, None
 
@@ -67,11 +57,9 @@ class FormAssignmentController:
             return None, f"Form with ID {form_id} not found."
 
         is_super_user = current_user.role and current_user.role.is_super_user
-        # --- CHECK: Ensure user is owner or admin ---
         if form.user_id != current_user.id and not is_super_user:
             logger.warning(f"User {current_user.id} unauthorized to view assignments for form {form_id}.")
             return None, "Unauthorized to view assignments for this form."
-        # ---------------------------------------------
 
         assignments = FormAssignmentService.get_assignments_for_form(form_id)
         return [a.to_dict() for a in assignments], None
@@ -90,10 +78,7 @@ class FormAssignmentController:
 
         if not is_super_user:
             if entity_name == 'user':
-                if entity_id != current_user.id: # Non-admin can only view their own user assignments
-                    # Optionally, check if target user is in the same environment for Site Managers
-                    # This part of the logic might need refinement based on exact requirements
-                    # For now, strict self-view for non-admins.
+                if entity_id != current_user.id:
                     return None, "Unauthorized: Can only view assignments for your own user."
             elif entity_name in ['role', 'environment']:
                  return None, f"Unauthorized: Only administrators can view forms for {entity_name} entities."
@@ -127,11 +112,9 @@ class FormAssignmentController:
             return False, "Associated form not found. Cannot determine authorization."
 
         is_super_user = current_user.role and current_user.role.is_super_user
-        # --- CHECK: Ensure user is owner or admin ---
         if form.user_id != current_user.id and not is_super_user:
             logger.warning(f"User {current_user.id} unauthorized to delete assignment {assignment_id} for form {form.id}.")
             return False, "Unauthorized to delete this form assignment. You must be the form owner or an administrator."
-        # ---------------------------------------------
 
         return FormAssignmentService.delete_form_assignment(assignment_id)
 
@@ -139,7 +122,6 @@ class FormAssignmentController:
     def check_user_access_to_form(user_id: int, form_id: int, current_user: User) -> Tuple[Optional[Dict[str, bool]], Optional[str]]:
         """Check if a user has access to a form. current_user for auth."""
         is_super_user = current_user.role and current_user.role.is_super_user
-        # If not admin, can only check for self
         if user_id != current_user.id and not is_super_user:
              return None, "Unauthorized to check access for this user."
 
@@ -149,13 +131,6 @@ class FormAssignmentController:
     @staticmethod
     def get_assignments_batch(page: int, per_page: int, current_user: User) -> Tuple[Optional[Tuple[int, List[Dict]]], Optional[str]]:
         """Get form assignments in a paginated batch. Filters by ownership for non-admins."""
-        # --- MODIFICATION START: Removed explicit admin-only check, pass current_user to service ---
-        # is_super_user = current_user.role and current_user.role.is_super_user
-        # if not is_super_user:
-        #     logger.warning(f"User {current_user.id} attempted to get assignments batch without super_user privileges.")
-        #     return None, "Unauthorized: Only administrators can view assignments batch."
-        # --- MODIFICATION END ---
-
         total_count, assignments = FormAssignmentService.get_assignments_batch_paginated(page, per_page, current_user=current_user)
         assignments_dict = [a.to_dict() for a in assignments]
         return (total_count, assignments_dict), None
@@ -163,13 +138,6 @@ class FormAssignmentController:
     @staticmethod
     def get_all_assignments_unpaginated_controller(current_user: User) -> Tuple[Optional[List[Dict]], Optional[str]]:
         """Get ALL form assignments (unpaginated). Filters by ownership for non-admins."""
-        # --- MODIFICATION START: Removed explicit admin-only check, pass current_user to service ---
-        # is_super_user = current_user.role and current_user.role.is_super_user
-        # if not is_super_user:
-        #     logger.warning(f"User {current_user.id} attempted to get all unpaginated assignments without super_user privileges.")
-        #     return None, "Unauthorized: Only administrators can view all assignments."
-        # --- MODIFICATION END ---
-
         assignments = FormAssignmentService.get_all_assignments_unpaginated(current_user=current_user)
         assignments_dict = [a.to_dict() for a in assignments]
         return assignments_dict, None
@@ -187,11 +155,9 @@ class FormAssignmentController:
             return None, "Associated form not found. Cannot determine authorization."
 
         is_super_user = current_user.role and current_user.role.is_super_user
-        # --- CHECK: Ensure user is owner or admin ---
         if form.user_id != current_user.id and not is_super_user:
             logger.warning(f"User {current_user.id} unauthorized to update assignment {assignment_id} for form {form.id}.")
             return None, "Unauthorized to update this form assignment. You must be the form owner or an administrator."
-        # ---------------------------------------------
 
         updated_assignment, error = FormAssignmentService.update_form_assignment(assignment_id, update_data)
 

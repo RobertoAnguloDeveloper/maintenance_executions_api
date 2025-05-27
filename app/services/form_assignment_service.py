@@ -8,13 +8,13 @@ from app.models.user import User
 from app.models.role import Role
 from app.models.environment import Environment
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import joinedload # For eager loading form creator
+from sqlalchemy.orm import joinedload
 import logging
 
 logger = logging.getLogger(__name__)
 
 class FormAssignmentService:
-    VALID_ENTITY_NAMES = ['user', 'role', 'environment'] # Define valid assignable entities
+    VALID_ENTITY_NAMES = ['user', 'role', 'environment']
 
     @staticmethod
     def _validate_entity(entity_name: str, entity_id: int) -> Tuple[bool, Optional[str]]:
@@ -55,11 +55,10 @@ class FormAssignmentService:
             existing_assignment = FormAssignment.query.filter_by(
                 form_id=form_id,
                 entity_name=entity_name,
-                entity_id=entity_id,
-                is_deleted=False
+                entity_id=entity_id
             ).first()
             if existing_assignment:
-                return None, f"This form is already actively assigned to {entity_name} ID {entity_id}."
+                return None, f"This form is already assigned to {entity_name} ID {entity_id}."
 
             new_assignment = FormAssignment(
                 form_id=form_id,
@@ -74,7 +73,7 @@ class FormAssignmentService:
             db.session.rollback()
             logger.error(f"Integrity error creating form assignment for form {form_id} to {entity_name} ID {entity_id}: {e}", exc_info=True)
             if hasattr(e, 'orig') and e.orig and ("UniqueViolation" in str(type(e.orig).__name__) or "_form_entity_uc" in str(e.orig)):
-                 return None, f"Database integrity error: This form is already assigned to {entity_name} ID {entity_id} (possibly soft-deleted but unique constraint still applies to non-deleted entries)."
+                 return None, f"Database integrity error: This form is already assigned to {entity_name} ID {entity_id}."
             return None, "Database integrity error. Please check form/entity ID validity or potential unique constraint issues."
         except Exception as e:
             db.session.rollback()
@@ -94,19 +93,16 @@ class FormAssignmentService:
 
         is_admin = current_user.role and current_user.role.is_super_user
 
-        # --- MODIFICATION START: Fetch relevant forms based on ownership if not admin ---
         form_ids_in_request = list(set(
             item.get('form_id') for item in assignments_data
             if isinstance(item, dict) and isinstance(item.get('form_id'), int)
         ))
 
-        # Query forms: if admin, get all requested forms; if not admin, only get owned forms.
         forms_query = Form.query.filter(Form.id.in_(form_ids_in_request), Form.is_deleted == False)
         if not is_admin:
             forms_query = forms_query.filter(Form.user_id == current_user.id)
         
         accessible_forms_map = {form.id: form for form in forms_query.all()}
-        # --- MODIFICATION END ---
 
         for item_data in assignments_data:
             if not isinstance(item_data, dict):
@@ -124,14 +120,12 @@ class FormAssignmentService:
                 failed_assignments_for_return.append({"input": original_input, "error": "Invalid data types for form_id, entity_name, or entity_id."})
                 continue
 
-            # --- MODIFICATION START: Use pre-fetched accessible_forms_map for ownership check ---
             if form_id not in accessible_forms_map:
                 failed_assignments_for_return.append({
                     "input": original_input,
                     "error": f"Form with ID {form_id} not found, is deleted, or you do not have permission to assign it."
                 })
                 continue
-            # --- MODIFICATION END ---
 
             is_valid_entity, entity_error = FormAssignmentService._validate_entity(entity_name, entity_id)
             if not is_valid_entity:
@@ -140,10 +134,10 @@ class FormAssignmentService:
 
             try:
                 existing_assignment = FormAssignment.query.filter_by(
-                    form_id=form_id, entity_name=entity_name, entity_id=entity_id, is_deleted=False
+                    form_id=form_id, entity_name=entity_name, entity_id=entity_id
                 ).first()
                 if existing_assignment:
-                    failed_assignments_for_return.append({"input": original_input, "error": f"This form is already actively assigned to {entity_name} ID {entity_id}."})
+                    failed_assignments_for_return.append({"input": original_input, "error": f"This form is already assigned to {entity_name} ID {entity_id}."})
                     continue
 
                 new_assignment = FormAssignment(form_id=form_id, entity_name=entity_name, entity_id=entity_id)
@@ -188,17 +182,16 @@ class FormAssignmentService:
         """Get a form assignment by its ID."""
         return FormAssignment.query.options(
             joinedload(FormAssignment.form).joinedload(Form.creator)
-        ).filter_by(id=assignment_id, is_deleted=False).first()
-
+        ).filter_by(id=assignment_id).first()
 
     @staticmethod
     def get_assignments_for_form(form_id: int) -> List[FormAssignment]:
-        """Get all active assignments for a specific form."""
-        return FormAssignment.query.filter_by(form_id=form_id, is_deleted=False).all()
+        """Get all assignments for a specific form."""
+        return FormAssignment.query.filter_by(form_id=form_id).all()
 
     @staticmethod
     def get_forms_for_entity(entity_name: str, entity_id: int) -> List[Form]:
-        """Get all active forms assigned to a specific entity."""
+        """Get all forms assigned to a specific entity."""
         is_valid_entity, entity_error = FormAssignmentService._validate_entity(entity_name, entity_id)
         if not is_valid_entity:
             logger.warning(f"Attempt to get forms for invalid entity: {entity_name} ID {entity_id}. Error: {entity_error}")
@@ -206,15 +199,14 @@ class FormAssignmentService:
 
         assignments = FormAssignment.query.filter_by(
             entity_name=entity_name,
-            entity_id=entity_id,
-            is_deleted=False
+            entity_id=entity_id
         ).join(Form).filter(Form.is_deleted == False).all()
         return [assignment.form for assignment in assignments]
 
     @staticmethod
     def check_user_access_to_form(user_id: int, form_id: int, user_obj: Optional[User] = None, form_obj: Optional[Form] = None) -> bool:
         """
-        Check if a user has access to a specific form based on new assignment rules.
+        Check if a user has access to a specific form based on assignment rules.
         Can accept pre-fetched user_obj and form_obj for optimization.
         """
         if user_obj is None or (hasattr(user_obj, 'is_deleted') and user_obj.is_deleted):
@@ -242,21 +234,19 @@ class FormAssignmentService:
             logger.debug(f"Access granted for form {form.id} to admin user {user.id}.")
             return True
 
-        if form.user_id == user.id: # Creator access
+        if form.user_id == user.id:
             logger.debug(f"Access granted for form {form.id} to creator user {user.id}.")
             return True
 
-        active_assignments = []
+        assignments = []
         if form_obj and hasattr(form_obj, 'form_assignments') and form_obj.form_assignments is not None:
-            # Ensure we only consider non-deleted assignments if form_obj is pre-loaded
-            active_assignments = [assign for assign in form_obj.form_assignments if hasattr(assign, 'is_deleted') and not assign.is_deleted]
-        else: # Fetch assignments if not pre-loaded on form_obj
-            active_assignments = FormAssignment.query.filter_by(form_id=form.id, is_deleted=False).all()
+            assignments = form_obj.form_assignments
+        else:
+            assignments = FormAssignment.query.filter_by(form_id=form.id).all()
 
-
-        if active_assignments:
-            logger.debug(f"Form {form.id} has active assignments. Checking against user {user.id}.")
-            for assignment in active_assignments:
+        if assignments:
+            logger.debug(f"Form {form.id} has assignments. Checking against user {user.id}.")
+            for assignment in assignments:
                 if assignment.entity_name == 'user' and assignment.entity_id == user.id:
                     logger.debug(f"Access granted for form {form.id} to user {user.id} via direct user assignment.")
                     return True
@@ -271,8 +261,8 @@ class FormAssignmentService:
                     return True
             logger.debug(f"Access denied for form {form.id} to user {user.id}. No matching assignments.")
             return False
-        else: # No active assignments
-            logger.debug(f"Form {form.id} has no active assignments. Applying default access rules for user {user.id}.")
+        else:
+            logger.debug(f"Form {form.id} has no assignments. Applying default access rules for user {user.id}.")
             if hasattr(form, 'is_public') and form.is_public:
                 logger.debug(f"Access granted for form {form.id} to user {user.id} because it's public and has no assignments.")
                 return True
@@ -290,11 +280,10 @@ class FormAssignmentService:
             logger.debug(f"Access denied for form {form.id} to user {user.id}. Not public, not creator, not in creator's environment (if applicable), and no assignments.")
             return False
 
-
     @staticmethod
     def get_accessible_forms_for_user(user_id: int) -> List[Form]:
         """
-        Get all forms a user has access to, respecting the new assignment-based logic.
+        Get all forms a user has access to, respecting the assignment-based logic.
         """
         user = User.query.options(
             joinedload(User.role),
@@ -309,15 +298,13 @@ class FormAssignmentService:
             logger.debug(f"Admin user {user_id} retrieving all non-deleted forms.")
             return Form.query.options(
                 joinedload(Form.creator).joinedload(User.environment),
-                joinedload(Form.form_assignments) # Eager load assignments for efficiency in check_user_access_to_form
+                joinedload(Form.form_assignments)
             ).filter_by(is_deleted=False).order_by(Form.title).all()
 
-        # For non-admins, iterate through all forms and check access.
-        # This can be optimized if performance becomes an issue for many forms.
         accessible_forms_dict = {}
         all_forms_to_check = Form.query.filter_by(is_deleted=False).options(
             joinedload(Form.creator).options(joinedload(User.role), joinedload(User.environment)),
-            joinedload(Form.form_assignments) # Eager load assignments
+            joinedload(Form.form_assignments)
         ).all()
 
         for form_item in all_forms_to_check:
@@ -329,18 +316,17 @@ class FormAssignmentService:
         logger.info(f"User {user_id} has access to {len(accessible_forms_list)} forms.")
         return accessible_forms_list
 
-
     @staticmethod
     def delete_form_assignment(assignment_id: int) -> Tuple[bool, Optional[str]]:
-        """Soft delete a form assignment."""
+        """Hard delete a form assignment."""
         try:
-            assignment = FormAssignment.query.filter_by(id=assignment_id, is_deleted=False).first()
+            assignment = FormAssignment.query.filter_by(id=assignment_id).first()
             if not assignment:
-                return False, "Form assignment not found or already deleted."
+                return False, "Form assignment not found."
 
-            assignment.soft_delete()
+            db.session.delete(assignment)
             db.session.commit()
-            logger.info(f"Form assignment ID {assignment_id} soft-deleted.")
+            logger.info(f"Form assignment ID {assignment_id} deleted.")
             return True, "Form assignment deleted successfully."
         except Exception as e:
             db.session.rollback()
@@ -356,15 +342,11 @@ class FormAssignmentService:
         try:
             query = FormAssignment.query.options(
                 joinedload(FormAssignment.form).joinedload(Form.creator)
-            ).filter(FormAssignment.is_deleted == False)
+            )
 
-            # --- MODIFICATION START: Filter by form ownership for non-admins ---
             if current_user and not (current_user.role and current_user.role.is_super_user):
-                # Subquery to get IDs of forms owned by the current_user
                 owned_form_ids_subquery = db.session.query(Form.id).filter(Form.user_id == current_user.id, Form.is_deleted == False)
-                # Filter assignments where the form_id is in the list of owned_form_ids
                 query = query.filter(FormAssignment.form_id.in_(owned_form_ids_subquery))
-            # --- MODIFICATION END ---
 
             pagination_obj = query.order_by(FormAssignment.created_at.desc()).paginate(
                 page=page, per_page=per_page, error_out=False
@@ -381,20 +363,18 @@ class FormAssignmentService:
     @staticmethod
     def get_all_assignments_unpaginated(current_user: Optional[User] = None) -> List[FormAssignment]:
         """
-        Get ALL non-deleted form assignments.
+        Get ALL form assignments.
         If current_user is provided and is not an admin, filters to assignments of forms created by that user.
         Use with caution due to potential performance impact on large datasets if no user or admin user.
         """
         try:
             query = FormAssignment.query.options(
                 joinedload(FormAssignment.form).joinedload(Form.creator)
-            ).filter(FormAssignment.is_deleted == False)
+            )
 
-            # --- MODIFICATION START: Filter by form ownership for non-admins ---
             if current_user and not (current_user.role and current_user.role.is_super_user):
                 owned_form_ids_subquery = db.session.query(Form.id).filter(Form.user_id == current_user.id, Form.is_deleted == False)
                 query = query.filter(FormAssignment.form_id.in_(owned_form_ids_subquery))
-            # --- MODIFICATION END ---
 
             return query.order_by(FormAssignment.created_at.desc()).all()
         except Exception as e:
@@ -405,49 +385,46 @@ class FormAssignmentService:
     def update_form_assignment(assignment_id: int, update_data: Dict[str, Any]) -> Tuple[Optional[FormAssignment], Optional[str]]:
         """Update an existing form assignment (entity_name and/or entity_id)."""
         try:
-            assignment = FormAssignment.query.filter_by(id=assignment_id, is_deleted=False).first()
+            assignment = FormAssignment.query.filter_by(id=assignment_id).first()
             if not assignment:
-                return None, "Form assignment not found or already deleted."
+                return None, "Form assignment not found."
 
             new_entity_name = update_data.get('entity_name', assignment.entity_name)
             new_entity_id = update_data.get('entity_id', assignment.entity_id)
 
             if new_entity_name == assignment.entity_name and new_entity_id == assignment.entity_id:
-                return assignment, "No changes detected." # Return the original assignment if no change
+                return assignment, "No changes detected."
 
             is_valid_entity, entity_error = FormAssignmentService._validate_entity(new_entity_name, new_entity_id)
             if not is_valid_entity:
                 return None, entity_error
 
-            # Check if this exact assignment (form_id, new_entity_name, new_entity_id) already exists and is active
             existing_assignment_conflict = FormAssignment.query.filter(
                 FormAssignment.form_id == assignment.form_id,
                 FormAssignment.entity_name == new_entity_name,
                 FormAssignment.entity_id == new_entity_id,
-                FormAssignment.is_deleted == False,
-                FormAssignment.id != assignment_id # Exclude the current assignment being updated
+                FormAssignment.id != assignment_id
             ).first()
 
             if existing_assignment_conflict:
-                return None, f"This form is already actively assigned to {new_entity_name} ID {new_entity_id} through another assignment record."
+                return None, f"This form is already assigned to {new_entity_name} ID {new_entity_id} through another assignment record."
 
             assignment.entity_name = new_entity_name
             assignment.entity_id = new_entity_id
 
             db.session.commit()
             logger.info(f"Form assignment ID {assignment_id} updated to {new_entity_name}:{new_entity_id}.")
-            # Eager load form and creator for the returned object to be consistent
+            
             updated_assignment_with_relations = FormAssignment.query.options(
                 joinedload(FormAssignment.form).joinedload(Form.creator)
-            ).get(assignment_id) # Fetch again to get fresh data with eager loads
+            ).get(assignment_id)
             return updated_assignment_with_relations, None
 
         except IntegrityError as e:
             db.session.rollback()
             logger.error(f"Integrity error updating assignment ID {assignment_id}: {e}", exc_info=True)
-            # Check for unique constraint violation specifically
             if hasattr(e, 'orig') and e.orig and ("UniqueViolation" in str(type(e.orig).__name__) or "_form_entity_uc" in str(e.orig)):
-                return None, f"Database integrity error: This form is already assigned to the target entity (possibly due to a unique constraint on active assignments)."
+                return None, f"Database integrity error: This form is already assigned to the target entity (possibly due to a unique constraint on assignments)."
             return None, "Database integrity error during update. Check for conflicts."
         except Exception as e:
             db.session.rollback()

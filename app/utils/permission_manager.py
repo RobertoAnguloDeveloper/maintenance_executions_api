@@ -9,7 +9,7 @@ from app.services.auth_service import AuthService
 import logging
 
 logger = logging.getLogger(__name__)
-    
+
 class RoleType:
     """Role type constants"""
     ADMIN = "Admin"
@@ -56,7 +56,8 @@ class PermissionManager:
     @staticmethod
     def check_environment_access(user, environment_id: int) -> bool:
         """Check if user has access to the specified environment"""
-        if user.role.is_super_user:
+        # Ensure user and user.role exist before checking super_user
+        if user and hasattr(user, 'role') and user.role and user.role.is_super_user:
             return True
         return user.environment_id == environment_id
 
@@ -75,116 +76,132 @@ class PermissionManager:
     def has_permission(cls, user, action: str, entity_type: EntityType = None) -> bool:
         """
         Check if user has specific permission based on database Permission objects.
-        For own_resource=True, checks for general permission for the action/entity.
+        Ensures 'action' is treated as a string.
         """
         try:
-            # First check for super users who have all permissions
-            if user.role.is_super_user:
+            if not user:
+                logger.warning("Permission check attempted with no user object.")
+                return False
+
+            # Check if user and user.role exist, then check is_super_user
+            if hasattr(user, 'role') and user.role and user.role.is_super_user:
+                logger.debug(f"Permission granted to superuser: {user.username}")
                 return True
                 
-            # For permission checking, we need a valid entity type
             if not entity_type:
-                logger.warning("No entity type provided for permission check")
+                logger.warning(f"No entity type provided for permission check for user: {user.username}")
                 return False
                 
             entity_value = entity_type.value
-                
-            # Check database permissions
-            if hasattr(user, 'role') and hasattr(user.role, 'permissions'):
+            action_value = str(action) # Ensure action is a string
+
+            # Check database permissions, ensuring user.role and user.role.permissions exist
+            if hasattr(user, 'role') and user.role and hasattr(user.role, 'permissions') and user.role.permissions:
                 for permission in user.role.permissions:
-                    # Check if action matches directly
-                    if permission.action == action:
+                    # Compare string action_value with string permission.action
+                    if permission.action == action_value:
                         # Check if entity matches directly
                         if permission.entity == entity_value:
+                            logger.debug(f"Permission granted: User {user.username}, Action {action_value}, Entity {entity_value} (Direct match)")
                             return True
                         
                         # Check for singular/plural variations
                         if entity_value.endswith('s') and permission.entity == entity_value[:-1]:
+                            logger.debug(f"Permission granted: User {user.username}, Action {action_value}, Entity {entity_value} (Plural match)")
                             return True
                         if permission.entity.endswith('s') and entity_value == permission.entity[:-1]:
+                            logger.debug(f"Permission granted: User {user.username}, Action {action_value}, Entity {entity_value} (Singular match)")
                             return True
                             
                         # Special case handling for entity types
                         if entity_value == 'submissions' and permission.entity == 'form_submissions':
+                            logger.debug(f"Permission granted: User {user.username}, Action {action_value}, Entity {entity_value} (Special case 'submissions')")
                             return True
                         if entity_value == 'form_submissions' and permission.entity == 'submissions':
+                            logger.debug(f"Permission granted: User {user.username}, Action {action_value}, Entity {entity_value} (Special case 'form_submissions')")
                             return True
             
-            # If we reach here, no permission was found in the database
+            # If we reach here, no permission was found
+            logger.warning(f"Permission denied: User {user.username}, Action {action_value}, Entity {entity_value}. No matching permission found.")
             return False
             
         except Exception as e:
-            logger.error(f"Error checking permission: {str(e)}")
+            # Log the specific error to help diagnose issues like AttributeErrors
+            logger.error(f"Error checking permission for user {user.username if user else 'Unknown'}: {str(e)}", exc_info=True)
             return False
 
     @classmethod
-    def require_permission(cls, action: str, entity_type: EntityType = None, 
+    def require_permission(cls, action: Union[str, ActionType], entity_type: EntityType = None, 
                          own_resource: bool = False, check_environment: bool = True):
         """
         Decorator to require specific permission.
-        If own_resource=True, it will check resource ownership during the request.
+        Ensures the action's string value is used for checks and messages.
         """
         def decorator(f):
             @wraps(f)
             def decorated_function(*args, **kwargs):
                 try:
-                    current_user = get_jwt_identity()
-                    user = AuthService.get_current_user(current_user)
+                    current_user_identity = get_jwt_identity()
+                    # Ensure AuthService.get_current_user loads relationships (e.g., role)
+                    user = AuthService.get_current_user(current_user_identity) 
                     
                     if not user:
                         return jsonify({"error": "User not found"}), 404
 
-                    # Always check the basic permission first
-                    if not cls.has_permission(user, action, entity_type):
-                        # If own_resource is True and user doesn't have general permission,
-                        # we'll check ownership during the actual request processing
+                    # Ensure action is its string value
+                    action_str = action.value if isinstance(action, ActionType) else str(action)
+
+                    # Pass the string value to has_permission
+                    if not cls.has_permission(user, action_str, entity_type):
                         if not own_resource:
                             return jsonify({
                                 "error": "Unauthorized",
-                                "message": f"You don't have permission to {action} {entity_type.value if entity_type else ''}"
+                                # Use the string value in the message
+                                "message": f"You don't have permission to {action_str} {entity_type.value if entity_type else ''}"
                             }), 403
 
                     # Check environment access if required
                     if check_environment:
                         environment_id = kwargs.get('environment_id') or request.args.get('environment_id')
-                        if environment_id and not cls.check_environment_access(user, int(environment_id)):
-                            return jsonify({
-                                "error": "Unauthorized",
-                                "message": "You don't have access to this environment"
-                            }), 403
+                        if environment_id:
+                             # Ensure environment_id is int before checking
+                             try:
+                                 env_id_int = int(environment_id)
+                                 if not cls.check_environment_access(user, env_id_int):
+                                     return jsonify({
+                                         "error": "Unauthorized",
+                                         "message": "You don't have access to this environment"
+                                     }), 403
+                             except (ValueError, TypeError):
+                                 logger.warning(f"Invalid environment_id format: {environment_id}")
+                                 return jsonify({"error": "Invalid environment ID format."}), 400
 
                     # For own_resource=True, we need to check ownership
                     if own_resource:
-                        # Get the resource ID from kwargs or request parameters
                         resource_id = None
                         if entity_type:
-                            resource_id = kwargs.get(f"{entity_type.value[:-1]}_id")
+                            resource_id_key = f"{entity_type.value[:-1]}_id" if entity_type.value.endswith('s') else f"{entity_type.value}_id"
+                            resource_id = kwargs.get(resource_id_key)
                             if not resource_id:
-                                # Try other common ID patterns if direct match not found
                                 for key in kwargs:
                                     if key.endswith('_id'):
                                         resource_id = kwargs[key]
                                         break
                         
-                        # Check ownership if we have a resource ID
                         if resource_id:
-                            # This would be a more detailed implementation based on entity type
-                            # For now, we'll just log a warning
-                            logger.warning(f"Resource ownership checking not implemented for {entity_type.value if entity_type else 'unknown entity'}")
+                            # IMPORTANT: Resource ownership check needs proper implementation.
+                            logger.warning(f"Resource ownership checking not fully implemented for {entity_type.value if entity_type else 'unknown entity'}")
                             
-                            # If user doesn't have general permission, deny access
-                            # (We already checked this above, but for clarity)
-                            if not cls.has_permission(user, action, entity_type):
+                            if not cls.has_permission(user, action_str, entity_type):
                                 return jsonify({
                                     "error": "Unauthorized",
-                                    "message": f"You don't have permission to {action} this resource"
+                                    "message": f"You don't have permission to {action_str} this resource"
                                 }), 403
 
-                    # If we reach here, user is authorized
                     return f(*args, **kwargs)
                     
                 except Exception as e:
-                    logger.error(f"Error in permission decorator: {str(e)}")
+                    logger.error(f"Error in permission decorator: {str(e)}", exc_info=True)
                     return jsonify({"error": "Internal server error"}), 500
             return decorated_function
         return decorator
@@ -196,15 +213,20 @@ class PermissionManager:
             @wraps(f)
             def decorated_function(*args, **kwargs):
                 try:
-                    current_user = get_jwt_identity()
-                    user = AuthService.get_current_user(current_user)
+                    current_user_identity = get_jwt_identity()
+                    user = AuthService.get_current_user(current_user_identity)
                     
                     if not user:
                         return jsonify({"error": "User not found"}), 404
 
+                    # Ensure user.role exists before checking its name or super_user status
+                    if not (hasattr(user, 'role') and user.role):
+                        logger.error(f"Role not found for user: {user.username}")
+                        return jsonify({"error": "User role configuration error."}), 500
+
                     # Convert role names to strings for comparison
                     allowed_role_names = set(
-                        role if isinstance(role, str) else role
+                        role.value if isinstance(role, Role) else (role if isinstance(role, str) else role.value)
                         for role in allowed_roles
                     )
                     
@@ -216,7 +238,7 @@ class PermissionManager:
                         
                     return f(*args, **kwargs)
                 except Exception as e:
-                    logger.error(f"Error in role decorator: {str(e)}")
+                    logger.error(f"Error in role decorator: {str(e)}", exc_info=True)
                     return jsonify({"error": "Internal server error"}), 500
             return decorated_function
         return decorator
@@ -225,17 +247,20 @@ class PermissionManager:
     def get_user_permissions(cls, user) -> dict:
         """Get all permissions for a user from the database"""
         try:
-            # Use database permissions
-            if hasattr(user, 'role') and hasattr(user.role, 'permissions'):
-                permissions = {}
-                
-                # If super user, return all permissions
-                if user.role.is_super_user:
-                    return {entity.value: {
-                        "view": True, "create": True, "update": True, "delete": True
-                    } for entity in EntityType}
-                
-                # Otherwise build from database permissions
+            # Ensure user object and role exist
+            if not user or not hasattr(user, 'role') or not user.role:
+                return {}
+
+            permissions = {}
+            
+            # If super user, return all permissions
+            if user.role.is_super_user:
+                return {entity.value: {
+                    action.value: True for action in ActionType
+                } for entity in EntityType}
+            
+            # Otherwise build from database permissions
+            if hasattr(user.role, 'permissions') and user.role.permissions:
                 for permission in user.role.permissions:
                     entity = permission.entity
                     action = permission.action
@@ -243,11 +268,9 @@ class PermissionManager:
                     if entity not in permissions:
                         permissions[entity] = {}
                     permissions[entity][action] = True
-                
-                return permissions
             
-            # Return empty dict if no permissions found
-            return {}
+            return permissions
+            
         except Exception as e:
-            logger.error(f"Error getting user permissions: {str(e)}")
+            logger.error(f"Error getting user permissions for {user.username if user else 'Unknown'}: {str(e)}", exc_info=True)
             return {}

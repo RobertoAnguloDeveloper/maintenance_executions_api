@@ -21,7 +21,7 @@ def _get_auth_user() -> User:
 
 @form_assignment_bp.route('', methods=['POST'])
 @jwt_required()
-@PermissionManager.require_permission(action=ActionType.UPDATE, entity_type=EntityType.FORMS)
+@PermissionManager.require_permission(action=ActionType.CREATE, entity_type=EntityType.FORMS)
 def create_assignment():
     """Assign a form to an entity (user, role, or environment)."""
     try:

@@ -2,7 +2,7 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.controllers.environment_controller import EnvironmentController
 from app.services.auth_service import AuthService
-from app.utils.permission_manager import PermissionManager, EntityType, RoleType
+from app.utils.permission_manager import ActionType, PermissionManager, EntityType, RoleType
 import logging
 
 logger = logging.getLogger(__name__)
@@ -37,7 +37,7 @@ def create_environment():
 
 @environment_bp.route('', methods=['GET'])
 @jwt_required()
-@PermissionManager.require_permission(action="view", entity_type=EntityType.ENVIRONMENTS)
+@PermissionManager.require_permission(action=ActionType.VIEW, entity_type=EntityType.ENVIRONMENTS)
 def get_all_environments():
     """Get all environments with role-based filtering"""
     try:

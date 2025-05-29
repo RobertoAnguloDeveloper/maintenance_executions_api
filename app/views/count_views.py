@@ -129,13 +129,13 @@ class DynamicQueryFilter:
         
         # Apply filters based on model structure
         query = DynamicQueryFilter._apply_relationship_filters(
-            query, model, mapper, column_names, user, current_user_id
+            query, model, mapper, column_names, user, current_user_id, table_name
         )
         
         return query
     
     @staticmethod
-    def _apply_relationship_filters(query, model, mapper, column_names, user, current_user_id):
+    def _apply_relationship_filters(query, model, mapper, column_names, user, current_user_id, table_name):
         """Apply filters based on relationships and columns"""
         
         # Check for direct user relationship
@@ -145,61 +145,100 @@ class DynamicQueryFilter:
                 query = query.filter(model.submitted_by == current_user_id)
         
         # Check for environment-based filtering
-        if 'environment_id' in column_names:
+        if 'environment_id' in column_names and table_name != 'environments':
             query = query.filter(model.environment_id == user.environment_id)
+        elif table_name == 'environments':
+            # Special case for environments table
+            query = query.filter(model.id == user.environment_id)
         
         # Check for role-based filtering
         if 'is_super_user' in column_names:
             query = query.filter(model.is_super_user == False)
         
         # Check for public/private filtering
-        if 'is_public' in column_names:
+        if 'is_public' in column_names and 'user_id' in column_names:
             # For forms, allow public or same environment
-            if 'user_id' in column_names or 'created_by' in column_names:
-                creator_field = 'user_id' if 'user_id' in column_names else 'created_by'
-                User_model = DynamicModelLoader.get_model_by_table_name('users')
+            User_model = DynamicModelLoader.get_model_by_table_name('users')
+            if User_model:
+                # Create a subquery for users in the same environment
+                same_env_users = db.session.query(User_model.id).filter(
+                    User_model.environment_id == user.environment_id
+                ).subquery()
+                
                 query = query.filter(
                     (model.is_public == True) | 
-                    (getattr(model, creator_field).has(User_model.environment_id == user.environment_id))
+                    (model.user_id.in_(same_env_users))
                 )
         
         # Handle related tables through foreign keys
         for rel in mapper.relationships:
-            rel_mapper = rel.mapper
-            rel_column_names = [col.name for col in rel_mapper.columns]
+            rel_target = rel.target.name if hasattr(rel.target, 'name') else str(rel.target)
             
             # If related to forms, apply form filtering
-            if rel.target.name == 'forms' and 'form_id' in column_names:
+            if rel_target == 'forms' and 'form_id' in column_names:
                 Form_model = DynamicModelLoader.get_model_by_table_name('forms')
                 User_model = DynamicModelLoader.get_model_by_table_name('users')
                 if Form_model and User_model:
-                    query = query.join(Form_model).filter(
+                    # Create query for accessible forms (without .subquery())
+                    accessible_forms_query = db.session.query(Form_model.id).join(
+                        User_model, Form_model.user_id == User_model.id
+                    ).filter(
                         (Form_model.is_public == True) | 
-                        (Form_model.user_id.has(User_model.environment_id == user.environment_id))
+                        (User_model.environment_id == user.environment_id)
                     )
+
+                    query = query.filter(model.form_id.in_(accessible_forms_query))
             
             # If related to form_submissions, apply submission filtering
-            elif rel.target.name == 'form_submissions' and 'form_submission_id' in column_names:
+            elif rel_target == 'form_submissions' and 'form_submission_id' in column_names:
                 FormSubmission_model = DynamicModelLoader.get_model_by_table_name('form_submissions')
                 if FormSubmission_model:
                     if hasattr(user.role, 'name') and user.role.name == RoleType.TECHNICIAN:
-                        query = query.join(FormSubmission_model).filter(
+                        # Technicians only see their own submissions
+                        technician_submissions = db.session.query(FormSubmission_model.id).filter(
                             FormSubmission_model.submitted_by == current_user_id
-                        )
+                        ).subquery()
+                        query = query.filter(model.form_submission_id.in_(technician_submissions))
                     else:
                         # For other roles, filter by environment through forms
                         Form_model = DynamicModelLoader.get_model_by_table_name('forms')
                         User_model = DynamicModelLoader.get_model_by_table_name('users')
                         if Form_model and User_model:
-                            query = query.join(FormSubmission_model).join(Form_model).join(
+                            env_submissions = db.session.query(FormSubmission_model.id).join(
+                                Form_model, FormSubmission_model.form_id == Form_model.id
+                            ).join(
                                 User_model, Form_model.user_id == User_model.id
-                            ).filter(User_model.environment_id == user.environment_id)
+                            ).filter(
+                                User_model.environment_id == user.environment_id
+                            ).subquery()
+                            query = query.filter(model.form_submission_id.in_(env_submissions))
             
             # If related to roles, filter super user roles
-            elif rel.target.name == 'roles' and 'role_id' in column_names:
+            elif rel_target == 'roles' and 'role_id' in column_names:
                 Role_model = DynamicModelLoader.get_model_by_table_name('roles')
                 if Role_model:
-                    query = query.join(Role_model).filter(Role_model.is_super_user == False)
+                    non_super_roles = db.session.query(Role_model.id).filter(
+                        Role_model.is_super_user == False
+                    ).subquery()
+                    query = query.filter(model.role_id.in_(non_super_roles))
+        
+        # Special handling for specific tables
+        if table_name == 'form_submissions':
+            # Direct filtering for form_submissions table
+            if hasattr(user.role, 'name') and user.role.name == RoleType.TECHNICIAN:
+                query = query.filter(model.submitted_by == current_user_id)
+            else:
+                # Filter by forms in user's environment
+                Form_model = DynamicModelLoader.get_model_by_table_name('forms')
+                User_model = DynamicModelLoader.get_model_by_table_name('users')
+                if Form_model and User_model:
+                    env_forms_query = db.session.query(Form_model.id).join(
+                        User_model, Form_model.user_id == User_model.id
+                    ).filter(
+                        User_model.environment_id == user.environment_id
+                    )
+
+                    query = query.filter(model.form_id.in_(env_forms_query))
         
         return query
 

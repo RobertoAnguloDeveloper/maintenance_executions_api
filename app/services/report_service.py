@@ -125,7 +125,10 @@ class ReportService:
             }
             mime_map = {
                 "xlsx": 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                "csv": 'application/zip' if isinstance(report_type_req, list) and len(report_type_req) > 1 and output_format == 'csv' and not final_report_params.get('separate_files', False) else 'text/csv',
+                "csv": 'application/zip' if (
+                    (isinstance(report_type_req, list) and len(report_type_req) > 1) or 
+                    report_type_req == "all"
+                ) and output_format == 'csv' else 'text/csv',
                 "pdf": 'application/pdf',
                 "docx": 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
                 "pptx": 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
@@ -139,11 +142,10 @@ class ReportService:
                     mime_type = mime_map[output_format]
 
                     if (output_format == 'csv' and
-                        isinstance(report_type_req, list) and
-                        len(report_type_req) > 1 and
-                        not final_report_params.get('separate_files', False)):
-                         final_filename = f"{base_filename}.zip" # This logic seems more appropriate for CSV if it also zips multi-entity.
-                         mime_type = 'application/zip'
+                        ((isinstance(report_type_req, list) and len(report_type_req) > 1) or
+                        report_type_req == "all")):
+                        final_filename = f"{base_filename}.zip"
+                        mime_type = 'application/zip'
 
                 except Exception as format_err:
                     logger.error(f"Error generating {output_format} report: {format_err}", exc_info=True)

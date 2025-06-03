@@ -249,14 +249,33 @@ class ExportSubmissionService:
             
             if new_width_px <=0 or new_height_px <=0: new_width_px, new_height_px = float(orig_width_px), float(orig_height_px)
 
-            if img.mode in ('P', 'LA') or (img.mode == 'RGBA' and img.info.get('transparency') is not None): img = img.convert('RGBA')
-            elif img.mode != 'RGB': img = img.convert('RGB')
+            # Handle transparency properly
+            if img.mode in ('P', 'LA'):
+                # Convert palette-based images with transparency to RGBA
+                img = img.convert('RGBA')
+            elif img.mode == 'RGBA':
+                # For RGBA images, we need to composite onto a white background
+                # Create a white background
+                white_bg = PILImage.new('RGBA', img.size, (255, 255, 255, 255))
+                # Composite the image onto the white background
+                img = PILImage.alpha_composite(white_bg, img)
+                # Convert to RGB for final output
+                img = img.convert('RGB')
+            elif img.mode != 'RGB':
+                img = img.convert('RGB')
             img_resized = img.resize((int(new_width_px), int(new_height_px)), PILImage.LANCZOS)
             
             img_format_upper = img.format.upper() if img.format else 'PNG'
             if img_format_upper in ['SVG', 'WEBP', 'GIF']: img_format_upper = 'PNG'
             result_io = io.BytesIO()
-            if img_format_upper == 'JPEG' and img_resized.mode == 'RGBA': img_resized = img_resized.convert('RGB')
+            if img_format_upper == 'JPEG':
+                if img_resized.mode == 'RGBA':
+                    # Create white background for JPEG
+                    white_bg = PILImage.new('RGB', img_resized.size, (255, 255, 255))
+                    white_bg.paste(img_resized, mask=img_resized.split()[3])  # Use alpha channel as mask
+                    img_resized = white_bg
+                elif img_resized.mode != 'RGB':
+                    img_resized = img_resized.convert('RGB')
             
             img_resized.save(result_io, format=img_format_upper)
             result_io.seek(0)

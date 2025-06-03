@@ -96,14 +96,17 @@ DEFAULT_STYLE_CONFIG: Dict[str, Any] = {
     "table_cell_leading": 10, "table_cell_alignment": "LEFT", "table_cell_alignment_docx": "left",
     "table_grid_color": colors.grey, "table_grid_color_docx": "BEBEBE", "table_grid_thickness": 0.5, # Points
     # Signatures
-    "signature_label_font_family": "Helvetica-Bold", "signature_label_font_family_docx": "Calibri", "signature_label_font_size": 12, "signature_label_font_size_docx": 11,
+    "signature_label_font_family": "Helvetica-Bold", "signature_label_font_family_docx": "Calibri", 
+    "signature_label_font_size": 12, "signature_label_font_size_docx": 11,
     "signature_label_font_color": colors.black, "signature_label_font_color_docx": "000000",
-    "signature_text_font_family": "Helvetica", "signature_text_font_family_docx": "Calibri", "signature_text_font_size": 9, "signature_text_font_size_docx": 9,
+    "signature_text_font_family": "Helvetica", "signature_text_font_family_docx": "Calibri", 
+    "signature_text_font_size": 9, "signature_text_font_size_docx": 9,
     "signature_text_font_color": colors.black, "signature_text_font_color_docx": "000000",
     "signature_image_width": 2.0, "signature_image_width_docx": 2.0, # Inches
     "signature_image_height": 0.8, "signature_image_height_docx": 0.8, # Inches
     "signature_section_space_before": 0.3, "signature_section_space_before_docx": 18, # Inches for PDF, Points for DOCX
     "signature_space_between_vertical": 0.2, "signature_space_between_vertical_docx_pt": 10, # Inches for PDF, Points for DOCX
+    "signature_position_alignment": "center", "signature_position_alignment_docx": "center",  # NEW: left, center, right
 }
 
 # --- Global Helper Functions ---
@@ -286,15 +289,25 @@ class ExportSubmissionService:
     @staticmethod
     def _add_signatures_to_reportlab_story(
         story: List[Flowable], attachments: List[Attachment], upload_path: str,
-        scale_factor: float, alignment_str: str, styles: Any, config: Dict[str, Any]
+        scale_factor: float, alignment_str: str, position_alignment: str,  # NEW parameter
+        styles: Any, config: Dict[str, Any]
     ):
         sig_attachments = [att for att in attachments if att.is_signature and not att.is_deleted]
         if not sig_attachments: return
 
         if 'CustomSignatureLabel' not in styles:
-            styles.add(ReportLabParagraphStyle(name='CustomSignatureLabel', fontName=str(config.get("signature_label_font_family", "Helvetica-Bold")), fontSize=_parse_numeric_value(config.get("signature_label_font_size", 12)), textColor=_get_color_rl(config.get("signature_label_font_color", colors.black)), spaceBefore=_parse_numeric_value(config.get("signature_section_space_before", 0.3)) * inch, spaceAfter=4))
+            styles.add(ReportLabParagraphStyle(name='CustomSignatureLabel', 
+                fontName=str(config.get("signature_label_font_family", "Helvetica-Bold")), 
+                fontSize=_parse_numeric_value(config.get("signature_label_font_size", 12)), 
+                textColor=_get_color_rl(config.get("signature_label_font_color", colors.black)), 
+                spaceBefore=_parse_numeric_value(config.get("signature_section_space_before", 0.3)) * inch, 
+                spaceAfter=4))
         if 'CustomSignatureText' not in styles:
-            styles.add(ReportLabParagraphStyle(name='CustomSignatureText', fontName=str(config.get("signature_text_font_family", "Helvetica")), fontSize=_parse_numeric_value(config.get("signature_text_font_size", 9)), textColor=_get_color_rl(config.get("signature_text_font_color", colors.black)), leading=_parse_numeric_value(config.get("signature_text_font_size", 9)) * 1.2))
+            styles.add(ReportLabParagraphStyle(name='CustomSignatureText', 
+                fontName=str(config.get("signature_text_font_family", "Helvetica")), 
+                fontSize=_parse_numeric_value(config.get("signature_text_font_size", 9)), 
+                textColor=_get_color_rl(config.get("signature_text_font_color", colors.black)), 
+                leading=_parse_numeric_value(config.get("signature_text_font_size", 9)) * 1.2))
         
         story.append(ReportLabParagraph("Signatures:", styles['CustomSignatureLabel']))
         story.append(Spacer(1, 0.05 * inch))
@@ -304,37 +317,107 @@ class ExportSubmissionService:
         sig_space_between_vertical = _parse_numeric_value(config.get("signature_space_between_vertical", 0.2)) * inch
         page_content_width = styles.PAGE_WIDTH - styles.LEFT_MARGIN - styles.RIGHT_MARGIN
 
+        # Map position alignment to ReportLab table alignment
+        position_align_map = {
+            "left": "LEFT",
+            "center": "CENTER", 
+            "right": "RIGHT"
+        }
+        table_position_align = position_align_map.get(position_alignment.lower(), "CENTER")
+
         if alignment_str.lower() == "horizontal" and len(sig_attachments) > 1:
             effective_sig_width = sig_img_w_conf + (0.2 * inch) 
             max_sigs_per_row = int(page_content_width / effective_sig_width) if effective_sig_width > 0 else 1
             max_sigs_per_row = max(1, min(max_sigs_per_row, len(sig_attachments), 3)) 
             sig_rows_data: List[List[List[Flowable]]] = []
             current_sig_row_items: List[List[Flowable]] = []
+            
             for idx, att in enumerate(sig_attachments):
                 sig_block_elements: List[Flowable] = []
-                full_file_path = os.path.join(upload_path, att.file_path); sig_author = att.signature_author or "N/A"; sig_position = att.signature_position or "N/A"
+                full_file_path = os.path.join(upload_path, att.file_path)
+                sig_author = att.signature_author or "N/A"
+                sig_position = att.signature_position or "N/A"
+                
                 if os.path.exists(full_file_path):
-                    try: sig_block_elements.append(ReportLabImage(full_file_path, width=sig_img_w_conf, height=sig_img_h_conf))
-                    except Exception as e_img: sig_block_elements.append(ReportLabParagraph(f"<i>[Image Error: {e_img}]</i>", styles['CustomSignatureText']))
-                else: sig_block_elements.append(ReportLabParagraph(f"<i>[Image Missing: {os.path.basename(att.file_path)}]</i>", styles['CustomSignatureText']))
-                sig_block_elements.extend([Spacer(1, 2), ReportLabParagraph("___________________________", styles['CustomSignatureText']), ReportLabParagraph(f"<b>Signed by:</b> {sig_author}", styles['CustomSignatureText']), ReportLabParagraph(f"<b>Position:</b> {sig_position}", styles['CustomSignatureText'])])
+                    try: 
+                        sig_block_elements.append(ReportLabImage(full_file_path, width=sig_img_w_conf, height=sig_img_h_conf))
+                    except Exception as e_img: 
+                        sig_block_elements.append(ReportLabParagraph(f"<i>[Image Error: {e_img}]</i>", styles['CustomSignatureText']))
+                else: 
+                    sig_block_elements.append(ReportLabParagraph(f"<i>[Image Missing: {os.path.basename(att.file_path)}]</i>", styles['CustomSignatureText']))
+                
+                sig_block_elements.extend([
+                    Spacer(1, 2), 
+                    ReportLabParagraph("___________________________", styles['CustomSignatureText']), 
+                    ReportLabParagraph(f"<b>Signed by:</b> {sig_author}", styles['CustomSignatureText']), 
+                    ReportLabParagraph(f"<b>Position:</b> {sig_position}", styles['CustomSignatureText'])
+                ])
                 current_sig_row_items.append(sig_block_elements)
+                
                 if len(current_sig_row_items) == max_sigs_per_row or idx == len(sig_attachments) - 1:
-                    sig_rows_data.append(current_sig_row_items); current_sig_row_items = []
+                    sig_rows_data.append(current_sig_row_items)
+                    current_sig_row_items = []
+            
             for sig_row_group in sig_rows_data:
                 if not sig_row_group: continue
-                col_width_sig = page_content_width / len(sig_row_group) if len(sig_row_group) > 0 else page_content_width
-                sig_table = ReportLabTable([sig_row_group], colWidths=[col_width_sig] * len(sig_row_group)) # type: ignore
-                sig_table.setStyle(ReportLabTableStyle([('VALIGN', (0,0), (-1,-1), 'TOP'), ('LEFTPADDING', (0,0), (-1,-1), 2), ('RIGHTPADDING', (0,0), (-1,-1), 2), ('BOTTOMPADDING', (0,0), (-1,-1), 5)]))
-                story.append(sig_table); story.append(Spacer(1, 0.1 * inch))
-        else: 
+                
+                # Calculate column width based on position alignment
+                if position_alignment.lower() == "left":
+                    col_widths = [effective_sig_width] * len(sig_row_group)
+                elif position_alignment.lower() == "right":
+                    remaining_width = page_content_width - (effective_sig_width * len(sig_row_group))
+                    col_widths = [remaining_width] + [effective_sig_width] * len(sig_row_group)
+                    sig_row_group = [[]] + sig_row_group  # Add empty first column
+                else:  # center
+                    col_width_sig = page_content_width / len(sig_row_group) if len(sig_row_group) > 0 else page_content_width
+                    col_widths = [col_width_sig] * len(sig_row_group)
+                
+                sig_table = ReportLabTable([sig_row_group], colWidths=col_widths)
+                sig_table.setStyle(ReportLabTableStyle([
+                    ('ALIGN', (0,0), (-1,-1), table_position_align),
+                    ('VALIGN', (0,0), (-1,-1), 'TOP'), 
+                    ('LEFTPADDING', (0,0), (-1,-1), 2), 
+                    ('RIGHTPADDING', (0,0), (-1,-1), 2), 
+                    ('BOTTOMPADDING', (0,0), (-1,-1), 5)
+                ]))
+                story.append(sig_table)
+                story.append(Spacer(1, 0.1 * inch))
+        else:  # Vertical alignment
+            # For vertical alignment, create a container table for position alignment
             for att in sig_attachments:
-                full_file_path = os.path.join(upload_path, att.file_path); sig_author = att.signature_author or "N/A"; sig_position = att.signature_position or "N/A"
+                full_file_path = os.path.join(upload_path, att.file_path)
+                sig_author = att.signature_author or "N/A"
+                sig_position = att.signature_position or "N/A"
+                
+                sig_elements = []
+                
                 if os.path.exists(full_file_path):
-                    try: story.append(ReportLabImage(full_file_path, width=sig_img_w_conf, height=sig_img_h_conf))
-                    except Exception as e_img: story.append(ReportLabParagraph(f"<i>[Sig Image Error: {e_img}]</i>", styles['CustomSignatureText']))
-                else: story.append(ReportLabParagraph(f"<i>[Sig Image Missing: {os.path.basename(att.file_path)}]</i>", styles['CustomSignatureText']))
-                story.extend([Spacer(1, 2), ReportLabParagraph("___________________________", styles['CustomSignatureText']), ReportLabParagraph(f"<b>Signed by:</b> {sig_author}", styles['CustomSignatureText']), ReportLabParagraph(f"<b>Position:</b> {sig_position}", styles['CustomSignatureText']), Spacer(1, sig_space_between_vertical)])
+                    try: 
+                        sig_elements.append(ReportLabImage(full_file_path, width=sig_img_w_conf, height=sig_img_h_conf))
+                    except Exception as e_img: 
+                        sig_elements.append(ReportLabParagraph(f"<i>[Sig Image Error: {e_img}]</i>", styles['CustomSignatureText']))
+                else: 
+                    sig_elements.append(ReportLabParagraph(f"<i>[Sig Image Missing: {os.path.basename(att.file_path)}]</i>", styles['CustomSignatureText']))
+                
+                sig_elements.extend([
+                    Spacer(1, 2), 
+                    ReportLabParagraph("___________________________", styles['CustomSignatureText']), 
+                    ReportLabParagraph(f"<b>Signed by:</b> {sig_author}", styles['CustomSignatureText']), 
+                    ReportLabParagraph(f"<b>Position:</b> {sig_position}", styles['CustomSignatureText'])
+                ])
+                
+                # Wrap in a table for alignment control
+                sig_container = ReportLabTable([[sig_elements]], colWidths=[page_content_width])
+                sig_container.setStyle(ReportLabTableStyle([
+                    ('ALIGN', (0,0), (0,0), table_position_align),
+                    ('VALIGN', (0,0), (0,0), 'TOP'),
+                    ('LEFTPADDING', (0,0), (0,0), 0),
+                    ('RIGHTPADDING', (0,0), (0,0), 0),
+                    ('TOPPADDING', (0,0), (0,0), 0),
+                    ('BOTTOMPADDING', (0,0), (0,0), 0)
+                ]))
+                story.append(sig_container)
+                story.append(Spacer(1, sig_space_between_vertical))
 
     @staticmethod
     def _add_header_image_to_docx_header(
@@ -357,9 +440,18 @@ class ExportSubmissionService:
     @staticmethod
     def _add_signatures_to_docx(
         doc: Document, attachments: List[Attachment], upload_path: str,
-        size_percent: float, alignment_str: str, config: Dict[str, Any]
+        size_percent: float, alignment_str: str, position_alignment: str,  # NEW parameter
+        config: Dict[str, Any]
     ):
-        sig_attachments_info = [{'path': os.path.join(upload_path, att.file_path),'author': att.signature_author or "N/A",'position': att.signature_position or "N/A",'exists': os.path.exists(os.path.join(upload_path, att.file_path))} for att in attachments if att.is_signature and not att.is_deleted]
+        sig_attachments_info = [
+            {
+                'path': os.path.join(upload_path, att.file_path),
+                'author': att.signature_author or "N/A",
+                'position': att.signature_position or "N/A",
+                'exists': os.path.exists(os.path.join(upload_path, att.file_path))
+            } 
+            for att in attachments if att.is_signature and not att.is_deleted
+        ]
         if not sig_attachments_info: return
         
         sig_heading_p = doc.add_paragraph()
@@ -368,7 +460,8 @@ class ExportSubmissionService:
         sig_heading_run.font.name = str(config.get("signature_label_font_family_docx", "Calibri"))
         sig_heading_run.font.size = Pt(_parse_numeric_value(config.get("signature_label_font_size_docx", 11)))
         sig_label_font_color_val = _get_docx_color(config.get("signature_label_font_color_docx", "000000"))
-        if sig_label_font_color_val: sig_heading_run.font.color.rgb = sig_label_font_color_val
+        if sig_label_font_color_val: 
+            sig_heading_run.font.color.rgb = sig_label_font_color_val
         sig_heading_p.paragraph_format.space_before = Pt(_parse_numeric_value(config.get("signature_section_space_before_docx", 18)))
         sig_heading_p.paragraph_format.space_after = Pt(6)
 
@@ -379,23 +472,36 @@ class ExportSubmissionService:
         sig_text_font_color = _get_docx_color(config.get("signature_text_font_color_docx", "000000"))
         sig_space_after_pt = Pt(_parse_numeric_value(config.get("signature_space_between_vertical_docx_pt", 10)))
 
+        # Map position alignment to DOCX alignment
+        docx_position_align = _get_docx_alignment(position_alignment, WD_ALIGN_PARAGRAPH.CENTER)
+
         if alignment_str.lower() == "horizontal" and len(sig_attachments_info) > 1:
             page_width_inches = (doc.sections[0].page_width - doc.sections[0].left_margin - doc.sections[0].right_margin) / Inches(1)
-            effective_sig_block_width = sig_img_width_final_inches + 0.5 # 0.5 inch spacing
+            effective_sig_block_width = sig_img_width_final_inches + 0.5
             max_cols = int(page_width_inches / effective_sig_block_width) if effective_sig_block_width > 0 else 1
-            max_cols = max(1, min(max_cols, len(sig_attachments_info), 3)) 
+            max_cols = max(1, min(max_cols, len(sig_attachments_info), 3))
             num_rows = (len(sig_attachments_info) + max_cols - 1) // max_cols
             
             sig_table = doc.add_table(rows=num_rows, cols=max_cols)
-            sig_table.alignment = WD_TABLE_ALIGNMENT.CENTER 
-            sig_table.style = 'TableGrid' 
+            
+            # Set table alignment based on position_alignment
+            if position_alignment.lower() == "left":
+                sig_table.alignment = WD_TABLE_ALIGNMENT.LEFT
+            elif position_alignment.lower() == "right":
+                sig_table.alignment = WD_TABLE_ALIGNMENT.RIGHT
+            else:  # center
+                sig_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+            
+            sig_table.style = 'TableGrid'
+            
+            # Remove borders
             for row_obj in sig_table.rows:
                 for cell_obj in row_obj.cells:
                     tcPr = cell_obj._tc.get_or_add_tcPr()
                     tcBorders = OxmlElement('w:tcBorders')
                     for border_name in ['top', 'left', 'bottom', 'right', 'insideH', 'insideV']:
                         border_el = OxmlElement(f'w:{border_name}')
-                        border_el.set(qn('w:val'), 'nil') 
+                        border_el.set(qn('w:val'), 'nil')
                         tcBorders.append(border_el)
                     tcPr.append(tcBorders)
 
@@ -406,52 +512,91 @@ class ExportSubmissionService:
                     p_elem = cell.paragraphs[0]._element
                     p_elem.getparent().remove(p_elem)
 
-                p_img = cell.add_paragraph(); p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                # Add signature elements with consistent alignment
+                p_img = cell.add_paragraph()
+                p_img.alignment = docx_position_align
                 if sig_info["exists"]:
-                    try: p_img.add_run().add_picture(sig_info["path"], width=Inches(sig_img_width_final_inches))
-                    except Exception as e: p_img.add_run(f"[Img Err: {e}]")
-                else: p_img.add_run(f"[Img Miss: {os.path.basename(sig_info['path'])}]")
+                    try: 
+                        p_img.add_run().add_picture(sig_info["path"], width=Inches(sig_img_width_final_inches))
+                    except Exception as e: 
+                        p_img.add_run(f"[Img Err: {e}]")
+                else: 
+                    p_img.add_run(f"[Img Miss: {os.path.basename(sig_info['path'])}]")
                 
-                p_line = cell.add_paragraph("___________________________"); p_line.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                for run in p_line.runs: run.font.name = sig_text_font_fam; run.font.size = sig_text_font_sz; 
-                if sig_text_font_color: run.font.color.rgb = sig_text_font_color
+                p_line = cell.add_paragraph("___________________________")
+                p_line.alignment = docx_position_align
+                for run in p_line.runs: 
+                    run.font.name = sig_text_font_fam
+                    run.font.size = sig_text_font_sz
+                    if sig_text_font_color: 
+                        run.font.color.rgb = sig_text_font_color
                 
-                p_author = cell.add_paragraph(); p_author.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                author_run = p_author.add_run("Signed by: "); author_run.bold = True
+                p_author = cell.add_paragraph()
+                p_author.alignment = docx_position_align
+                author_run = p_author.add_run("Signed by: ")
+                author_run.bold = True
                 p_author.add_run(sig_info['author'])
-                for run in p_author.runs: run.font.name = sig_text_font_fam; run.font.size = sig_text_font_sz; 
-                if sig_text_font_color: run.font.color.rgb = sig_text_font_color
+                for run in p_author.runs: 
+                    run.font.name = sig_text_font_fam
+                    run.font.size = sig_text_font_sz
+                    if sig_text_font_color: 
+                        run.font.color.rgb = sig_text_font_color
                 
-                p_position = cell.add_paragraph(); p_position.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                pos_run = p_position.add_run("Position: "); pos_run.bold = True
+                p_position = cell.add_paragraph()
+                p_position.alignment = docx_position_align
+                pos_run = p_position.add_run("Position: ")
+                pos_run.bold = True
                 p_position.add_run(sig_info['position'])
-                for run in p_position.runs: run.font.name = sig_text_font_fam; run.font.size = sig_text_font_sz; 
-                if sig_text_font_color: run.font.color.rgb = sig_text_font_color
-                p_position.paragraph_format.space_after = Pt(0) 
-            doc.add_paragraph().paragraph_format.space_after = sig_space_after_pt 
-        else: # Vertical alignment
+                for run in p_position.runs: 
+                    run.font.name = sig_text_font_fam
+                    run.font.size = sig_text_font_sz
+                    if sig_text_font_color: 
+                        run.font.color.rgb = sig_text_font_color
+                p_position.paragraph_format.space_after = Pt(0)
+            
+            doc.add_paragraph().paragraph_format.space_after = sig_space_after_pt
+        
+        else:  # Vertical alignment
             for sig_info in sig_attachments_info:
-                p_img = doc.add_paragraph(); p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                p_img = doc.add_paragraph()
+                p_img.alignment = docx_position_align
                 if sig_info["exists"]:
-                    try: p_img.add_run().add_picture(sig_info["path"], width=Inches(sig_img_width_final_inches))
-                    except Exception as e: p_img.add_run(f"[Img Err: {e}]")
-                else: p_img.add_run(f"[Img Miss: {os.path.basename(sig_info['path'])}]")
+                    try: 
+                        p_img.add_run().add_picture(sig_info["path"], width=Inches(sig_img_width_final_inches))
+                    except Exception as e: 
+                        p_img.add_run(f"[Img Err: {e}]")
+                else: 
+                    p_img.add_run(f"[Img Miss: {os.path.basename(sig_info['path'])}]")
                 
-                p_line = doc.add_paragraph("___________________________"); p_line.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                for run in p_line.runs: run.font.name = sig_text_font_fam; run.font.size = sig_text_font_sz; 
-                if sig_text_font_color: run.font.color.rgb = sig_text_font_color
+                p_line = doc.add_paragraph("___________________________")
+                p_line.alignment = docx_position_align
+                for run in p_line.runs: 
+                    run.font.name = sig_text_font_fam
+                    run.font.size = sig_text_font_sz
+                    if sig_text_font_color: 
+                        run.font.color.rgb = sig_text_font_color
 
-                p_author = doc.add_paragraph(); p_author.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                author_run = p_author.add_run("Signed by: "); author_run.bold = True
+                p_author = doc.add_paragraph()
+                p_author.alignment = docx_position_align
+                author_run = p_author.add_run("Signed by: ")
+                author_run.bold = True
                 p_author.add_run(sig_info['author'])
-                for run in p_author.runs: run.font.name = sig_text_font_fam; run.font.size = sig_text_font_sz; 
-                if sig_text_font_color: run.font.color.rgb = sig_text_font_color
+                for run in p_author.runs: 
+                    run.font.name = sig_text_font_fam
+                    run.font.size = sig_text_font_sz
+                    if sig_text_font_color: 
+                        run.font.color.rgb = sig_text_font_color
 
-                p_position = doc.add_paragraph(); p_position.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                pos_run = p_position.add_run("Position: "); pos_run.bold = True
+                p_position = doc.add_paragraph()
+                p_position.alignment = docx_position_align
+                pos_run = p_position.add_run("Position: ")
+                pos_run.bold = True
                 p_position.add_run(sig_info['position'])
-                for run in p_position.runs: run.font.name = sig_text_font_fam; run.font.size = sig_text_font_sz; 
-                if sig_text_font_color: run.font.color.rgb = sig_text_font_color
+                for run in p_position.runs: 
+                    run.font.name = sig_text_font_fam
+                    run.font.size = sig_text_font_sz
+                    if sig_text_font_color: 
+                        run.font.color.rgb = sig_text_font_color
                 p_position.paragraph_format.space_after = sig_space_after_pt
 
     # ============================================================================
@@ -470,6 +615,7 @@ class ExportSubmissionService:
         header_alignment: str = "center",
         signatures_size: float = 100,
         signatures_alignment: str = "vertical",
+        signatures_position_alignment: str = "left",  # NEW parameter
         pdf_style_options: Optional[Dict[str, Any]] = None
     ) -> Tuple[Optional[BytesIO], Optional[str]]:
         
@@ -649,7 +795,12 @@ class ExportSubmissionService:
                     else: story.append(ReportLabParagraph("<i>No data submitted for this table.</i>",styles_pdf['CustomAnswer']))
                     story.append(Spacer(1, get_style_attr_val_points("table_space_after", DEFAULT_STYLE_CONFIG["table_space_after"])))
             
-            if include_signatures: ExportSubmissionService._add_signatures_to_reportlab_story(story,submission.attachments,upload_path,signatures_size/100.0,signatures_alignment,styles_pdf,final_config)
+            if include_signatures: ExportSubmissionService._add_signatures_to_reportlab_story(
+                story, submission.attachments, upload_path, 
+                signatures_size/100.0, signatures_alignment, 
+                signatures_position_alignment,  # NEW parameter
+                styles_pdf, final_config
+            )
             
             doc_pdf.build(story); buffer.seek(0); return buffer,None
         except NameError as ne:
@@ -664,11 +815,18 @@ class ExportSubmissionService:
 
     @staticmethod
     def export_submission_to_docx(
-        submission_id: int, upload_path: str, include_signatures: bool = True,
-        style_options: Optional[Dict[str, Any]] = None, header_image_file: Optional[Any] = None,
-        header_size_percent: Optional[float] = None, header_width_px: Optional[float] = None,
-        header_height_px: Optional[float] = None, header_alignment_str: str = "center",
-        signatures_size_percent: float = 100, signatures_alignment_str: str = "vertical"
+        submission_id: int, 
+        upload_path: str, 
+        include_signatures: bool = True,
+        style_options: Optional[Dict[str, Any]] = None, 
+        header_image_file: Optional[Any] = None,
+        header_size_percent: Optional[float] = None, 
+        header_width_px: Optional[float] = None,
+        header_height_px: Optional[float] = None, 
+        header_alignment_str: str = "center",
+        signatures_size_percent: float = 100, 
+        signatures_alignment_str: str = "vertical",
+        signatures_position_alignment_str: str = "left"
     ) -> Tuple[Optional[BytesIO], Optional[str]]:
         final_config_docx = DEFAULT_STYLE_CONFIG.copy()
         if style_options:
@@ -899,7 +1057,12 @@ class ExportSubmissionService:
                         doc.add_paragraph("No data submitted for this table.").paragraph_format.space_after = Pt(_parse_numeric_value(final_config_docx.get("table_space_after_docx", 12)))
 
             if include_signatures:
-                ExportSubmissionService._add_signatures_to_docx(doc, submission.attachments, upload_path, signatures_size_percent, signatures_alignment_str, final_config_docx)
+                ExportSubmissionService._add_signatures_to_docx(
+                doc, submission.attachments, upload_path, 
+                signatures_size_percent, signatures_alignment_str, 
+                signatures_position_alignment_str,  # NEW parameter
+                final_config_docx
+            )
 
             buffer_docx = BytesIO()
             doc.save(buffer_docx)

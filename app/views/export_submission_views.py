@@ -85,6 +85,14 @@ def _parse_common_export_params(current_request):
             raise ValueError(f"Invalid signatures alignment. Must be one of: {', '.join(valid_sig_alignments)}.")
         params['signatures_alignment'] = sig_alignment
 
+    # NEW: Parse signatures position alignment
+    if 'signatures_position_alignment' in form_data and form_data['signatures_position_alignment']:
+        sig_pos_alignment = form_data['signatures_position_alignment'].lower()
+        valid_sig_pos_alignments = ['left', 'center', 'right']
+        if sig_pos_alignment not in valid_sig_pos_alignments:
+            raise ValueError(f"Invalid signatures position alignment. Must be one of: {', '.join(valid_sig_pos_alignments)}.")
+        params['signatures_position_alignment'] = sig_pos_alignment
+
     if 'include_signatures' in form_data:
         params['include_signatures'] = form_data['include_signatures'].lower() in ['true', '1', 'yes', 'on']
 
@@ -105,6 +113,7 @@ def get_export_customization_options():
             {"key": "header_alignment", "type": "string", "description": "Header image alignment.", "accepted_values": ["left", "center", "right"], "example_pdf": "center", "example_docx": "center"},
             {"key": "signatures_size", "type": "float (%)", "description": "Signature images size percentage.", "example_pdf": "80", "example_docx": "80"},
             {"key": "signatures_alignment", "type": "string", "description": "Layout for multiple signatures.", "accepted_values": ["vertical", "horizontal"], "example_pdf": "vertical", "example_docx": "vertical"},
+            {"key": "signatures_position_alignment", "type": "string", "description": "Position alignment for signatures within their container.", "accepted_values": ["left", "center", "right"], "example_pdf": "center", "example_docx": "center"},  # NEW
             {"key": "include_signatures", "type": "boolean", "description": "Include signatures in export.", "accepted_values": ["true", "false", "1", "0"], "example_pdf": "true", "example_docx": "true"}
         ],
         "style_options": [] 
@@ -132,6 +141,12 @@ def get_export_customization_options():
         
         if is_docx_specific_key: param_info["description"] = f"DOCX specific: Styling for {base_key_name.replace('_', ' ')}."
         else: param_info["description"] = f"Styling for {key.replace('_', ' ')}."
+        
+        if key in ["signature_position_alignment", "signature_position_alignment_docx"]:
+            param_info["type"] = "string"
+            param_info["accepted_values"] = ["left", "center", "right"]
+            param_info["example_pdf"] = "center"
+            param_info["example_docx"] = "center"
 
         if key in pdf_style_spatial_keys_user_input_as_points:
             param_info["type"] = "float or integer (points)"
@@ -177,7 +192,6 @@ def get_export_customization_options():
 
 @export_submission_bp.route('/<int:submission_id>/<string:export_format>/custom', methods=['POST'])
 @jwt_required()
-# @PermissionManager.require_permission(action="view", entity_type=EntityType.SUBMISSIONS) # Assuming decorator is correctly defined and imported
 def export_custom_submission(submission_id: int, export_format: str):
     """
     Export a form submission as PDF or DOCX with custom styling and options.
@@ -214,6 +228,7 @@ def export_custom_submission(submission_id: int, export_format: str):
                 header_alignment=common_params.get('header_alignment', "center"),
                 signatures_size=common_params.get('signatures_size', 100),
                 signatures_alignment=common_params.get('signatures_alignment', "vertical"),
+                signatures_position_alignment=common_params.get('signatures_position_alignment', "center"),  # NEW
                 include_signatures=common_params.get('include_signatures', True),
                 pdf_style_options=style_options
             )
@@ -229,6 +244,7 @@ def export_custom_submission(submission_id: int, export_format: str):
                 header_alignment=common_params.get('header_alignment', "center"),
                 signatures_size=common_params.get('signatures_size', 100),
                 signatures_alignment=common_params.get('signatures_alignment', "vertical"),
+                signatures_position_alignment=common_params.get('signatures_position_alignment', "center"),  # NEW
                 include_signatures=common_params.get('include_signatures', True),
                 style_options=style_options
             )

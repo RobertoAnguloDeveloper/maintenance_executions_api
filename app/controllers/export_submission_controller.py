@@ -25,6 +25,7 @@ class ExportSubmissionController:
         header_alignment: str = "center",
         signatures_size: float = 100,
         signatures_alignment: str = "vertical",
+        signatures_position_alignment: str = "left",
         pdf_style_options: Optional[Dict[str, Any]] = None,
         include_signatures: bool = True
     ) -> Tuple[Optional[bytes], Optional[Dict], Optional[str]]:
@@ -32,20 +33,17 @@ class ExportSubmissionController:
         Generate a PDF export for a given submission, handling both default and custom options.
         """
         try:
-            # --- FIX STARTS HERE ---
             if not current_user:
                 return None, None, "User identity is required for export authorization."
-            # Resolve user string to User object
+            
             user_obj = AuthService.get_current_user(current_user)
             if not user_obj:
                 return None, None, f"User '{current_user}' not found for export authorization."
 
-            # Call get_submission with the User object
             submission = FormSubmissionService.get_submission(
                 submission_id=submission_id,
                 current_user=user_obj
             )
-            # --- FIX ENDS HERE ---
 
             if not submission:
                 return None, None, "Submission not found or access denied"
@@ -53,8 +51,7 @@ class ExportSubmissionController:
             upload_path = current_app.config['UPLOAD_FOLDER']
 
             logger.debug(f"Controller: Calling ExportSubmissionService.export_structured_submission_to_pdf for sub ID {submission_id}")
-            # NOTE: ExportSubmissionService.export_structured_submission_to_pdf currently refetches
-            # the submission *without* auth. This is a potential issue but not the cause of the current error.
+            
             pdf_buffer, error = ExportSubmissionService.export_structured_submission_to_pdf(
                 submission_id=submission_id,
                 upload_path=upload_path,
@@ -67,6 +64,7 @@ class ExportSubmissionController:
                 header_alignment=header_alignment,
                 signatures_size=signatures_size,
                 signatures_alignment=signatures_alignment,
+                signatures_position_alignment=signatures_position_alignment,  # NEW parameter
                 pdf_style_options=pdf_style_options
             )
 
@@ -75,10 +73,10 @@ class ExportSubmissionController:
                 return None, None, error
 
             submission_date = submission.submitted_at.strftime("%Y%m%d")
-            form_name_safe = "".join(c if c.isalnum() else "_" for c in submission.form.title) # Sanitize form name
+            form_name_safe = "".join(c if c.isalnum() else "_" for c in submission.form.title)
 
             filename_parts = [form_name_safe, "submission", str(submission_id), submission_date]
-            if pdf_style_options or header_image: # Add 'custom' if any customization is applied
+            if pdf_style_options or header_image:
                 filename_parts.append("custom")
 
             filename = f"{'_'.join(filename_parts)}.pdf"
@@ -93,6 +91,7 @@ class ExportSubmissionController:
                 "options_applied": {
                     "custom_styles_provided": bool(pdf_style_options),
                     "header_image_provided": bool(header_image),
+                    "signatures_position_alignment": signatures_position_alignment  # NEW
                 }
             }
 
@@ -105,7 +104,7 @@ class ExportSubmissionController:
     @staticmethod
     def generate_docx_export(
         submission_id: int,
-        current_user: Optional[str] = None, # Username string
+        current_user: Optional[str] = None,
         user_role: Optional[str] = None,
         header_image: Optional[FileStorage] = None,
         header_size: Optional[float] = None,
@@ -114,6 +113,7 @@ class ExportSubmissionController:
         header_alignment: str = "center",
         signatures_size: float = 100,
         signatures_alignment: str = "vertical",
+        signatures_position_alignment: str = "center",  # NEW parameter
         style_options: Optional[Dict[str, Any]] = None,
         include_signatures: bool = True
     ) -> Tuple[Optional[bytes], Optional[Dict], Optional[str]]:
@@ -121,20 +121,17 @@ class ExportSubmissionController:
         Generate a DOCX export for a given submission, handling both default and custom options.
         """
         try:
-            # --- FIX STARTS HERE ---
             if not current_user:
                 return None, None, "User identity is required for export authorization."
-            # Resolve user string to User object
+            
             user_obj = AuthService.get_current_user(current_user)
             if not user_obj:
                 return None, None, f"User '{current_user}' not found for export authorization."
 
-            # Call get_submission with the User object
             submission = FormSubmissionService.get_submission(
                 submission_id=submission_id,
                 current_user=user_obj
             )
-            # --- FIX ENDS HERE ---
 
             if not submission:
                 return None, None, "Submission not found or access denied"
@@ -142,8 +139,7 @@ class ExportSubmissionController:
             upload_path = current_app.config['UPLOAD_FOLDER']
 
             logger.debug(f"Controller: Calling ExportSubmissionService.export_submission_to_docx for sub ID {submission_id}")
-            # NOTE: ExportSubmissionService.export_submission_to_docx currently refetches
-            # the submission *without* auth. This is a potential issue but not the cause of the current error.
+            
             docx_buffer, error = ExportSubmissionService.export_submission_to_docx(
                 submission_id=submission_id,
                 upload_path=upload_path,
@@ -155,7 +151,8 @@ class ExportSubmissionController:
                 header_alignment_str=header_alignment,
                 include_signatures=include_signatures,
                 signatures_size_percent=signatures_size,
-                signatures_alignment_str=signatures_alignment
+                signatures_alignment_str=signatures_alignment,
+                signatures_position_alignment_str=signatures_position_alignment  # NEW parameter
             )
 
             if error:
@@ -166,7 +163,7 @@ class ExportSubmissionController:
             form_name_safe = "".join(c if c.isalnum() else "_" for c in submission.form.title)
 
             filename_parts = [form_name_safe, "submission", str(submission_id), submission_date]
-            if style_options or header_image: # Add 'custom' if any customization is applied
+            if style_options or header_image:
                 filename_parts.append("custom")
 
             filename = f"{'_'.join(filename_parts)}.docx"
@@ -181,6 +178,7 @@ class ExportSubmissionController:
                 "options_applied": {
                     "custom_styles_provided": bool(style_options),
                     "header_image_provided": bool(header_image),
+                    "signatures_position_alignment": signatures_position_alignment  # NEW
                 }
             }
 

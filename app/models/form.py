@@ -125,6 +125,19 @@ class Form(TimestampMixin, SoftDeleteMixin, db.Model):
         except Exception as e:
             logger.error(f"Error getting answers for question {form_question.id}: {str(e)}")
             return []
+        
+    def to_compact_dict(self) -> Dict[str, Any]:
+        """Return a compact dictionary representation for the /forms/compact endpoint."""
+        creator_info = self._get_simplified_creator_dict()
+        return {
+            'id': self.id,
+            'title': self.title,
+            'description': self.description,
+            'questions_count': self._get_questions_count(),
+            'created_at': self._format_timestamp(self.created_at),
+            'updated_at': self._format_timestamp(self.updated_at),
+            'created_by_fullname': creator_info.get('fullname') if creator_info else None
+        }
 
     def _format_question(self, form_question) -> Dict[str, Any]:
         """

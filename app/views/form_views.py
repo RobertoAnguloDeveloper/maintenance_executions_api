@@ -101,10 +101,17 @@ def get_all_forms():
 @form_bp.route('/compact', methods=['GET'])
 @jwt_required()
 @PermissionManager.require_permission(action="view", entity_type=EntityType.FORMS)
-def get_all_forms_basic():
+def get_all_forms_compact_view(): # Renamed for clarity from get_all_forms_basic
     """
-    Get basic information for all forms accessible to the current user.
-    Basic info includes: id, title, description, user_id, is_public, attachments_required.
+    Get compact information for all forms accessible to the current user.
+    Returns: id, title, description, questions_count, created_at, updated_at, created_by_fullname.
+    
+    Query Parameters:
+        - date_filter_field (str): Field to filter by date ('created_at' or 'updated_at').
+        - start_date (str): Start date for filtering (ISO format, e.g., YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ).
+        - end_date (str): End date for filtering (ISO format).
+        - sort_by (str): Field to sort by ('updated_at', 'title', 'created_at'). Default: 'updated_at'.
+        - sort_order (str): Sort order ('asc' or 'desc'). Default: 'desc'.
     """
     try:
         current_user_identity = get_jwt_identity()
@@ -112,15 +119,50 @@ def get_all_forms_basic():
         if not user:
             return jsonify({"error": "User not found"}), 401
 
-        forms_basic_info, error = FormController.get_all_forms_basic_info_controller(user)
-        if error:
-            # The controller/service layer should log the specific error.
-            return jsonify({"error": error}), 500 # Or a more specific error code if available
+        # Get filter and sort parameters from request arguments
+        date_filter_field = request.args.get('date_filter_field')
+        start_date_str = request.args.get('start_date')
+        end_date_str = request.args.get('end_date')
+        
+        sort_by = request.args.get('sort_by', default='updated_at')
+        sort_order = request.args.get('sort_order', default='desc').lower()
 
-        return jsonify(forms_basic_info), 200
+        # Validate sort_order
+        if sort_order not in ['asc', 'desc']:
+            return jsonify({"error": "Invalid sort_order. Must be 'asc' or 'desc'."}), 400
+        
+        # Validate sort_by
+        valid_sort_fields = ['updated_at', 'title', 'created_at']
+        if sort_by not in valid_sort_fields:
+            return jsonify({"error": f"Invalid sort_by field. Must be one of: {', '.join(valid_sort_fields)}"}), 400
+
+        # Validate date_filter_field if provided
+        if date_filter_field and date_filter_field not in ['created_at', 'updated_at']:
+             return jsonify({"error": "Invalid date_filter_field. Must be 'created_at' or 'updated_at'."}), 400
+        
+        # Basic validation for date presence if field is specified
+        if date_filter_field and (not start_date_str or not end_date_str):
+            return jsonify({"error": "start_date and end_date are required if date_filter_field is specified."}), 400
+        
+        # Service method will handle date string parsing and validation of format
+        
+        forms_compact_info, error = FormController.get_all_forms_compact_controller(
+            user, # Pass the User object
+            date_filter_field=date_filter_field,
+            start_date=start_date_str, # Pass as string
+            end_date=end_date_str,     # Pass as string
+            sort_by=sort_by,
+            sort_order=sort_order
+        )
+        
+        if error:
+            # Controller/Service should log specific errors.
+            return jsonify({"error": error}), 500 
+
+        return jsonify(forms_compact_info), 200
 
     except Exception as e:
-        logger.error(f"Error in get_all_forms_basic view: {str(e)}", exc_info=True)
+        logger.error(f"Error in get_all_forms_compact_view: {str(e)}", exc_info=True)
         return jsonify({"error": "Internal server error"}), 500
 
 

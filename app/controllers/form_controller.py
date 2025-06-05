@@ -28,6 +28,29 @@ class FormController:
     def get_form(form_id: int) -> Optional[Form]:
         """Get a specific form"""
         return FormService.get_form(form_id)
+    
+    @staticmethod
+    def get_all_forms_compact_controller( 
+        current_user: User,
+        date_filter_field: Optional[str] = None,
+        start_date: Optional[str] = None, # Pass as string
+        end_date: Optional[str] = None,   # Pass as string
+        sort_by: Optional[str] = 'updated_at',
+        sort_order: Optional[str] = 'desc'
+    ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+        """Controller method to get compact form info with filtering and sorting."""
+        try:
+            return FormService.get_all_forms_compact_filtered_sorted( # Call the new service method
+                current_user,
+                date_filter_field,
+                start_date, 
+                end_date,   
+                sort_by,
+                sort_order
+            )
+        except Exception as e:
+            logger.error(f"Error in get_all_forms_compact_controller: {str(e)}")
+            return [], "Failed to retrieve compact form information."
 
     @staticmethod
     def get_forms_by_environment(environment_id: int, current_user: User) -> list:

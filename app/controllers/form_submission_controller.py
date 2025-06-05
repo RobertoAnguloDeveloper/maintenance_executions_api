@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from flask import current_app
 from app.models.form import Form
 from app.models.user import User as UserModel # Renamed to avoid conflict with variable 'user'
@@ -80,6 +80,31 @@ class FormSubmissionController:
             return submissions_list
         except Exception as e:
             logger.exception(f"Controller error in get_all_submissions_compact: {str(e)}")
+            return []
+        
+    @staticmethod
+    def search_submissions(
+        user: UserModel, 
+        search_criteria: Dict[str, str],
+        form_id_filter: Optional[int] = None
+    ) -> List[Dict[str, Any]]: # Returns a list of compact submission dicts
+        try:
+            # The view will ensure search_criteria is not empty.
+            submissions_list, error = FormSubmissionService.search_submissions_by_answer_criteria(
+                user=user,
+                search_params=search_criteria,
+                form_id_filter=form_id_filter
+            )
+
+            if error:
+                logger.error(f"Service error in search_submissions controller: {error}")
+                return []
+            
+            # Convert to the same compact dictionary format used by /form_submissions/compact
+            return [sub.to_compact_dict() for sub in submissions_list if isinstance(sub, FormSubmission)]
+            
+        except Exception as e:
+            logger.exception(f"Controller error in search_submissions: {str(e)}")
             return []
         
     @staticmethod

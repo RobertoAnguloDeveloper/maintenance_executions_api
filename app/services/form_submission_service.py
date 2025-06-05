@@ -1,4 +1,6 @@
 from typing import Any, Dict, List, Optional, Tuple
+
+from sqlalchemy import and_
 from app import db
 from app.models.form_submission import FormSubmission
 from app.models.answer_submitted import AnswerSubmitted
@@ -6,7 +8,7 @@ from app.utils.permission_manager import RoleType
 from app.models.attachment import Attachment
 from app.models.form import Form
 from app.models.user import User
-from sqlalchemy.orm import joinedload, selectinload
+from sqlalchemy.orm import joinedload, selectinload, aliased
 from datetime import datetime, time, timezone
 import logging
 import os
@@ -225,6 +227,93 @@ class FormSubmissionService:
             user_id_for_log = user.id if user else "Unknown"
             logger.error(f"Error in FormSubmissionService.get_all_submissions_compact_filtered_sorted for user {user_id_for_log}: {str(e)}", exc_info=True)
             return [], "An unexpected error occurred while retrieving compact submission list."
+        
+    @staticmethod
+    def search_submissions_by_answer_criteria(
+        user: User,
+        search_params: Dict[str, str],
+        form_id_filter: Optional[int] = None
+    ) -> Tuple[List[FormSubmission], Optional[str]]:
+        """
+        Searches form submissions based on criteria within their AnswerSubmitted records,
+        respecting user access controls.
+        """
+        try:
+            # Start with a base query for non-deleted submissions and non-deleted parent forms
+            query = FormSubmission.query.join(Form, FormSubmission.form_id == Form.id)\
+                                       .filter(FormSubmission.is_deleted == False, Form.is_deleted == False)
+
+            # Apply general access control based on user role and form assignments
+            # This logic is similar to get_all_submissions
+            if not (user.role and user.role.is_super_user):
+                accessible_form_ids = [form.id for form in FormAssignmentService.get_accessible_forms_for_user(user.id)]
+                if not accessible_form_ids:
+                    return [], None # No accessible forms, so no submissions to search
+                query = query.filter(FormSubmission.form_id.in_(accessible_form_ids))
+            
+            if not (user.role and user.role.is_super_user):
+                if user.role.name == RoleType.TECHNICIAN:
+                    query = query.filter(FormSubmission.submitted_by == user.username)
+                elif user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
+                    SubmitterUser = aliased(User) # Use aliased if joining User table again based on submitted_by
+                    query = query.join(SubmitterUser, SubmitterUser.username == FormSubmission.submitted_by)\
+                                 .filter(SubmitterUser.environment_id == user.environment_id, SubmitterUser.is_deleted == False)
+            
+            # Apply optional form_id filter
+            if form_id_filter:
+                 query = query.filter(FormSubmission.form_id == form_id_filter)
+
+            # Join with AnswerSubmitted to filter based on answer criteria
+            # Ensure we only consider non-deleted answers
+            query = query.join(AnswerSubmitted, FormSubmission.id == AnswerSubmitted.form_submission_id)\
+                         .filter(AnswerSubmitted.is_deleted == False)
+
+            filter_conditions = []
+            if search_params.get('answer'):
+                filter_conditions.append(AnswerSubmitted.answer.ilike(f"%{search_params['answer']}%"))
+            if search_params.get('cell_content'):
+                filter_conditions.append(AnswerSubmitted.cell_content.ilike(f"%{search_params['cell_content']}%"))
+            if search_params.get('question'):
+                # This searches the 'question' text stored in AnswerSubmitted
+                filter_conditions.append(AnswerSubmitted.question.ilike(f"%{search_params['question']}%"))
+            if search_params.get('question_type'):
+                # This searches the 'question_type' stored in AnswerSubmitted
+                filter_conditions.append(AnswerSubmitted.question_type.ilike(f"%{search_params['question_type']}%"))
+
+            if not filter_conditions:
+                # If no specific answer search criteria are given, it's not really a search by answer.
+                # You might decide to return an empty list or indicate that criteria are needed.
+                # For now, let's assume the controller ensures at least one criterion is present.
+                # If execution reaches here with empty filter_conditions, it means the query will not filter by answers.
+                # However, the join to AnswerSubmitted is still present.
+                # To make this a strict search by answer, we should only proceed if filter_conditions is not empty.
+                # Let the controller decide if empty criteria is an error or means "no specific answer filter".
+                 pass # No specific answer criteria to apply, access control and form_id_filter already applied
+
+            if filter_conditions:
+                query = query.filter(and_(*filter_conditions))
+            
+            # Ensure we get distinct FormSubmission objects, as a submission might have multiple answers matching.
+            # Or one answer matching multiple criteria if OR logic were used (currently AND).
+            query = query.distinct(FormSubmission.id)
+
+            # Eager load relationships needed for to_compact_dict()
+            query = query.options(
+                joinedload(FormSubmission.form),
+                selectinload(FormSubmission.answers_submitted),
+                selectinload(FormSubmission.attachments)
+            )
+            
+            # Default ordering for search results
+            searched_submissions = query.order_by(FormSubmission.submitted_at.desc()).all()
+            
+            logger.info(f"Search by answer criteria for user {user.id if user else 'Unknown'} with params {search_params} and form_id {form_id_filter} found {len(searched_submissions)} submissions.")
+            return searched_submissions, None
+
+        except Exception as e:
+            user_id_for_log = user.id if user else "Unknown"
+            logger.error(f"Error in FormSubmissionService.search_submissions_by_answer_criteria for user {user_id_for_log}: {str(e)}", exc_info=True)
+            return [], "An unexpected error occurred during submission search."
 
     @staticmethod
     def get_batch(page: int = 1, per_page: int = 50, **filters: Any) -> Tuple[int, List[Dict[str, Any]]]:

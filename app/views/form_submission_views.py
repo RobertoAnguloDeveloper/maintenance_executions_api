@@ -190,6 +190,67 @@ def get_all_submissions_compact_list():
         logger.exception(f"Error getting compact submissions list: {str(e)}") # Use logger.exception for traceback
         return jsonify({"error": "Internal server error"}), 500
     
+@form_submission_bp.route('/search', methods=['GET'])
+@jwt_required()
+@PermissionManager.require_permission(action="view", entity_type=EntityType.SUBMISSIONS) # Adjust permission if needed
+def search_form_submissions_view():
+    """
+    Search form submissions based on criteria related to their answers.
+    Returns a compact list of matching submissions.
+    
+    Query Parameters:
+        - form_id (int, optional): Filter by a specific form ID in conjunction with other search terms.
+        - answer (str, optional): Search for text within the answer content (case-insensitive).
+        - cell_content (str, optional): Search for text within table cell content (case-insensitive).
+        - question (str, optional): Search for text within the question text of an answer (case-insensitive).
+        - question_type (str, optional): Filter by the type of question associated with an answer (case-insensitive partial match).
+    """
+    try:
+        current_user_jwt_identity = get_jwt_identity()
+        user_obj = AuthService.get_current_user(current_user_jwt_identity)
+        if not user_obj:
+            return jsonify({"error": "Authenticated user not found"}), 401
+
+        search_criteria = {}
+        answer_query = request.args.get('answer')
+        cell_content_query = request.args.get('cell_content')
+        question_query = request.args.get('question')
+        question_type_query = request.args.get('question_type')
+        
+        form_id_filter = request.args.get('form_id', type=int)
+
+        if answer_query:
+            search_criteria['answer'] = answer_query
+        if cell_content_query:
+            search_criteria['cell_content'] = cell_content_query
+        if question_query:
+            search_criteria['question'] = question_query
+        if question_type_query:
+            search_criteria['question_type'] = question_type_query
+        
+        # A search endpoint typically requires at least one search criterion for the "search" part.
+        # The form_id_filter can be used in conjunction but shouldn't be the sole basis for this specific endpoint.
+        if not search_criteria:
+            return jsonify({"message": "Please provide at least one search criterion from: answer, cell_content, question, question_type."}), 400
+
+        results = FormSubmissionController.search_submissions(
+            user=user_obj,
+            search_criteria=search_criteria,
+            form_id_filter=form_id_filter
+        )
+
+        # The controller returns a list of dictionaries already.
+        return jsonify({
+            "search_criteria_applied": search_criteria,
+            "form_id_filter_applied": form_id_filter,
+            "total_results": len(results),
+            "submissions": results # This is the list of compact submission dicts
+        }), 200
+
+    except Exception as e:
+        logger.exception(f"Error in search_form_submissions_view: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
+    
 @form_submission_bp.route('/batch', methods=['GET'])
 @jwt_required()
 @PermissionManager.require_permission(action="view", entity_type=EntityType.SUBMISSIONS)

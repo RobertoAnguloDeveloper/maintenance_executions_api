@@ -55,21 +55,31 @@ class FormSubmissionController:
             return []
         
     @staticmethod
-    def get_all_submissions_compact(
-        user: UserModel, # Expecting User OBJECT from view
-        filters: Dict = None
-    ) -> List[Dict]:
+    def get_all_submissions_compact( 
+        user: UserModel, 
+        # Add new parameters from view
+        start_date_str: Optional[str] = None,
+        end_date_str: Optional[str] = None,
+        sort_by: Optional[str] = 'submitted_at',
+        sort_order: Optional[str] = 'desc',
+        form_id_filter: Optional[int] = None # This was derived from 'filters' in the view
+    ) -> List[Dict]: 
         try:
-            # Assuming FormSubmissionService.get_all_submissions_compact exists
-            # or this logic is handled by get_batch or by compacting full submissions.
-            # For now, maintaining consistency with get_all_submissions.
-            # The service method FormSubmissionService.get_batch returns compact data.
-            # This method might be better served by calling get_batch and returning its items.
-            # For now, to align with previous structure if it was calling a non-existent compact service:
-            submissions = FormSubmissionService.get_all_submissions(user, filters or {})
-            return [sub.to_dict_basic() for sub in submissions] # Example
+            # Call the new/modified service method that handles compact representation, filtering, and sorting
+            submissions_list, error = FormSubmissionService.get_all_submissions_compact_filtered_sorted(
+                user=user,
+                start_date_str=start_date_str,
+                end_date_str=end_date_str,
+                sort_by=sort_by,
+                sort_order=sort_order,
+                form_id_filter=form_id_filter # Pass form_id if present
+            )
+            if error:
+                logger.error(f"Service error in get_all_submissions_compact: {error}")
+                return [] # Or handle error as per your application's design
+            return submissions_list
         except Exception as e:
-            logger.exception(f"Error in get_all_submissions_compact controller: {str(e)}")
+            logger.exception(f"Controller error in get_all_submissions_compact: {str(e)}")
             return []
         
     @staticmethod

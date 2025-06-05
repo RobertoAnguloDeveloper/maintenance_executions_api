@@ -118,44 +118,76 @@ def get_all_submissions():
         logger.exception(f"Error getting submissions: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
     
-@form_submission_bp.route('/compact-list', methods=['GET'])
+@form_submission_bp.route('/compact', methods=['GET']) # This is your existing compact route
 @jwt_required()
 @PermissionManager.require_permission(action="view", entity_type=EntityType.SUBMISSIONS)
 def get_all_submissions_compact_list():
-    """Get a compact list of submissions with minimal information"""
+    """
+    Get a compact list of submissions with filtering and sorting.
+    Response attributes: id, form_id, form_title, submitted_at, submitted_by, 
+                         answers_count, signatures_count, attachments_count (non-signatures).
+    Query Parameters:
+        - form_id (int, optional): Filter by form ID.
+        - start_date (str, optional): Filter by submission start date (ISO format, e.g., YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ).
+        - end_date (str, optional): Filter by submission end date (ISO format).
+        - sort_by (str, optional): Field to sort by ('submitted_at', 'submitted_by', 'form_title'). Default: 'submitted_at'.
+        - sort_order (str, optional): Sort order ('asc' or 'desc'). Default: 'desc'.
+    """
     try:
         current_user_jwt_identity = get_jwt_identity()
-        user_obj = AuthService.get_current_user(current_user_jwt_identity) # User object
+        user_obj = AuthService.get_current_user(current_user_jwt_identity) 
         if not user_obj:
             return jsonify({"error": "Authenticated user not found"}), 401
 
-        filters = {}
-        form_id = request.args.get('form_id', type=int)
-        if form_id:
-            filters['form_id'] = form_id
-
+        # Get filters from request.args
+        form_id_filter = request.args.get('form_id', type=int) # Keep existing filter
         start_date_str = request.args.get('start_date')
         end_date_str = request.args.get('end_date')
-        if start_date_str and end_date_str:
-            try:
-                filters['date_range'] = {
-                    'start': datetime.fromisoformat(start_date_str.replace('Z', '+00:00')),
-                    'end': datetime.fromisoformat(end_date_str.replace('Z', '+00:00'))
-                }
-            except ValueError:
-                 return jsonify({"error": "Invalid date format for start_date or end_date. Use ISO format."}), 400
-            
-        # Pass User OBJECT
-        compact_submissions = FormSubmissionController.get_all_submissions_compact(user_obj, filters)
+        
+        sort_by = request.args.get('sort_by', default='submitted_at')
+        sort_order = request.args.get('sort_order', default='desc').lower()
 
+        # Validate sort_order
+        if sort_order not in ['asc', 'desc']:
+            return jsonify({"error": "Invalid sort_order. Must be 'asc' or 'desc'."}), 400
+        
+        # Validate sort_by
+        valid_sort_fields = ['submitted_at', 'submitted_by', 'form_title']
+        if sort_by not in valid_sort_fields:
+            return jsonify({"error": f"Invalid sort_by field. Must be one of: {', '.join(valid_sort_fields)}"}), 400
+        
+        # Basic validation for date presence if one is provided
+        if (start_date_str and not end_date_str) or (not start_date_str and end_date_str):
+            return jsonify({"error": "Both start_date and end_date are required if one is provided for date filtering."}), 400
+
+        # Call the updated controller method
+        compact_submissions_data = FormSubmissionController.get_all_submissions_compact(
+            user=user_obj, # Pass the User object
+            start_date_str=start_date_str,
+            end_date_str=end_date_str,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            form_id_filter=form_id_filter # Pass existing filter
+        )
+        # The controller now directly returns the list of dictionaries.
+
+        # The original response structure had 'total_count', 'filters_applied', 'submissions'
+        # We can maintain that if desired, or just return the list.
+        # For consistency with the previous /forms/compact:
         return jsonify({
-            'total_count': len(compact_submissions),
-            'filters_applied': filters,
-            'submissions': compact_submissions # Already a list of dicts
+            'total_count': len(compact_submissions_data),
+            'filters_applied': {
+                'form_id': form_id_filter,
+                'start_date': start_date_str,
+                'end_date': end_date_str,
+                'sort_by': sort_by,
+                'sort_order': sort_order
+            },
+            'submissions': compact_submissions_data
         }), 200
 
     except Exception as e:
-        logger.exception(f"Error getting compact submissions list: {str(e)}")
+        logger.exception(f"Error getting compact submissions list: {str(e)}") # Use logger.exception for traceback
         return jsonify({"error": "Internal server error"}), 500
     
 @form_submission_bp.route('/batch', methods=['GET'])

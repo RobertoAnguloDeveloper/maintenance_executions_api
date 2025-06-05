@@ -101,17 +101,18 @@ def get_all_forms():
 @form_bp.route('/compact', methods=['GET'])
 @jwt_required()
 @PermissionManager.require_permission(action="view", entity_type=EntityType.FORMS)
-def get_all_forms_compact_view(): # Renamed for clarity from get_all_forms_basic
+def get_all_forms_compact_view(): # Was get_all_forms_basic in earlier context, ensure correct name
     """
     Get compact information for all forms accessible to the current user.
     Returns: id, title, description, questions_count, created_at, updated_at, created_by_fullname.
     
     Query Parameters:
         - date_filter_field (str): Field to filter by date ('created_at' or 'updated_at').
-        - start_date (str): Start date for filtering (ISO format, e.g., YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ).
+        - start_date (str): Start date for filtering (ISO format).
         - end_date (str): End date for filtering (ISO format).
         - sort_by (str): Field to sort by ('updated_at', 'title', 'created_at'). Default: 'updated_at'.
         - sort_order (str): Sort order ('asc' or 'desc'). Default: 'desc'.
+        - only_editable (str): 'true' or 'false'. If 'true', returns only forms editable by the current user. Default: 'false'.
     """
     try:
         current_user_identity = get_jwt_identity()
@@ -126,6 +127,9 @@ def get_all_forms_compact_view(): # Renamed for clarity from get_all_forms_basic
         
         sort_by = request.args.get('sort_by', default='updated_at')
         sort_order = request.args.get('sort_order', default='desc').lower()
+        
+        only_editable_str = request.args.get('only_editable', 'false').lower()
+        only_editable = only_editable_str == 'true' # Convert to boolean
 
         # Validate sort_order
         if sort_order not in ['asc', 'desc']:
@@ -144,19 +148,17 @@ def get_all_forms_compact_view(): # Renamed for clarity from get_all_forms_basic
         if date_filter_field and (not start_date_str or not end_date_str):
             return jsonify({"error": "start_date and end_date are required if date_filter_field is specified."}), 400
         
-        # Service method will handle date string parsing and validation of format
-        
         forms_compact_info, error = FormController.get_all_forms_compact_controller(
-            user, # Pass the User object
+            current_user=user, # Pass the User object
             date_filter_field=date_filter_field,
-            start_date=start_date_str, # Pass as string
-            end_date=end_date_str,     # Pass as string
+            start_date=start_date_str, 
+            end_date=end_date_str,     
             sort_by=sort_by,
-            sort_order=sort_order
+            sort_order=sort_order,
+            only_editable=only_editable # Pass the new boolean parameter
         )
         
         if error:
-            # Controller/Service should log specific errors.
             return jsonify({"error": error}), 500 
 
         return jsonify(forms_compact_info), 200
@@ -164,7 +166,6 @@ def get_all_forms_compact_view(): # Renamed for clarity from get_all_forms_basic
     except Exception as e:
         logger.error(f"Error in get_all_forms_compact_view: {str(e)}", exc_info=True)
         return jsonify({"error": "Internal server error"}), 500
-
 
 @form_bp.route('/batch', methods=['GET'])
 @jwt_required()

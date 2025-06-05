@@ -33,20 +33,23 @@ class FormController:
     def get_all_forms_compact_controller( 
         current_user: User,
         date_filter_field: Optional[str] = None,
-        start_date: Optional[str] = None, # Pass as string
-        end_date: Optional[str] = None,   # Pass as string
+        start_date: Optional[str] = None, 
+        end_date: Optional[str] = None,   
         sort_by: Optional[str] = 'updated_at',
-        sort_order: Optional[str] = 'desc'
+        sort_order: Optional[str] = 'desc',
+        only_editable: bool = False # Add new parameter with default
     ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
         """Controller method to get compact form info with filtering and sorting."""
         try:
-            return FormService.get_all_forms_compact_filtered_sorted( # Call the new service method
-                current_user,
-                date_filter_field,
-                start_date, 
-                end_date,   
-                sort_by,
-                sort_order
+            # Call the service method, passing the new only_editable parameter
+            return FormService.get_all_forms_compact_filtered_sorted(
+                current_user=current_user, # Pass the User object
+                date_filter_field=date_filter_field,
+                start_date_str=start_date, # Parameter name in service is start_date_str
+                end_date_str=end_date,     # Parameter name in service is end_date_str
+                sort_by=sort_by,
+                sort_order=sort_order,
+                only_editable=only_editable # Pass the new boolean parameter
             )
         except Exception as e:
             logger.error(f"Error in get_all_forms_compact_controller: {str(e)}")

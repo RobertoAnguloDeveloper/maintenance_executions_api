@@ -7,7 +7,7 @@ from app.models.attachment import Attachment
 from app.models.form import Form
 from app.models.user import User
 from sqlalchemy.orm import joinedload, selectinload
-from datetime import datetime
+from datetime import datetime, time, timezone
 import logging
 import os
 
@@ -93,15 +93,14 @@ class FormSubmissionService:
         """
         Get all form submissions, considering form access based on assignments
         and then applying role-based filters on submissions.
+        Ensures necessary relationships are loaded for compact view.
         """
         try:
             filters = filters or {}
             
-            # Start with a base query for non-deleted submissions and non-deleted parent forms
             query = FormSubmission.query.join(Form, FormSubmission.form_id == Form.id)\
                                        .filter(FormSubmission.is_deleted == False, Form.is_deleted == False)
 
-            # 1. Filter by forms accessible to the current user
             if not (user.role and user.role.is_super_user):
                 accessible_form_ids = [form.id for form in FormAssignmentService.get_accessible_forms_for_user(user.id)]
                 if not accessible_form_ids:
@@ -109,39 +108,123 @@ class FormSubmissionService:
                     return [] 
                 query = query.filter(FormSubmission.form_id.in_(accessible_form_ids))
             
-            # 2. Apply additional role-based filtering on the submissions themselves
             if not (user.role and user.role.is_super_user):
                 if user.role.name == RoleType.TECHNICIAN:
                     query = query.filter(FormSubmission.submitted_by == user.username)
                 elif user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                    query = query.join(User, User.username == FormSubmission.submitted_by)\
-                                 .filter(User.environment_id == user.environment_id, User.is_deleted == False)
+                    # Join with User model to filter by environment_id of the 'submitted_by' user
+                    # Using an alias for the User table in this join to avoid conflicts if User is already joined.
+                    SubmitterUser = db.aliased(User)
+                    query = query.join(SubmitterUser, SubmitterUser.username == FormSubmission.submitted_by)\
+                                 .filter(SubmitterUser.environment_id == user.environment_id, SubmitterUser.is_deleted == False)
             
             if 'form_id' in filters: 
                 query = query.filter(FormSubmission.form_id == filters['form_id'])
             
-            if 'submitted_by' in filters: 
-                query = query.filter(FormSubmission.submitted_by == filters['submitted_by'])
-            
-            if 'date_range' in filters:
-                date_range = filters['date_range']
-                if date_range.get('start'): query = query.filter(FormSubmission.submitted_at >= date_range['start'])
-                if date_range.get('end'): query = query.filter(FormSubmission.submitted_at <= date_range['end'])
-            
+            # Eager load relationships needed for to_compact_dict() and sorting
             query = query.options(
-                joinedload(FormSubmission.form), 
-                selectinload(FormSubmission.answers_submitted), 
-                selectinload(FormSubmission.attachments) 
+                joinedload(FormSubmission.form), # For form.title
+                selectinload(FormSubmission.answers_submitted), # For answers_count
+                selectinload(FormSubmission.attachments) # For attachments_count & signatures_count
             )
             
-            submissions = query.order_by(FormSubmission.submitted_at.desc()).all()
-            logger.info(f"Retrieved {len(submissions)} submissions for user {user.username} with filters: {filters}")
+            submissions = query.all() # Get all matching submissions before Python-side sort/filter
+            # The original query had .order_by(FormSubmission.submitted_at.desc()), 
+            # we will apply sorting after potential date filtering in the compact method
+            logger.info(f"Retrieved {len(submissions)} submissions for user {user.username} with filters: {filters} before compact processing.")
             return submissions
 
         except Exception as e:
             logger.error(f"Error in FormSubmissionService.get_all_submissions for user {user.username}: {str(e)}", exc_info=True)
             return []
+        
+    @staticmethod
+    def get_all_submissions_compact_filtered_sorted(
+        user: User, 
+        start_date_str: Optional[str] = None,
+        end_date_str: Optional[str] = None,
+        sort_by: Optional[str] = 'submitted_at', # Default sort field
+        sort_order: Optional[str] = 'desc',     # Default sort order
+        form_id_filter: Optional[int] = None
+    ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+        try:
+            initial_filters = {}
+            if form_id_filter:
+                initial_filters['form_id'] = form_id_filter
+            
+            # Step 1: Fetch all accessible FormSubmission objects
+            # get_all_submissions loads necessary relationships (form, answers_submitted, attachments)
+            accessible_submissions = FormSubmissionService.get_all_submissions(user, initial_filters)
 
+            # Step 2: Apply date filtering for 'submitted_at' in Python
+            filtered_submissions: List[FormSubmission] = []
+            if start_date_str and end_date_str:
+                try:
+                    start_dt: datetime
+                    end_dt: datetime
+
+                    if 'T' not in start_date_str:
+                        start_dt_naive = datetime.strptime(start_date_str, "%Y-%m-%d")
+                        start_dt = datetime.combine(start_dt_naive.date(), time.min, tzinfo=timezone.utc)
+                    else:
+                        start_dt = datetime.fromisoformat(start_date_str.replace('Z', '+00:00'))
+                        if start_dt.tzinfo is None or start_dt.tzinfo.utcoffset(start_dt) is None:
+                            start_dt = start_dt.replace(tzinfo=timezone.utc)
+
+                    if 'T' not in end_date_str:
+                        end_dt_naive = datetime.strptime(end_date_str, "%Y-%m-%d")
+                        end_dt = datetime.combine(end_dt_naive.date(), time.max, tzinfo=timezone.utc)
+                    else:
+                        end_dt = datetime.fromisoformat(end_date_str.replace('Z', '+00:00'))
+                        if end_dt.tzinfo is None or end_dt.tzinfo.utcoffset(end_dt) is None:
+                            end_dt = end_dt.replace(tzinfo=timezone.utc)
+                except ValueError:
+                    logger.warning(f"Invalid date format for submission filter: start='{start_date_str}', end='{end_date_str}'")
+                    return [], "Invalid date format. Use YYYY-MM-DD or full ISO format."
+
+                for sub in accessible_submissions:
+                    if sub.submitted_at:
+                        sub_date_aware: datetime
+                        if sub.submitted_at.tzinfo is None or sub.submitted_at.tzinfo.utcoffset(sub.submitted_at) is None:
+                            sub_date_aware = sub.submitted_at.replace(tzinfo=timezone.utc)
+                        else:
+                            sub_date_aware = sub.submitted_at.astimezone(timezone.utc)
+                        
+                        if start_dt <= sub_date_aware <= end_dt:
+                            filtered_submissions.append(sub)
+            else:
+                filtered_submissions = accessible_submissions # No date filter, use all accessible
+            
+            # Step 3: Apply sorting in Python
+            reverse_sort = (sort_order == 'desc')
+
+            def get_sort_key_submission(sub_obj: FormSubmission) -> Any:
+                min_utc_datetime = datetime.min.replace(tzinfo=timezone.utc)
+                
+                if sort_by == 'submitted_by':
+                    return (sub_obj.submitted_by or "").lower()
+                elif sort_by == 'form_title': # Ensure form object is loaded
+                    return (sub_obj.form.title or "").lower() if sub_obj.form else ""
+                # Default to submitted_at
+                sub_dt_to_sort = sub_obj.submitted_at
+                if sub_dt_to_sort is None: return min_utc_datetime
+                
+                # Ensure consistent timezone (UTC) for sorting
+                if sub_dt_to_sort.tzinfo is None or sub_dt_to_sort.tzinfo.utcoffset(sub_dt_to_sort) is None:
+                    return sub_dt_to_sort.replace(tzinfo=timezone.utc)
+                return sub_dt_to_sort.astimezone(timezone.utc)
+
+            filtered_submissions.sort(key=get_sort_key_submission, reverse=reverse_sort)
+
+            # Step 4: Convert to compact dict using the new method
+            compact_submission_list = [sub.to_compact_dict() for sub in filtered_submissions]
+            
+            return compact_submission_list, None
+
+        except Exception as e:
+            user_id_for_log = user.id if user else "Unknown"
+            logger.error(f"Error in FormSubmissionService.get_all_submissions_compact_filtered_sorted for user {user_id_for_log}: {str(e)}", exc_info=True)
+            return [], "An unexpected error occurred while retrieving compact submission list."
 
     @staticmethod
     def get_batch(page: int = 1, per_page: int = 50, **filters: Any) -> Tuple[int, List[Dict[str, Any]]]:

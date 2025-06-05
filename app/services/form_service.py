@@ -211,39 +211,42 @@ class FormService(BaseService):
         start_date_str: Optional[str] = None,
         end_date_str: Optional[str] = None,
         sort_by: Optional[str] = 'updated_at',
-        sort_order: Optional[str] = 'desc'
+        sort_order: Optional[str] = 'desc',
+        only_editable: bool = False # Add new parameter
     ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
         try:
-            accessible_forms = FormAssignmentService.get_accessible_forms_for_user(current_user.id)
+            # 1. Get all forms accessible to the user (list of Form objects)
+            accessible_forms: List[Form] = FormAssignmentService.get_accessible_forms_for_user(current_user.id)
             if accessible_forms is None:
                 logger.info(f"No accessible forms found or error for user {current_user.id if current_user else 'Unknown'}.")
                 return [], "Error retrieving accessible forms."
 
-            filtered_forms = []
+            # 2. Apply 'only_editable' filter (Python-side filtering)
+            # This filter is applied *before* date filtering and sorting.
+            if only_editable and not (current_user.role and current_user.role.is_super_user): # (logic from get_batch)
+                # Non-admins can only edit their own forms from the set they can access
+                accessible_forms = [form for form in accessible_forms if form.user_id == current_user.id] # (logic from get_batch)
+            
+            # 3. Apply date filtering (using the already corrected date parsing logic)
+            processed_forms_for_date_filter: List[Form] = []
             if date_filter_field and start_date_str and end_date_str:
                 try:
                     start_dt: datetime
                     end_dt: datetime
 
-                    # Parse start_date_str
-                    if 'T' not in start_date_str:  # Date-only string like "YYYY-MM-DD"
+                    if 'T' not in start_date_str:  
                         start_dt_naive = datetime.strptime(start_date_str, "%Y-%m-%d")
-                        # Assume start of the day in UTC
                         start_dt = datetime.combine(start_dt_naive.date(), time.min, tzinfo=timezone.utc)
-                    else:  # Full datetime string
+                    else:  
                         start_dt = datetime.fromisoformat(start_date_str.replace('Z', '+00:00'))
-                        # If fromisoformat results in naive (e.g., no 'Z' or offset in original string), assume UTC
                         if start_dt.tzinfo is None or start_dt.tzinfo.utcoffset(start_dt) is None:
                             start_dt = start_dt.replace(tzinfo=timezone.utc)
 
-                    # Parse end_date_str
-                    if 'T' not in end_date_str:  # Date-only string
+                    if 'T' not in end_date_str:  
                         end_dt_naive = datetime.strptime(end_date_str, "%Y-%m-%d")
-                        # Assume end of the day in UTC for an inclusive range
                         end_dt = datetime.combine(end_dt_naive.date(), time.max, tzinfo=timezone.utc)
-                    else:  # Full datetime string
+                    else:  
                         end_dt = datetime.fromisoformat(end_date_str.replace('Z', '+00:00'))
-                        # If fromisoformat results in naive, assume UTC
                         if end_dt.tzinfo is None or end_dt.tzinfo.utcoffset(end_dt) is None:
                             end_dt = end_dt.replace(tzinfo=timezone.utc)
 
@@ -251,7 +254,8 @@ class FormService(BaseService):
                     logger.warning(f"Invalid date format provided for filtering: start_date='{start_date_str}', end_date='{end_date_str}'")
                     return [], "Invalid date format. Use YYYY-MM-DD or full ISO format (e.g., YYYY-MM-DDTHH:MM:SSZ)."
 
-                for form_obj in accessible_forms:
+                # Iterate over the list that might have already been filtered by 'only_editable'
+                for form_obj in accessible_forms: 
                     form_date_original: Optional[datetime] = None
                     if date_filter_field == 'created_at':
                         form_date_original = form_obj.created_at
@@ -260,48 +264,42 @@ class FormService(BaseService):
                     
                     if form_date_original:
                         form_date_for_comparison: datetime
-                        # Ensure form_date_for_comparison is offset-aware and in UTC
                         if form_date_original.tzinfo is None or form_date_original.tzinfo.utcoffset(form_date_original) is None:
-                            # It's naive, assume UTC and make it aware
                             form_date_for_comparison = form_date_original.replace(tzinfo=timezone.utc)
                         else:
-                            # It's aware, convert to UTC for consistent comparison
                             form_date_for_comparison = form_date_original.astimezone(timezone.utc)
                         
                         if start_dt <= form_date_for_comparison <= end_dt:
-                            filtered_forms.append(form_obj)
+                            processed_forms_for_date_filter.append(form_obj)
             else:
-                filtered_forms = accessible_forms
-
+                # If no date filter, use the list (already potentially filtered by 'only_editable')
+                processed_forms_for_date_filter = accessible_forms 
+            
+            # 4. Apply sorting (on the potentially smaller list)
             reverse_sort = (sort_order == 'desc')
             
             def get_sort_key(form_obj_to_sort: Form) -> Any:
-                # Helper to make a datetime UTC-aware if it's naive, or convert to UTC if aware & different
                 def make_comparable_utc(dt_val: Optional[datetime], default_if_none: datetime) -> datetime:
                     if dt_val is None:
-                        return default_if_none # default_if_none should already be UTC aware
+                        return default_if_none 
                     
                     if dt_val.tzinfo is None or dt_val.tzinfo.utcoffset(dt_val) is None:
-                        # Naive, assume UTC
                         return dt_val.replace(tzinfo=timezone.utc)
                     else:
-                        # Aware, convert to UTC
                         return dt_val.astimezone(timezone.utc)
 
-                # Define a consistent very old datetime for None cases, ensuring it's UTC aware
                 min_utc_datetime = datetime.min.replace(tzinfo=timezone.utc)
 
                 if sort_by == 'title':
-                    return (form_obj_to_sort.title or "").lower() # Ensure title is not None
+                    return (form_obj_to_sort.title or "").lower() 
                 elif sort_by == 'created_at':
                     return make_comparable_utc(form_obj_to_sort.created_at, min_utc_datetime)
-                # Default to updated_at for sorting (or if sort_by == 'updated_at')
                 return make_comparable_utc(form_obj_to_sort.updated_at, min_utc_datetime)
 
-            filtered_forms.sort(key=get_sort_key, reverse=reverse_sort)
+            processed_forms_for_date_filter.sort(key=get_sort_key, reverse=reverse_sort)
             
-            # The Form model should have the to_compact_dict method as defined previously
-            compact_forms_info = [form_obj.to_compact_dict() for form_obj in filtered_forms] #
+            # 5. Convert to compact dict
+            compact_forms_info = [form_obj.to_compact_dict() for form_obj in processed_forms_for_date_filter] #
             
             return compact_forms_info, None
             

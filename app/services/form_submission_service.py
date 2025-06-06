@@ -233,11 +233,11 @@ class FormSubmissionService:
         user: User,
         search_params: Dict[str, str],
         form_id_filter: Optional[int] = None
-    ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    ) -> Tuple[List[FormSubmission], Optional[str]]:
         """
-        Searches for specific answer records based on criteria within their content,
-        respecting user access controls. Returns information about the matching answers
-        along with their submission context.
+        Searches form submissions based on criteria within their AnswerSubmitted records,
+        respecting user access controls. Returns FormSubmission objects that contain
+        matching answers, to be converted to compact format by the controller.
         """
         try:
             # Start by getting all form submissions the user has access to
@@ -248,7 +248,7 @@ class FormSubmissionService:
             if not (user.role and user.role.is_super_user):
                 accessible_form_ids = [form.id for form in FormAssignmentService.get_accessible_forms_for_user(user.id)]
                 if not accessible_form_ids:
-                    logger.debug(f"User {user.username} has no access to any forms. Returning no results.")
+                    logger.debug(f"User {user.username} has no access to any forms. Returning no submissions.")
                     return [], None
                 accessible_submissions_query = accessible_submissions_query.filter(FormSubmission.form_id.in_(accessible_form_ids))
             
@@ -279,16 +279,9 @@ class FormSubmissionService:
                 return [], None
 
             # Now search through the answers_submitted table for these accessible submissions
-            # Use joins to get all the related data in one query
-            matching_answers_query = db.session.query(AnswerSubmitted, FormSubmission, Form).join(
-                FormSubmission, AnswerSubmitted.form_submission_id == FormSubmission.id
-            ).join(
-                Form, FormSubmission.form_id == Form.id
-            ).filter(
+            answer_search_query = AnswerSubmitted.query.filter(
                 AnswerSubmitted.form_submission_id.in_(accessible_submission_ids),
-                AnswerSubmitted.is_deleted == False,
-                FormSubmission.is_deleted == False,
-                Form.is_deleted == False
+                AnswerSubmitted.is_deleted == False
             )
 
             # Build search conditions for the answers
@@ -303,59 +296,37 @@ class FormSubmissionService:
                 search_conditions.append(AnswerSubmitted.question_type.ilike(f"%{search_params['question_type']}%"))
 
             if not search_conditions:
-                # If no search criteria provided, return empty
+                # If no search criteria provided, return empty (this should be handled by controller)
                 return [], None
 
             # Apply search conditions
-            matching_answers_query = matching_answers_query.filter(and_(*search_conditions))
+            answer_search_query = answer_search_query.filter(and_(*search_conditions))
             
-            # Order by submission date (most recent first), then by question order
-            matching_results = matching_answers_query.order_by(
-                FormSubmission.submitted_at.desc(),
-                AnswerSubmitted.question_order.nulls_last(),
-                AnswerSubmitted.id
-            ).all()
+            # Get the submission IDs that have matching answers
+            matching_submission_ids = [
+                answer.form_submission_id for answer in 
+                answer_search_query.with_entities(AnswerSubmitted.form_submission_id).distinct().all()
+            ]
 
-            if not matching_results:
+            if not matching_submission_ids:
                 logger.info(f"No answers found matching search criteria {search_params} for user {user.username}")
                 return [], None
 
-            # Convert to search result format that includes both answer and submission context
-            search_results = []
-            for answer, submission, form in matching_results:
-                result = {
-                    # Answer-specific information (the actual match)
-                    'answer_id': answer.id,
-                    'question': answer.question,
-                    'question_type': answer.question_type,
-                    'answer': answer.answer,
-                    'question_order': answer.question_order,
-                    'cell_content': answer.cell_content,
-                    'column': answer.column,
-                    'row': answer.row,
-                    'answer_created_at': answer.created_at.isoformat() if answer.created_at else None,
-                    
-                    # Submission context
-                    'submission_id': submission.id,
-                    'submitted_by': submission.submitted_by,
-                    'submitted_at': submission.submitted_at.isoformat() if submission.submitted_at else None,
-                    
-                    # Form context
-                    'form_id': form.id,
-                    'form_title': form.title,
-                    'form_description': form.description,
-                    
-                    # For compatibility with compact submission format
-                    'id': submission.id,  # This allows the result to work with existing frontend code expecting submission data
-                    'form_title': form.title,
-                    'answers_count': None,  # Could be calculated if needed
-                    'signatures_count': None,  # Could be calculated if needed
-                    'attachments_count': None  # Could be calculated if needed
-                }
-                search_results.append(result)
+            # Finally, get the full FormSubmission objects that have matching answers
+            # with the same eager loading as the compact endpoint
+            final_submissions_query = FormSubmission.query.filter(
+                FormSubmission.id.in_(matching_submission_ids)
+            ).options(
+                joinedload(FormSubmission.form),  # For form.title
+                selectinload(FormSubmission.answers_submitted),  # For answers_count
+                selectinload(FormSubmission.attachments)  # For attachments_count & signatures_count
+            )
             
-            logger.info(f"Search by answer criteria for user {user.username} with params {search_params} and form_id {form_id_filter} found {len(search_results)} matching answer records.")
-            return search_results, None
+            # Order by submission date (most recent first) - same as compact endpoint
+            searched_submissions = final_submissions_query.order_by(FormSubmission.submitted_at.desc()).all()
+            
+            logger.info(f"Search by answer criteria for user {user.username} with params {search_params} and form_id {form_id_filter} found {len(searched_submissions)} submissions with matching answers.")
+            return searched_submissions, None
 
         except Exception as e:
             user_id_for_log = user.id if user else "Unknown"

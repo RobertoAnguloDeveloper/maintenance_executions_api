@@ -87,10 +87,10 @@ class FormSubmissionController:
         user: UserModel, 
         search_criteria: Dict[str, str],
         form_id_filter: Optional[int] = None
-    ) -> List[Dict[str, Any]]: # Returns a list of matching answer records with context
+    ) -> List[Dict[str, Any]]: # Returns a list of compact submission dicts (same format as /compact)
         try:
             # The view will ensure search_criteria is not empty.
-            results_list, error = FormSubmissionService.search_submissions_by_answer_criteria(
+            submissions_list, error = FormSubmissionService.search_submissions_by_answer_criteria(
                 user=user,
                 search_params=search_criteria,
                 form_id_filter=form_id_filter
@@ -100,9 +100,9 @@ class FormSubmissionController:
                 logger.error(f"Service error in search_submissions controller: {error}")
                 return []
             
-            # The service now returns a list of dictionaries with answer details and submission context
-            # No need to convert to compact dict since the service already returns the desired format
-            return results_list
+            # Convert to the same compact dictionary format used by /form_submissions/compact
+            # This ensures both /compact and /search return identical field structures
+            return [sub.to_compact_dict() for sub in submissions_list if isinstance(sub, FormSubmission)]
             
         except Exception as e:
             logger.exception(f"Controller error in search_submissions: {str(e)}")

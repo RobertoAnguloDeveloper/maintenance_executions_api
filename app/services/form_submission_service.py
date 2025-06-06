@@ -233,82 +233,129 @@ class FormSubmissionService:
         user: User,
         search_params: Dict[str, str],
         form_id_filter: Optional[int] = None
-    ) -> Tuple[List[FormSubmission], Optional[str]]:
+    ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
         """
-        Searches form submissions based on criteria within their AnswerSubmitted records,
-        respecting user access controls.
+        Searches for specific answer records based on criteria within their content,
+        respecting user access controls. Returns information about the matching answers
+        along with their submission context.
         """
         try:
-            # Start with a base query for non-deleted submissions and non-deleted parent forms
-            query = FormSubmission.query.join(Form, FormSubmission.form_id == Form.id)\
-                                       .filter(FormSubmission.is_deleted == False, Form.is_deleted == False)
+            # Start by getting all form submissions the user has access to
+            accessible_submissions_query = FormSubmission.query.join(Form, FormSubmission.form_id == Form.id)\
+                                        .filter(FormSubmission.is_deleted == False, Form.is_deleted == False)
 
-            # Apply general access control based on user role and form assignments
-            # This logic is similar to get_all_submissions
+            # Apply form access control based on user role and form assignments
             if not (user.role and user.role.is_super_user):
                 accessible_form_ids = [form.id for form in FormAssignmentService.get_accessible_forms_for_user(user.id)]
                 if not accessible_form_ids:
-                    return [], None # No accessible forms, so no submissions to search
-                query = query.filter(FormSubmission.form_id.in_(accessible_form_ids))
+                    logger.debug(f"User {user.username} has no access to any forms. Returning no results.")
+                    return [], None
+                accessible_submissions_query = accessible_submissions_query.filter(FormSubmission.form_id.in_(accessible_form_ids))
             
+            # Apply submission-level access control based on user role
             if not (user.role and user.role.is_super_user):
                 if user.role.name == RoleType.TECHNICIAN:
-                    query = query.filter(FormSubmission.submitted_by == user.username)
+                    # Technicians can only see their own submissions
+                    accessible_submissions_query = accessible_submissions_query.filter(FormSubmission.submitted_by == user.username)
                 elif user.role.name in [RoleType.SITE_MANAGER, RoleType.SUPERVISOR]:
-                    SubmitterUser = aliased(User) # Use aliased if joining User table again based on submitted_by
-                    query = query.join(SubmitterUser, SubmitterUser.username == FormSubmission.submitted_by)\
-                                 .filter(SubmitterUser.environment_id == user.environment_id, SubmitterUser.is_deleted == False)
+                    # Site managers and supervisors can see submissions from users in their environment
+                    SubmitterUser = aliased(User)
+                    accessible_submissions_query = accessible_submissions_query.join(
+                        SubmitterUser, SubmitterUser.username == FormSubmission.submitted_by
+                    ).filter(
+                        SubmitterUser.environment_id == user.environment_id, 
+                        SubmitterUser.is_deleted == False
+                    )
             
             # Apply optional form_id filter
             if form_id_filter:
-                 query = query.filter(FormSubmission.form_id == form_id_filter)
+                accessible_submissions_query = accessible_submissions_query.filter(FormSubmission.form_id == form_id_filter)
 
-            # Join with AnswerSubmitted to filter based on answer criteria
-            # Ensure we only consider non-deleted answers
-            query = query.join(AnswerSubmitted, FormSubmission.id == AnswerSubmitted.form_submission_id)\
-                         .filter(AnswerSubmitted.is_deleted == False)
-
-            filter_conditions = []
-            if search_params.get('answer'):
-                filter_conditions.append(AnswerSubmitted.answer.ilike(f"%{search_params['answer']}%"))
-            if search_params.get('cell_content'):
-                filter_conditions.append(AnswerSubmitted.cell_content.ilike(f"%{search_params['cell_content']}%"))
-            if search_params.get('question'):
-                # This searches the 'question' text stored in AnswerSubmitted
-                filter_conditions.append(AnswerSubmitted.question.ilike(f"%{search_params['question']}%"))
-            if search_params.get('question_type'):
-                # This searches the 'question_type' stored in AnswerSubmitted
-                filter_conditions.append(AnswerSubmitted.question_type.ilike(f"%{search_params['question_type']}%"))
-
-            if not filter_conditions:
-                # If no specific answer search criteria are given, it's not really a search by answer.
-                # You might decide to return an empty list or indicate that criteria are needed.
-                # For now, let's assume the controller ensures at least one criterion is present.
-                # If execution reaches here with empty filter_conditions, it means the query will not filter by answers.
-                # However, the join to AnswerSubmitted is still present.
-                # To make this a strict search by answer, we should only proceed if filter_conditions is not empty.
-                # Let the controller decide if empty criteria is an error or means "no specific answer filter".
-                 pass # No specific answer criteria to apply, access control and form_id_filter already applied
-
-            if filter_conditions:
-                query = query.filter(and_(*filter_conditions))
+            # Get the submission IDs that the user has access to
+            accessible_submission_ids = [sub.id for sub in accessible_submissions_query.with_entities(FormSubmission.id).all()]
             
-            # Ensure we get distinct FormSubmission objects, as a submission might have multiple answers matching.
-            # Or one answer matching multiple criteria if OR logic were used (currently AND).
-            query = query.distinct(FormSubmission.id)
+            if not accessible_submission_ids:
+                logger.debug(f"User {user.username} has no accessible submissions. Returning empty results.")
+                return [], None
 
-            # Eager load relationships needed for to_compact_dict()
-            query = query.options(
-                joinedload(FormSubmission.form),
-                selectinload(FormSubmission.answers_submitted),
-                selectinload(FormSubmission.attachments)
+            # Now search through the answers_submitted table for these accessible submissions
+            # Use joins to get all the related data in one query
+            matching_answers_query = db.session.query(AnswerSubmitted, FormSubmission, Form).join(
+                FormSubmission, AnswerSubmitted.form_submission_id == FormSubmission.id
+            ).join(
+                Form, FormSubmission.form_id == Form.id
+            ).filter(
+                AnswerSubmitted.form_submission_id.in_(accessible_submission_ids),
+                AnswerSubmitted.is_deleted == False,
+                FormSubmission.is_deleted == False,
+                Form.is_deleted == False
             )
+
+            # Build search conditions for the answers
+            search_conditions = []
+            if search_params.get('answer'):
+                search_conditions.append(AnswerSubmitted.answer.ilike(f"%{search_params['answer']}%"))
+            if search_params.get('cell_content'):
+                search_conditions.append(AnswerSubmitted.cell_content.ilike(f"%{search_params['cell_content']}%"))
+            if search_params.get('question'):
+                search_conditions.append(AnswerSubmitted.question.ilike(f"%{search_params['question']}%"))
+            if search_params.get('question_type'):
+                search_conditions.append(AnswerSubmitted.question_type.ilike(f"%{search_params['question_type']}%"))
+
+            if not search_conditions:
+                # If no search criteria provided, return empty
+                return [], None
+
+            # Apply search conditions
+            matching_answers_query = matching_answers_query.filter(and_(*search_conditions))
             
-            # Default ordering for search results
-            searched_submissions = query.order_by(FormSubmission.submitted_at.desc()).all()
+            # Order by submission date (most recent first), then by question order
+            matching_results = matching_answers_query.order_by(
+                FormSubmission.submitted_at.desc(),
+                AnswerSubmitted.question_order.nulls_last(),
+                AnswerSubmitted.id
+            ).all()
+
+            if not matching_results:
+                logger.info(f"No answers found matching search criteria {search_params} for user {user.username}")
+                return [], None
+
+            # Convert to search result format that includes both answer and submission context
+            search_results = []
+            for answer, submission, form in matching_results:
+                result = {
+                    # Answer-specific information (the actual match)
+                    'answer_id': answer.id,
+                    'question': answer.question,
+                    'question_type': answer.question_type,
+                    'answer': answer.answer,
+                    'question_order': answer.question_order,
+                    'cell_content': answer.cell_content,
+                    'column': answer.column,
+                    'row': answer.row,
+                    'answer_created_at': answer.created_at.isoformat() if answer.created_at else None,
+                    
+                    # Submission context
+                    'submission_id': submission.id,
+                    'submitted_by': submission.submitted_by,
+                    'submitted_at': submission.submitted_at.isoformat() if submission.submitted_at else None,
+                    
+                    # Form context
+                    'form_id': form.id,
+                    'form_title': form.title,
+                    'form_description': form.description,
+                    
+                    # For compatibility with compact submission format
+                    'id': submission.id,  # This allows the result to work with existing frontend code expecting submission data
+                    'form_title': form.title,
+                    'answers_count': None,  # Could be calculated if needed
+                    'signatures_count': None,  # Could be calculated if needed
+                    'attachments_count': None  # Could be calculated if needed
+                }
+                search_results.append(result)
             
-            logger.info(f"Search by answer criteria for user {user.id if user else 'Unknown'} with params {search_params} and form_id {form_id_filter} found {len(searched_submissions)} submissions.")
-            return searched_submissions, None
+            logger.info(f"Search by answer criteria for user {user.username} with params {search_params} and form_id {form_id_filter} found {len(search_results)} matching answer records.")
+            return search_results, None
 
         except Exception as e:
             user_id_for_log = user.id if user else "Unknown"
